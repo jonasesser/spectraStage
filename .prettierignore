@@ -1,0 +1,7 @@
+dist
+node_modules
+pnpm-lock.yaml
+Concept
+test-results
+playwright-report
+*.md

@@ -1,0 +1,38 @@
+# Generic Docker host. On Easypanel you can use the Dockerfile directly (see docs/DEPLOYMENT.md).
+services:
+  spectrastage:
+    build: .
+    image: spectrastage:latest
+    container_name: spectrastage-server
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: 3000
+      DATABASE_PATH: /data/spectrastage.db
+    ports:
+      - '127.0.0.1:3000:3000' # put a TLS reverse proxy (Caddy/Nginx/Traefik) in front
+    volumes:
+      - spectrastage-data:/data
+    stop_grace_period: 15s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  spectrastage-data:

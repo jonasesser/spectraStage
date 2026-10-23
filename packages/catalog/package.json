@@ -1,0 +1,19 @@
+{
+  "name": "@spectrastage/catalog",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./manifests": "./src/manifests.ts",
+    "./runtime": "./src/runtime.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@spectrastage/shared": "workspace:*",
+    "@spectrastage/engine": "workspace:*",
+    "@spectrastage/theme-halloween": "workspace:*",
+    "@spectrastage/theme-basic": "workspace:*"
+  }
+}

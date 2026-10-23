@@ -1,0 +1,1209 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { warpPoint } from '@spectrastage/engine';
+import {
+  activeProfile,
+  applyHomography,
+  computeHomography,
+  isConvexQuad,
+  ProfileSchema,
+  UNIT_QUAD,
+  type Mask,
+  type Output,
+  type Profile,
+  type Pt,
+} from '@spectrastage/shared';
+import { useT, type Tr } from '../lib/i18n.tsx';
+import { uuid } from '../lib/storage.ts';
+import { useShow, useStore } from './store.ts';
+import { download, pickJsonFile, Slider } from './ui.tsx';
+
+type Mode = 'corners' | 'mesh' | 'masks' | 'image';
+type Handle =
+  | { kind: 'corner'; i: number }
+  | { kind: 'mesh'; i: number }
+  | { kind: 'mask'; maskId: string; i: number }
+  | null;
+
+const CORNER_COLORS = ['#ff4d4d', '#4dff88', '#4da6ff', '#ffe14d'];
+
+export function CalibrationEditor({ output, onClose }: { output: Output; onClose: () => void }) {
+  const L = useT();
+  const store = useStore();
+  const { state } = useShow();
+  const saved = activeProfile(output);
+  const [draft, setDraftRaw] = useState<Profile>(() => structuredClone(saved));
+  const [history, setHistory] = useState<Profile[]>([]);
+  const [future, setFuture] = useState<Profile[]>([]);
+  const [mode, setMode] = useState<Mode>('corners');
+  const [handle, setHandle] = useState<Handle>(null);
+  const [maskId, setMaskId] = useState<string | null>(null);
+  const [drawing, setDrawing] = useState<Pt[] | null>(null);
+  const [fine, setFine] = useState(false);
+  const [zoom, setZoom] = useState({ s: 1, cx: 0.5, cy: 0.5 });
+  const svgRef = useRef<SVGSVGElement>(null);
+  const dragRef = useRef<{ handle: NonNullable<Handle>; before: Profile } | null>(null);
+  const panRef = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null);
+  const previewTimer = useRef(0);
+
+  const res = saved.referenceResolution ?? output.resolutionMismatch ?? { w: 1920, h: 1080 };
+  const aspect = res.w / res.h;
+  const W = 1000;
+  const H = W / aspect;
+  const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
+  const testOn = output.testPattern.mode !== 'off' && output.testPattern.until > Date.now();
+
+  // Live preview on the projector (transient, not persisted)
+  useEffect(() => {
+    window.clearTimeout(previewTimer.current);
+    previewTimer.current = window.setTimeout(
+      () => store.conn.sendPreview(output.id, dirty ? draft : null),
+      60,
+    );
+  }, [draft, dirty, output.id, store]);
+  useEffect(() => () => store.conn.sendPreview(output.id, null), [output.id, store]);
+
+  // Pick up server-side changes (other controller / profile switch) when not editing
+  useEffect(() => {
+    if (!dirty) setDraftRaw(structuredClone(saved));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(saved)]);
+
+  const commit = useCallback((next: Profile, before?: Profile) => {
+    setHistory((h) => [...h.slice(-49), before ?? next]);
+    setFuture([]);
+    setDraftRaw(next);
+  }, []);
+  const setDraft = (fn: (p: Profile) => Profile) => commit(fn(structuredClone(draft)), draft);
+  const undo = () => {
+    const prev = history[history.length - 1];
+    if (!prev) return;
+    setFuture((f) => [draft, ...f]);
+    setHistory((h) => h.slice(0, -1));
+    setDraftRaw(prev);
+  };
+  const redo = () => {
+    const next = future[0];
+    if (!next) return;
+    setHistory((h) => [...h, draft]);
+    setFuture((f) => f.slice(1));
+    setDraftRaw(next);
+  };
+
+  const toNorm = (e: { clientX: number; clientY: number }): Pt => {
+    const svg = svgRef.current!;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const p = pt.matrixTransform(svg.getScreenCTM()!.inverse());
+    return { x: p.x / W, y: p.y / H };
+  };
+
+  const homography = useMemo(() => computeHomography(UNIT_QUAD, draft.corners), [draft.corners]);
+  const meshPos = (i: number): Pt => {
+    const m = draft.mesh!;
+    const u = (i % m.cols) / (m.cols - 1);
+    const v = Math.floor(i / m.cols) / (m.rows - 1);
+    const base = homography ? applyHomography(homography, { x: u, y: v }) : { x: u, y: v };
+    const o = m.offsets[i] ?? { x: 0, y: 0 };
+    return { x: base.x + o.x, y: base.y + o.y };
+  };
+
+  const moveHandle = (h: NonNullable<Handle>, p: Pt, base: Profile): Profile => {
+    const next = structuredClone(base);
+    const clampP = (q: Pt) => ({
+      x: Math.max(-0.5, Math.min(1.5, q.x)),
+      y: Math.max(-0.5, Math.min(1.5, q.y)),
+    });
+    if (h.kind === 'corner') {
+      const c = [...next.corners] as Profile['corners'];
+      c[h.i] = clampP(p);
+      if (isConvexQuad(c)) next.corners = c;
+    } else if (h.kind === 'mesh' && next.mesh && homography) {
+      const m = next.mesh;
+      const u = (h.i % m.cols) / (m.cols - 1);
+      const v = Math.floor(h.i / m.cols) / (m.rows - 1);
+      const b = applyHomography(homography, { x: u, y: v });
+      m.offsets[h.i] = {
+        x: Math.max(-0.2, Math.min(0.2, p.x - b.x)),
+        y: Math.max(-0.2, Math.min(0.2, p.y - b.y)),
+      };
+    } else if (h.kind === 'mask') {
+      const m = next.masks.find((x) => x.id === h.maskId);
+      if (m) m.points[h.i] = { x: Math.max(0, Math.min(1, p.x)), y: Math.max(0, Math.min(1, p.y)) };
+    }
+    return next;
+  };
+
+  const onHandleDown = (e: RPointerEvent, h: NonNullable<Handle>) => {
+    e.stopPropagation();
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+    setHandle(h);
+    dragRef.current = { handle: h, before: draft };
+  };
+  const onMove = (e: RPointerEvent) => {
+    if (dragRef.current) {
+      setDraftRaw(moveHandle(dragRef.current.handle, toNorm(e), draft));
+      return;
+    }
+    if (panRef.current) {
+      const rect = svgRef.current!.getBoundingClientRect();
+      const k = 1 / zoom.s / rect.width;
+      setZoom((z) => ({
+        ...z,
+        cx: panRef.current!.cx - (e.clientX - panRef.current!.x) * k,
+        cy: panRef.current!.cy - ((e.clientY - panRef.current!.y) * k * aspect) / 1,
+      }));
+    }
+  };
+  const onUp = () => {
+    if (dragRef.current) {
+      const before = dragRef.current.before;
+      dragRef.current = null;
+      if (JSON.stringify(before) !== JSON.stringify(draft)) {
+        setHistory((h) => [...h.slice(-49), before]);
+        setFuture([]);
+      }
+    }
+    panRef.current = null;
+  };
+  const onBgDown = (e: RPointerEvent) => {
+    if (drawing) {
+      const p = toNorm(e);
+      setDrawing([...drawing, { x: Math.max(0, Math.min(1, p.x)), y: Math.max(0, Math.min(1, p.y)) }]);
+      return;
+    }
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    panRef.current = { x: e.clientX, y: e.clientY, cx: zoom.cx, cy: zoom.cy };
+  };
+
+  const nudge = (dx: number, dy: number) => {
+    if (!handle) return;
+    const step = fine ? 0.0005 : 0.004;
+    const cur =
+      handle.kind === 'corner'
+        ? draft.corners[handle.i]!
+        : handle.kind === 'mesh'
+          ? meshPos(handle.i)
+          : draft.masks.find((m) => m.id === handle.maskId)?.points[handle.i];
+    if (!cur) return;
+    commit(moveHandle(handle, { x: cur.x + dx * step, y: cur.y + dy * step }, draft), draft);
+  };
+
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).tagName === 'INPUT') return;
+      const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+      if (d) {
+        e.preventDefault();
+        nudge(d[0]!, d[1]!);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      }
+    };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  });
+
+  const apply = async () => {
+    if (!isConvexQuad(draft.corners)) return;
+    if (
+      !testOn &&
+      !window.confirm(
+        L(
+          'The show is live on this projector. Apply the changes now?',
+          'Die Show läuft live auf diesem Beamer. Änderungen jetzt übernehmen?',
+        ),
+      )
+    )
+      return;
+    const ok = await store.send({
+      t: 'output.saveProfile',
+      outputId: output.id,
+      profile: draft,
+      activate: true,
+    });
+    if (ok) store.toast(L('Calibration saved', 'Kalibrierung gespeichert'));
+  };
+  const close = () => {
+    if (dirty && !window.confirm(L('Discard unsaved changes?', 'Ungespeicherte Änderungen verwerfen?')))
+      return;
+    store.conn.sendPreview(output.id, null);
+    onClose();
+  };
+
+  // Warped stage grid and surfaces for orientation
+  const gridPaths = useMemo(() => {
+    const paths: string[] = [];
+    const N = 8;
+    const line = (pts: (Pt | null)[]) =>
+      pts
+        .filter((p): p is Pt => !!p)
+        .map((p, i) => `${i ? 'L' : 'M'}${p.x * W},${p.y * H}`)
+        .join(' ');
+    for (let i = 0; i <= N; i++) {
+      const a: (Pt | null)[] = [];
+      const b: (Pt | null)[] = [];
+      for (let j = 0; j <= 24; j++) {
+        a.push(warpPoint(draft, i / N, j / 24));
+        b.push(warpPoint(draft, j / 24, i / N));
+      }
+      paths.push(line(a), line(b));
+    }
+    return paths;
+  }, [draft, W, H]);
+  const surfacePaths = useMemo(() => {
+    const vp = draft.viewport;
+    return state.surfaces.map((s) => {
+      const pts: Pt[] = [];
+      s.polygon.forEach((p, i) => {
+        const n = s.polygon[(i + 1) % s.polygon.length]!;
+        for (let k = 0; k < 12; k++) {
+          const x = p.x + ((n.x - p.x) * k) / 12;
+          const y = p.y + ((n.y - p.y) * k) / 12;
+          const w = warpPoint(draft, (x - vp.x) / vp.w, (y - vp.y) / vp.h);
+          if (w) pts.push(w);
+        }
+      });
+      return {
+        id: s.id,
+        name: s.name,
+        d: pts.map((p, i) => `${i ? 'L' : 'M'}${p.x * W},${p.y * H}`).join(' ') + 'Z',
+      };
+    });
+  }, [draft, state.surfaces, W, H]);
+
+  const vbW = W / zoom.s;
+  const vbH = H / zoom.s;
+  const vbX = zoom.cx * W - vbW / 2;
+  const vbY = zoom.cy * H - vbH / 2;
+  const hs = 14 / zoom.s; // handle radius in svg units
+
+  const selMask = draft.masks.find((m) => m.id === maskId) ?? null;
+
+  return (
+    <div className="stack">
+      <div className="row between">
+        <button className="btn" onClick={close}>
+          ‹ {L('Back', 'Zurück')}
+        </button>
+        <h2 style={{ margin: 0 }}>
+          {L('Calibrate', 'Kalibrieren')}: {output.name}
+        </h2>
+        <div className="row">
+          <button
+            className="btn icon"
+            onClick={undo}
+            disabled={history.length === 0}
+            aria-label={L('Undo', 'Rückgängig')}
+          >
+            ↶
+          </button>
+          <button
+            className="btn icon"
+            onClick={redo}
+            disabled={future.length === 0}
+            aria-label={L('Redo', 'Wiederholen')}
+          >
+            ↷
+          </button>
+        </div>
+      </div>
+
+      {!testOn && (
+        <div className="safety-note row between">
+          <span>
+            {L(
+              'Tip: switch on the test pattern to see the grid on the wall.',
+              'Tipp: Schalte das Testbild ein, um das Gitter an der Wand zu sehen.',
+            )}
+          </span>
+          <button
+            className="btn small"
+            onClick={() =>
+              store.send({ t: 'output.testPattern', outputId: output.id, mode: 'grid', minutes: 10 })
+            }
+          >
+            {L('Test pattern on (10 min)', 'Testbild an (10 Min.)')}
+          </button>
+        </div>
+      )}
+
+      <div className="split">
+        <div>
+          <div className="row" role="tablist">
+            {(
+              [
+                ['corners', L('Corners', 'Ecken')],
+                ['mesh', L('Fine grid', 'Feingitter')],
+                ['masks', L('Masks', 'Masken')],
+                ['image', L('Image', 'Bild')],
+              ] as [Mode, string][]
+            ).map(([m, label]) => (
+              <button
+                key={m}
+                className={`chip${mode === m ? ' on' : ''}`}
+                onClick={() => (setMode(m), setHandle(null), setDrawing(null))}
+                role="tab"
+                aria-selected={mode === m}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="editor" style={{ aspectRatio: `${aspect}`, marginTop: '0.6rem' }}>
+            <svg
+              ref={svgRef}
+              viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
+              onPointerDown={onBgDown}
+              onPointerMove={onMove}
+              onPointerUp={onUp}
+              onPointerCancel={onUp}
+            >
+              <rect x={-W} y={-H} width={W * 3} height={H * 3} fill="#05040c" />
+              <rect x={0} y={0} width={W} height={H} fill="#000" stroke="#39336b" strokeWidth={2 / zoom.s} />
+              {gridPaths.map((d, i) => (
+                <path
+                  key={i}
+                  d={d}
+                  fill="none"
+                  stroke="rgba(255,255,255,0.25)"
+                  strokeWidth={1.2 / zoom.s}
+                  pointerEvents="none"
+                />
+              ))}
+              {surfacePaths.map((s) => (
+                <path
+                  key={s.id}
+                  d={s.d}
+                  fill="rgba(255,179,71,0.08)"
+                  stroke="#ffb347"
+                  strokeWidth={2 / zoom.s}
+                  pointerEvents="none"
+                />
+              ))}
+              <polygon
+                points={draft.corners.map((c) => `${c.x * W},${c.y * H}`).join(' ')}
+                fill="none"
+                stroke="#fff"
+                strokeWidth={2.5 / zoom.s}
+                pointerEvents="none"
+              />
+              {/* crop */}
+              <g fill="rgba(255,60,60,0.25)" pointerEvents="none">
+                <rect x={0} y={0} width={W} height={draft.crop[0] * H} />
+                <rect x={W - draft.crop[1] * W} y={0} width={draft.crop[1] * W} height={H} />
+                <rect x={0} y={H - draft.crop[2] * H} width={W} height={draft.crop[2] * H} />
+                <rect x={0} y={0} width={draft.crop[3] * W} height={H} />
+              </g>
+              {draft.masks.map((m) => (
+                <MaskShape
+                  key={m.id}
+                  mask={m}
+                  W={W}
+                  H={H}
+                  z={zoom.s}
+                  selected={m.id === maskId}
+                  onSelect={() => mode === 'masks' && setMaskId(m.id)}
+                />
+              ))}
+              {drawing && (
+                <polyline
+                  points={drawing.map((p) => `${p.x * W},${p.y * H}`).join(' ')}
+                  fill="rgba(255,60,60,0.2)"
+                  stroke="#ff3c3c"
+                  strokeWidth={2 / zoom.s}
+                />
+              )}
+              {mode === 'corners' &&
+                draft.corners.map((c, i) => (
+                  <g key={i} onPointerDown={(e) => onHandleDown(e, { kind: 'corner', i })} className="handle">
+                    <circle cx={c.x * W} cy={c.y * H} r={hs * 1.6} fill="transparent" />
+                    <circle
+                      cx={c.x * W}
+                      cy={c.y * H}
+                      r={hs}
+                      fill={CORNER_COLORS[i]}
+                      stroke={handle?.kind === 'corner' && handle.i === i ? '#fff' : '#000'}
+                      strokeWidth={3 / zoom.s}
+                    />
+                    <text
+                      x={c.x * W}
+                      y={c.y * H}
+                      fontSize={hs * 1.1}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      fill="#000"
+                      fontWeight={800}
+                      pointerEvents="none"
+                    >
+                      {i + 1}
+                    </text>
+                  </g>
+                ))}
+              {mode === 'mesh' &&
+                draft.mesh?.offsets.map((_, i) => {
+                  const p = meshPos(i);
+                  return (
+                    <circle
+                      key={i}
+                      className="handle"
+                      cx={p.x * W}
+                      cy={p.y * H}
+                      r={hs * 0.8}
+                      fill="#ffb347"
+                      stroke={handle?.kind === 'mesh' && handle.i === i ? '#fff' : '#2a1600'}
+                      strokeWidth={3 / zoom.s}
+                      onPointerDown={(e) => onHandleDown(e, { kind: 'mesh', i })}
+                    />
+                  );
+                })}
+              {mode === 'masks' &&
+                selMask &&
+                selMask.points.map((p, i) => (
+                  <circle
+                    key={i}
+                    className="handle"
+                    cx={p.x * W}
+                    cy={p.y * H}
+                    r={hs * 0.8}
+                    fill="#fff"
+                    stroke={handle?.kind === 'mask' && handle.i === i ? '#ffb347' : '#ff3c3c'}
+                    strokeWidth={3 / zoom.s}
+                    onPointerDown={(e) => onHandleDown(e, { kind: 'mask', maskId: selMask.id, i })}
+                  />
+                ))}
+            </svg>
+          </div>
+          <div className="editor-tools">
+            <button
+              className="btn small"
+              onClick={() => setZoom((z) => ({ ...z, s: Math.min(8, z.s * 1.5) }))}
+            >
+              ＋
+            </button>
+            <button
+              className="btn small"
+              onClick={() => setZoom((z) => ({ ...z, s: Math.max(1, z.s / 1.5) }))}
+            >
+              －
+            </button>
+            <button className="btn small" onClick={() => setZoom({ s: 1, cx: 0.5, cy: 0.5 })}>
+              {L('Whole image', 'Ganzes Bild')}
+            </button>
+            {handle && (
+              <button
+                className="btn small"
+                onClick={() => {
+                  const p =
+                    handle.kind === 'corner'
+                      ? draft.corners[handle.i]!
+                      : handle.kind === 'mesh'
+                        ? meshPos(handle.i)
+                        : selMask?.points[handle.i];
+                  if (p) setZoom({ s: 4, cx: p.x, cy: p.y });
+                }}
+              >
+                {L('Zoom to point', 'Zum Punkt zoomen')}
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="stack">
+          {handle && (
+            <div className="panel">
+              <h3>{L('Fine adjust', 'Feinjustage')}</h3>
+              <div className="row" style={{ alignItems: 'flex-start' }}>
+                <div className="nudge">
+                  <button
+                    className="btn"
+                    style={{ gridColumn: 2, gridRow: 1 }}
+                    onClick={() => nudge(0, -1)}
+                    aria-label="up"
+                  >
+                    ▲
+                  </button>
+                  <button
+                    className="btn"
+                    style={{ gridColumn: 1, gridRow: 2 }}
+                    onClick={() => nudge(-1, 0)}
+                    aria-label="left"
+                  >
+                    ◀
+                  </button>
+                  <button className={`btn c${fine ? ' on' : ''}`} onClick={() => setFine((f) => !f)}>
+                    {fine ? L('fine', 'fein') : L('coarse', 'grob')}
+                  </button>
+                  <button
+                    className="btn"
+                    style={{ gridColumn: 3, gridRow: 2 }}
+                    onClick={() => nudge(1, 0)}
+                    aria-label="right"
+                  >
+                    ▶
+                  </button>
+                  <button
+                    className="btn"
+                    style={{ gridColumn: 2, gridRow: 3 }}
+                    onClick={() => nudge(0, 1)}
+                    aria-label="down"
+                  >
+                    ▼
+                  </button>
+                </div>
+                {handle.kind === 'corner' && (
+                  <div className="stack grow">
+                    <label>
+                      X (px)
+                      <input
+                        type="number"
+                        value={Math.round(draft.corners[handle.i]!.x * res.w)}
+                        onChange={(e) =>
+                          commit(
+                            moveHandle(
+                              handle,
+                              { x: Number(e.target.value) / res.w, y: draft.corners[handle.i]!.y },
+                              draft,
+                            ),
+                            draft,
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      Y (px)
+                      <input
+                        type="number"
+                        value={Math.round(draft.corners[handle.i]!.y * res.h)}
+                        onChange={(e) =>
+                          commit(
+                            moveHandle(
+                              handle,
+                              { x: draft.corners[handle.i]!.x, y: Number(e.target.value) / res.h },
+                              draft,
+                            ),
+                            draft,
+                          )
+                        }
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {mode === 'corners' && (
+            <div className="panel">
+              <p className="muted small">
+                {L(
+                  'Drag the numbered corners until the white frame on the wall sits exactly on the edges of your surfaces. The colors match the test pattern.',
+                  'Ziehe die nummerierten Ecken, bis der weiße Rahmen an der Wand genau auf den Kanten deiner Flächen liegt. Die Farben entsprechen dem Testbild.',
+                )}
+              </p>
+              <button
+                className="btn small"
+                onClick={() =>
+                  setDraft((p) => ({ ...p, corners: structuredClone(UNIT_QUAD) as Profile['corners'] }))
+                }
+              >
+                {L('Reset corners', 'Ecken zurücksetzen')}
+              </button>
+            </div>
+          )}
+
+          {mode === 'mesh' && (
+            <div className="panel stack">
+              <p className="muted small" style={{ margin: 0 }}>
+                {L(
+                  'For uneven or bent surfaces: move the inner points to correct the image locally.',
+                  'Für unebene oder gewölbte Flächen: Verschiebe die Punkte, um das Bild lokal zu korrigieren.',
+                )}
+              </p>
+              <div className="row">
+                {[0, 3, 4, 5].map((n) => (
+                  <button
+                    key={n}
+                    className={`chip${(draft.mesh?.cols ?? 0) === n ? ' on' : ''}`}
+                    onClick={() =>
+                      setDraft((p) => ({
+                        ...p,
+                        mesh:
+                          n === 0
+                            ? null
+                            : {
+                                cols: n,
+                                rows: n,
+                                offsets: Array.from({ length: n * n }, () => ({ x: 0, y: 0 })),
+                              },
+                      }))
+                    }
+                  >
+                    {n === 0 ? L('off', 'aus') : `${n}×${n}`}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mode === 'image' && <ImagePanel draft={draft} setDraft={setDraft} L={L} />}
+
+          {mode === 'masks' && (
+            <MasksPanel
+              draft={draft}
+              setDraft={setDraft}
+              selected={selMask}
+              select={setMaskId}
+              drawing={drawing}
+              setDrawing={setDrawing}
+              L={L}
+              showOnProjector={output.showMasks}
+              toggleShow={() =>
+                store.send({ t: 'output.update', outputId: output.id, showMasks: !output.showMasks })
+              }
+            />
+          )}
+
+          <ProfilesPanel output={output} draft={draft} dirty={dirty} L={L} onLoad={(p) => commit(p, draft)} />
+
+          <div className="panel stack">
+            <button className="btn primary big" disabled={!dirty} onClick={apply}>
+              {L('Apply calibration', 'Kalibrierung übernehmen')}
+            </button>
+            <button className="btn" disabled={!dirty} onClick={() => commit(structuredClone(saved), draft)}>
+              {L('Discard changes', 'Änderungen verwerfen')}
+            </button>
+            <p className="muted small" style={{ margin: 0 }}>
+              {dirty
+                ? L(
+                    'The projector already shows your draft as a preview. It is saved only after “Apply”.',
+                    'Der Beamer zeigt deinen Entwurf schon als Vorschau. Gespeichert wird erst mit „Übernehmen“.',
+                  )
+                : L('No unsaved changes.', 'Keine ungespeicherten Änderungen.')}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MaskShape({
+  mask,
+  W,
+  H,
+  z,
+  selected,
+  onSelect,
+}: {
+  mask: Mask;
+  W: number;
+  H: number;
+  z: number;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const color = mask.mode === 'include' ? '#4dff8a' : '#ff3c3c';
+  const common = {
+    fill: mask.mode === 'include' ? 'rgba(77,255,138,0.15)' : 'rgba(255,60,60,0.35)',
+    stroke: color,
+    strokeWidth: (selected ? 3 : 1.5) / z,
+    strokeDasharray: mask.enabled ? undefined : `${6 / z} ${4 / z}`,
+    onPointerDown: (e: RPointerEvent) => {
+      e.stopPropagation();
+      onSelect();
+    },
+    style: { cursor: 'pointer' },
+  };
+  const pts = mask.points.map((p) => ({ x: p.x * W, y: p.y * H }));
+  const marginPx = mask.margin * W;
+  if (mask.shape === 'polygon') {
+    return (
+      <g>
+        {mask.mode === 'exclude' && marginPx > 0 && (
+          <polygon
+            points={pts.map((p) => `${p.x},${p.y}`).join(' ')}
+            fill="none"
+            stroke="rgba(255,60,60,0.35)"
+            strokeWidth={marginPx * 2}
+            strokeLinejoin="round"
+            pointerEvents="none"
+          />
+        )}
+        <polygon points={pts.map((p) => `${p.x},${p.y}`).join(' ')} {...common} fillRule="evenodd" />
+      </g>
+    );
+  }
+  const a = pts[0]!;
+  const b = pts[1] ?? a;
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  const w = Math.abs(b.x - a.x);
+  const h = Math.abs(b.y - a.y);
+  return mask.shape === 'rect' ? (
+    <g>
+      {mask.mode === 'exclude' && marginPx > 0 && (
+        <rect
+          x={x - marginPx}
+          y={y - marginPx}
+          width={w + marginPx * 2}
+          height={h + marginPx * 2}
+          fill="rgba(255,60,60,0.18)"
+          pointerEvents="none"
+          rx={marginPx}
+        />
+      )}
+      <rect x={x} y={y} width={w} height={h} {...common} />
+    </g>
+  ) : (
+    <g>
+      {mask.mode === 'exclude' && marginPx > 0 && (
+        <ellipse
+          cx={x + w / 2}
+          cy={y + h / 2}
+          rx={w / 2 + marginPx}
+          ry={h / 2 + marginPx}
+          fill="rgba(255,60,60,0.18)"
+          pointerEvents="none"
+        />
+      )}
+      <ellipse cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} {...common} />
+    </g>
+  );
+}
+
+function MasksPanel({
+  draft,
+  setDraft,
+  selected,
+  select,
+  drawing,
+  setDrawing,
+  L,
+  showOnProjector,
+  toggleShow,
+}: {
+  draft: Profile;
+  setDraft: (fn: (p: Profile) => Profile) => void;
+  selected: Mask | null;
+  select: (id: string | null) => void;
+  drawing: Pt[] | null;
+  setDrawing: (p: Pt[] | null) => void;
+  L: Tr;
+  showOnProjector: boolean;
+  toggleShow: () => void;
+}) {
+  const add = (shape: Mask['shape'], points: Pt[]) => {
+    const m: Mask = {
+      id: uuid().slice(0, 12),
+      name: `${L('Mask', 'Maske')} ${draft.masks.length + 1}`,
+      mode: 'exclude',
+      shape,
+      points,
+      margin: 0.01,
+      feather: 0,
+      safety: true,
+      enabled: true,
+    };
+    setDraft((p) => ({ ...p, masks: [...p.masks, m] }));
+    select(m.id);
+  };
+  const update = (patch: Partial<Mask>) =>
+    selected &&
+    setDraft((p) => ({ ...p, masks: p.masks.map((m) => (m.id === selected.id ? { ...m, ...patch } : m)) }));
+  return (
+    <div className="panel stack">
+      <p className="muted small" style={{ margin: 0 }}>
+        {L(
+          'Masks keep areas black: windows, doors, the neighbour’s house, the street. Red = no light, green = only light here.',
+          'Masken halten Bereiche schwarz: Fenster, Türen, Nachbarhaus, Straße. Rot = kein Licht, grün = nur hier Licht.',
+        )}
+      </p>
+      <label className="check">
+        <input type="checkbox" checked={showOnProjector} onChange={toggleShow} />
+        {L(
+          'Show masked areas on the projector (setup only)',
+          'Maskierte Bereiche am Beamer anzeigen (nur zum Einrichten)',
+        )}
+      </label>
+      {drawing ? (
+        <div className="stack">
+          <p style={{ margin: 0 }}>
+            {L('Tap the corners of the area on the image above.', 'Tippe oben die Ecken des Bereichs an.')} (
+            {drawing.length})
+          </p>
+          <div className="row">
+            <button
+              className="btn primary"
+              disabled={drawing.length < 3}
+              onClick={() => {
+                add('polygon', drawing);
+                setDrawing(null);
+              }}
+            >
+              {L('Finish shape', 'Form fertig')}
+            </button>
+            <button
+              className="btn"
+              onClick={() => setDrawing(drawing.slice(0, -1))}
+              disabled={drawing.length === 0}
+            >
+              {L('Remove last point', 'Letzten Punkt entfernen')}
+            </button>
+            <button className="btn ghost" onClick={() => setDrawing(null)}>
+              {L('Cancel', 'Abbrechen')}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="row">
+          <button className="btn small" onClick={() => setDrawing([])}>
+            ＋ {L('Polygon', 'Vieleck')}
+          </button>
+          <button
+            className="btn small"
+            onClick={() =>
+              add('rect', [
+                { x: 0.4, y: 0.35 },
+                { x: 0.6, y: 0.6 },
+              ])
+            }
+          >
+            ＋ {L('Rectangle', 'Rechteck')}
+          </button>
+          <button
+            className="btn small"
+            onClick={() =>
+              add('ellipse', [
+                { x: 0.42, y: 0.38 },
+                { x: 0.58, y: 0.6 },
+              ])
+            }
+          >
+            ＋ {L('Ellipse', 'Ellipse')}
+          </button>
+        </div>
+      )}
+      {draft.masks.length > 0 && (
+        <div className="list">
+          {draft.masks.map((m, i) => (
+            <div
+              key={m.id}
+              className="list-item"
+              style={{ borderColor: m.id === selected?.id ? 'var(--lantern)' : undefined, padding: '0.5rem' }}
+            >
+              <button
+                className="main"
+                style={{ background: 'none', border: 0, textAlign: 'left', cursor: 'pointer' }}
+                onClick={() => select(m.id)}
+              >
+                <div className="title" style={{ color: m.mode === 'include' ? 'var(--ok)' : '#ff8a8a' }}>
+                  {m.name}
+                </div>
+                <div className="muted small">
+                  {m.mode === 'include'
+                    ? L('only light here', 'nur hier Licht')
+                    : L('no light', 'kein Licht')}
+                  {m.safety ? ` · ${L('safety', 'Sicherheit')}` : ''}
+                  {!m.enabled ? ` · ${L('off', 'aus')}` : ''}
+                </div>
+              </button>
+              <button
+                className="btn icon small"
+                disabled={i === 0}
+                aria-label={L('Move up', 'Nach oben')}
+                onClick={() =>
+                  setDraft((p) => {
+                    const masks = [...p.masks];
+                    [masks[i - 1], masks[i]] = [masks[i]!, masks[i - 1]!];
+                    return { ...p, masks };
+                  })
+                }
+              >
+                ↑
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {selected && (
+        <div className="stack" style={{ borderTop: '1px solid var(--line)', paddingTop: '0.75rem' }}>
+          <label>
+            {L('Name', 'Name')}
+            <input value={selected.name} onChange={(e) => update({ name: e.target.value.slice(0, 40) })} />
+          </label>
+          <div className="row">
+            <button
+              className={`chip${selected.mode === 'exclude' ? ' on' : ''}`}
+              onClick={() => update({ mode: 'exclude' })}
+            >
+              {L('Keep black', 'Schwarz halten')}
+            </button>
+            <button
+              className={`chip${selected.mode === 'include' ? ' on' : ''}`}
+              onClick={() => update({ mode: 'include', safety: false })}
+            >
+              {L('Only light here', 'Nur hier Licht')}
+            </button>
+          </div>
+          {selected.mode === 'exclude' && (
+            <>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={selected.safety}
+                  onChange={(e) =>
+                    update({ safety: e.target.checked, feather: e.target.checked ? 0 : selected.feather })
+                  }
+                />
+                {L('Safety mask (hard edge, e.g. windows)', 'Sicherheitsmaske (harte Kante, z. B. Fenster)')}
+              </label>
+              <Slider
+                label={L('Safety margin', 'Sicherheitsrand')}
+                value={Math.round(selected.margin * 1000) / 10}
+                min={0}
+                max={8}
+                step={0.5}
+                format={(v) => `${v.toFixed(1)} %`}
+                onChange={(v) => update({ margin: v / 100 })}
+              />
+              {!selected.safety && (
+                <Slider
+                  label={L('Soft edge', 'Weiche Kante')}
+                  value={Math.round(selected.feather * 1000) / 10}
+                  min={0}
+                  max={5}
+                  step={0.5}
+                  format={(v) => `${v.toFixed(1)} %`}
+                  onChange={(v) => update({ feather: v / 100 })}
+                />
+              )}
+            </>
+          )}
+          <div className="row">
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={selected.enabled}
+                onChange={(e) => update({ enabled: e.target.checked })}
+              />
+              {L('Active', 'Aktiv')}
+            </label>
+            {selected.shape === 'polygon' && selected.points.length > 3 && (
+              <button className="btn small" onClick={() => update({ points: selected.points.slice(0, -1) })}>
+                {L('Remove last corner', 'Letzte Ecke entfernen')}
+              </button>
+            )}
+            <button
+              className="btn small danger"
+              onClick={() => {
+                setDraft((p) => ({ ...p, masks: p.masks.filter((m) => m.id !== selected.id) }));
+                select(null);
+              }}
+            >
+              {L('Delete mask', 'Maske löschen')}
+            </button>
+          </div>
+        </div>
+      )}
+      <p className="muted small" style={{ margin: 0 }}>
+        {L(
+          'A black pixel is not zero light: projectors still glow slightly. Where light must not go, use the projector position or a physical cover.',
+          'Ein schwarzes Pixel ist nicht null Licht: Beamer leuchten leicht nach. Wo wirklich kein Licht hin darf, hilft nur Position oder Abdeckung.',
+        )}
+      </p>
+    </div>
+  );
+}
+
+function ImagePanel({
+  draft,
+  setDraft,
+  L,
+}: {
+  draft: Profile;
+  setDraft: (fn: (p: Profile) => Profile) => void;
+  L: Tr;
+}) {
+  const crop = (i: number, v: number) =>
+    setDraft((p) => {
+      const c = [...p.crop] as Profile['crop'];
+      c[i] = v / 100;
+      return { ...p, crop: c };
+    });
+  return (
+    <div className="panel stack">
+      <div>
+        <div className="muted small" style={{ fontWeight: 600, marginBottom: 4 }}>
+          {L('Rotate content', 'Inhalt drehen')}
+        </div>
+        <div className="row">
+          {([0, 90, 180, 270] as const).map((r) => (
+            <button
+              key={r}
+              className={`chip${draft.rotation === r ? ' on' : ''}`}
+              onClick={() => setDraft((p) => ({ ...p, rotation: r }))}
+            >
+              {r}°
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="row">
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.flipX}
+            onChange={(e) => setDraft((p) => ({ ...p, flipX: e.target.checked }))}
+          />
+          {L('Mirror horizontally (rear projection)', 'Horizontal spiegeln (Rückprojektion)')}
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.flipY}
+            onChange={(e) => setDraft((p) => ({ ...p, flipY: e.target.checked }))}
+          />
+          {L('Mirror vertically (ceiling mount)', 'Vertikal spiegeln (Deckenmontage)')}
+        </label>
+      </div>
+      <div className="muted small" style={{ fontWeight: 600 }}>
+        {L('Safe edges (crop)', 'Sichere Ränder (Beschnitt)')}
+      </div>
+      {[L('Top', 'Oben'), L('Right', 'Rechts'), L('Bottom', 'Unten'), L('Left', 'Links')].map((label, i) => (
+        <Slider
+          key={i}
+          label={label}
+          value={Math.round(draft.crop[i]! * 100)}
+          min={0}
+          max={40}
+          step={1}
+          format={(v) => `${v} %`}
+          onChange={(v) => crop(i, v)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ProfilesPanel({
+  output,
+  draft,
+  dirty,
+  L,
+  onLoad,
+}: {
+  output: Output;
+  draft: Profile;
+  dirty: boolean;
+  L: Tr;
+  onLoad: (p: Profile) => void;
+}) {
+  const store = useStore();
+  const [name, setName] = useState(draft.name);
+  useEffect(() => setName(draft.name), [draft.id, draft.name]);
+  return (
+    <div className="panel stack">
+      <h3 style={{ margin: 0 }}>{L('Calibration profiles', 'Kalibrierprofile')}</h3>
+      <select
+        value={output.activeProfileId}
+        onChange={(e) => {
+          if (
+            dirty &&
+            !window.confirm(
+              L(
+                'Switch profile and discard unsaved changes?',
+                'Profil wechseln und ungespeicherte Änderungen verwerfen?',
+              ),
+            )
+          )
+            return;
+          void store.send({ t: 'output.activateProfile', outputId: output.id, profileId: e.target.value });
+        }}
+        aria-label={L('Active profile', 'Aktives Profil')}
+      >
+        {output.profiles.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+      <label>
+        {L('Profile name', 'Profilname')}
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value.slice(0, 60))}
+          onBlur={() => name.trim() && name !== draft.name && onLoad({ ...draft, name: name.trim() })}
+        />
+      </label>
+      <div className="row">
+        <button
+          className="btn small"
+          onClick={() =>
+            store.send({
+              t: 'output.duplicateProfile',
+              outputId: output.id,
+              profileId: output.activeProfileId,
+            })
+          }
+        >
+          {L('Duplicate', 'Duplizieren')}
+        </button>
+        <button
+          className="btn small"
+          onClick={() =>
+            download(`spectrastage-${output.name}-${draft.name}.json`, {
+              format: 'spectrastage-profile',
+              profile: draft,
+            })
+          }
+        >
+          {L('Export', 'Exportieren')}
+        </button>
+        <button
+          className="btn small"
+          onClick={async () => {
+            try {
+              const data = (await pickJsonFile()) as { profile?: unknown };
+              const parsed = ProfileSchema.safeParse(data.profile);
+              if (!parsed.success) throw new Error('invalid');
+              onLoad({ ...parsed.data, id: draft.id });
+              store.toast(L('Profile loaded – check and apply.', 'Profil geladen – prüfen und übernehmen.'));
+            } catch {
+              store.toast(
+                L('This file is not a calibration profile.', 'Diese Datei ist kein Kalibrierprofil.'),
+                'error',
+              );
+            }
+          }}
+        >
+          {L('Import', 'Importieren')}
+        </button>
+        {output.profiles.length > 1 && (
+          <button
+            className="btn small danger"
+            onClick={() =>
+              window.confirm(L('Delete this profile?', 'Dieses Profil löschen?')) &&
+              store.send({
+                t: 'output.deleteProfile',
+                outputId: output.id,
+                profileId: output.activeProfileId,
+              })
+            }
+          >
+            {L('Delete', 'Löschen')}
+          </button>
+        )}
+      </div>
+      <p className="muted small" style={{ margin: 0 }}>
+        {L(
+          'Use profiles for different setups, e.g. “Projector on ladder” or “Rain cover”.',
+          'Nutze Profile für verschiedene Aufbauten, z. B. „Beamer auf Leiter“ oder „Mit Regenschutz“.',
+        )}
+      </p>
+    </div>
+  );
+}
