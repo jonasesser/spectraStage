@@ -7,6 +7,7 @@ export const MOOD_OPTIONS = [
   { value: 'violet', label: L('Violet night', 'Violette Nacht') },
   { value: 'green', label: L('Witchy green', 'Hexengrün') },
   { value: 'blue', label: L('Moonlight blue', 'Mondlicht Blau') },
+  { value: 'neon', label: L('Neon (bright for dusk)', 'Neon (hell für Dämmerung)') },
 ];
 
 const common: ParamDef[] = [
@@ -39,6 +40,21 @@ function scene(
     colors,
     params: [...common, ...extra],
   };
+}
+
+/** Neon scenes: same params, but the color mood defaults to 'neon'. */
+function neonScene(
+  id: string,
+  name: [string, string],
+  description: [string, string],
+  kinds: SceneManifest['kinds'],
+  icon: string,
+  colors: [string, string],
+  extra: ParamDef[] = [],
+): SceneManifest {
+  const sc = scene(id, name, description, kinds, icon, colors, extra);
+  sc.params = sc.params.map((p) => (p.key === 'mood' && p.type === 'select' ? { ...p, default: 'neon' } : p));
+  return sc;
 }
 
 const scenes: SceneManifest[] = [
@@ -177,6 +193,61 @@ const scenes: SceneManifest[] = [
     '🎈',
     ['#0b1426', '#e8f4ff'],
   ),
+  neonScene(
+    'neonManor',
+    ['Neon Manor', 'Neon-Villa'],
+    [
+      'Bright blacklight haunted mansion with glowing sky, ghosts and pumpkins – visible at dusk.',
+      'Knallbunte Spukvilla mit leuchtendem Himmel, Geistern und Kürbissen – sichtbar schon in der Dämmerung.',
+    ],
+    ['wall'],
+    '🏰',
+    ['#5b1fa8', '#ff7a1a'],
+  ),
+  neonScene(
+    'neonParty',
+    ['Neon Party', 'Neon-Party'],
+    [
+      'Big friendly ghosts and dancing skeletons on a bright, colorful background.',
+      'Große freundliche Geister und tanzende Skelette auf hellem, buntem Hintergrund.',
+    ],
+    ['wall'],
+    '🪩',
+    ['#b84dff', '#7dff4d'],
+    [
+      {
+        key: 'bpm',
+        label: L('Tempo (BPM)', 'Tempo (BPM)'),
+        type: 'number',
+        min: 70,
+        max: 140,
+        step: 1,
+        default: 108,
+      },
+    ],
+  ),
+  neonScene(
+    'neonFog',
+    ['Neon Fog', 'Neon-Nebel'],
+    [
+      'Bright swirling purple fog with glowing paw prints, leaves and black fuzzy spiders.',
+      'Hell wirbelnder Lila-Nebel mit leuchtenden Pfotenspuren, Blättern und schwarzen Plüschspinnen.',
+    ],
+    ['floor'],
+    '🌌',
+    ['#8a2be2', '#7dff4d'],
+  ),
+  neonScene(
+    'neonPumpkinPatch',
+    ['Neon Pumpkin Patch', 'Neon-Kürbisfeld'],
+    [
+      'Bright orange-purple glow with lots of big jack-o’-lanterns and vines.',
+      'Helles Orange-Lila-Leuchten mit vielen großen Kürbisgesichtern und Ranken.',
+    ],
+    ['floor', 'wall'],
+    '🎃',
+    ['#ff7a1a', '#8a2be2'],
+  ),
 ];
 
 function effect(
@@ -279,6 +350,21 @@ export const halloweenManifest: ThemeManifest = {
       ambientActors: ['spider', 'bat', 'ghost', 'blackCat'],
     },
     {
+      id: 'neonShow',
+      name: L('Neon Show (dusk)', 'Neon-Show (Dämmerung)'),
+      description: L(
+        'Very bright, high-contrast scenes that stay visible while it is not fully dark yet.',
+        'Sehr helle, kontrastreiche Szenen, die auch sichtbar sind, solange es noch nicht ganz dunkel ist.',
+      ),
+      icon: '🌆',
+      assignments: {
+        wall: { playlistTemplateId: 'neonWallShow' },
+        floor: { playlistTemplateId: 'neonFloorShow' },
+        other: { playlistTemplateId: 'neonWallShow' },
+      },
+      ambientActors: ['spider', 'bat', 'ghost'],
+    },
+    {
       id: 'friendlyWelcome',
       name: L('Friendly Welcome', 'Freundliches Willkommen'),
       description: L(
@@ -335,6 +421,74 @@ export const halloweenManifest: ThemeManifest = {
     },
   ],
   playlistTemplates: [
+    {
+      id: 'neonWallShow',
+      name: L('Neon wall show (dusk)', 'Neon Wand-Show (Dämmerung)'),
+      kind: 'wall',
+      loop: true,
+      items: [
+        {
+          sceneId: 'neonManor',
+          durationSec: 150,
+          transition: { type: 'crossfade', durationMs: 3000 },
+          ambient: { effectIds: ['batSwarm', 'boo', 'ghostWave'], minGapSec: 20, maxGapSec: 45 },
+        },
+        {
+          sceneId: 'neonParty',
+          durationSec: 120,
+          transition: { type: 'crossfade', durationMs: 3000 },
+          ambient: {
+            effectIds: ['skeletonDanceBreak', 'confettiLeaves', 'sparkles'],
+            minGapSec: 20,
+            maxGapSec: 40,
+          },
+        },
+        {
+          sceneId: 'pumpkinMagic',
+          durationSec: 120,
+          transition: { type: 'crossfade', durationMs: 3000 },
+          params: { mood: 'neon' },
+          ambient: { effectIds: ['pumpkinBurst', 'magicCircle'], minGapSec: 20, maxGapSec: 45 },
+        },
+        {
+          sceneId: 'neonPumpkinPatch',
+          durationSec: 90,
+          transition: { type: 'crossfade', durationMs: 3000 },
+          ambient: { effectIds: ['sparkles', 'boo'], minGapSec: 20, maxGapSec: 45 },
+        },
+      ],
+    },
+    {
+      id: 'neonFloorShow',
+      name: L('Neon ground show (dusk)', 'Neon Boden-Show (Dämmerung)'),
+      kind: 'floor',
+      loop: true,
+      items: [
+        {
+          sceneId: 'neonFog',
+          durationSec: 150,
+          transition: { type: 'crossfade', durationMs: 3000 },
+          ambient: {
+            effectIds: ['spiderRush', 'footprintChase', 'confettiLeaves'],
+            minGapSec: 20,
+            maxGapSec: 45,
+          },
+        },
+        {
+          sceneId: 'neonPumpkinPatch',
+          durationSec: 120,
+          transition: { type: 'crossfade', durationMs: 3000 },
+          ambient: { effectIds: ['pumpkinBurst', 'sparkles'], minGapSec: 20, maxGapSec: 45 },
+        },
+        {
+          sceneId: 'magicPath',
+          durationSec: 120,
+          transition: { type: 'crossfade', durationMs: 3000 },
+          params: { mood: 'neon' },
+          ambient: { effectIds: ['magicCircle', 'sparkles'], minGapSec: 20, maxGapSec: 45 },
+        },
+      ],
+    },
     {
       id: 'wallShow',
       name: L('Halloween wall show', 'Halloween Wand-Show'),

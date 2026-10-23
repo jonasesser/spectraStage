@@ -71,6 +71,16 @@ area.
   unlocked, local blackout), red = offline or calibration invalid. Tap for RTT, jitter, clock
   offset, fps and resolution.
 
+### Dusk and auto mode
+
+- Before it is fully dark, thin glowing content disappears in the ambient light. Use the
+  **Neon show** preset (large bright saturated areas, dark creatures as silhouettes) and raise the
+  **dusk boost** (Live tab) – it lifts brightness and saturation on every output; black stays black
+  and creatures get glowing outlines.
+- **Auto mode (schedule)** switches presets, boost and blackout at local clock times, e.g. 17:30
+  Neon + boost 80 %, 18:30 Full show + boost 0, 21:00 blackout. It runs on the server; the phone can
+  be switched off. Entries apply once per day; editing the schedule re-applies the current entry.
+
 ### When the internet drops
 
 - Projector PCs keep playing: scenes, playlists and roaming creatures continue from the local

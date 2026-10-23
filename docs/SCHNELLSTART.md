@@ -12,7 +12,10 @@
    Kanten ziehen → Fenster mit *Masken* schwarz halten → *Kalibrierung übernehmen*.
 5. **Show**: Tab *Live* → Preset *Komplette Halloween-Show*. Effekte und Kreaturen per Tipp.
    Für die Spinne von der Garage auf die Wand: *Von* Garage, *Nach* Hauswand → *Losschicken: Spinne*.
-6. **Notfall**: roter *BLACKOUT*-Knopf oben (alle Beamer schwarz). Am Beamer-PC Taste **B**.
+6. **Dämmerung & Automatik**: Solange es noch hell ist, Preset *Neon-Show (Dämmerung)* und den
+   *Dämmerungs-Boost* hochziehen. Unter *Automatik (Zeitplan)* im Live-Tab stellst du ein, dass
+   z. B. um 17:30 die Neon-Show mit Boost läuft, um 18:30 die normale Show und um 21:00 Blackout.
+7. **Notfall**: roter *BLACKOUT*-Knopf oben (alle Beamer schwarz). Am Beamer-PC Taste **B**.
    Software-Blackout ist **kein** Netzschalter – den Netzschalter der Beamer kennen!
 
 Fällt das Internet aus, laufen die Beamer weiter; das Handy zeigt *Offline* und sperrt die

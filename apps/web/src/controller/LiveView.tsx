@@ -5,6 +5,7 @@ import { useT, type Tr } from '../lib/i18n.tsx';
 import { useShow, useStore } from './store.ts';
 import { StageMap } from './StageMap.tsx';
 import { StagePreview } from './Preview.tsx';
+import { BoostPanel, SchedulePanel } from './AutoPanels.tsx';
 import { storage } from '../lib/storage.ts';
 import { SelectionCtx, Slider, SurfacePicker, useSelection } from './ui.tsx';
 
@@ -79,6 +80,7 @@ export function LiveView() {
         )}
       </section>
       <SurfacePicker state={state} L={L} />
+      <BoostPanel state={state} L={L} />
 
       {catalog.themes.length > 1 && (
         <div className="row" role="group" aria-label={L('Theme', 'Thema')}>
@@ -146,6 +148,7 @@ export function LiveView() {
       </section>
 
       <NowPlaying state={state} surfaces={targets} L={L} />
+      <SchedulePanel state={state} L={L} />
     </div>
   );
 }

@@ -140,12 +140,17 @@ interface KitOptions {
   draw?: DrawFn;
   /** Draw at a fraction of the target resolution (soft content). */
   canvasScale?: number;
+  /** Render the shader layer at a fraction of the resolution and upscale (default 0.5 – backgrounds are soft). */
+  shaderScale?: number;
 }
 
 class KitScene implements SceneInstance {
   private state: DrawState;
   private canvas: CanvasLayer | null = null;
   private shader: ShaderLayer | null = null;
+  private lowRT: THREE.WebGLRenderTarget | null = null;
+  private upscale: THREE.ShaderMaterial | null = null;
+  private upscaleScene: THREE.Scene | null = null;
 
   constructor(
     private readonly ctx: SceneContext,
@@ -186,7 +191,30 @@ class KitScene implements SceneInstance {
         uSeed: (this.state.seed % 1000) / 10,
       });
       if (this.opts.uniforms) this.shader.setUniforms(this.opts.uniforms(this.state, frame));
-      r.render(this.shader.scene, CAMERA);
+      const scale = Math.max(0.25, Math.min(1, this.opts.shaderScale ?? 0.5));
+      if (scale < 1) {
+        const lw = Math.max(2, Math.round(this.state.w * scale));
+        const lh = Math.max(2, Math.round(this.state.h * scale));
+        if (!this.lowRT) {
+          this.lowRT = new THREE.WebGLRenderTarget(lw, lh, {
+            depthBuffer: false,
+            minFilter: THREE.LinearFilter,
+            magFilter: THREE.LinearFilter,
+          });
+          this.upscale = new THREE.ShaderMaterial({
+            uniforms: { map: { value: this.lowRT.texture } },
+            vertexShader: VERT,
+            fragmentShader: COPY_FRAG,
+            depthTest: false,
+            depthWrite: false,
+          });
+          this.upscaleScene = quadScene(this.upscale).scene;
+        } else if (this.lowRT.width !== lw || this.lowRT.height !== lh) this.lowRT.setSize(lw, lh);
+        r.setRenderTarget(this.lowRT);
+        r.render(this.shader.scene, CAMERA);
+        r.setRenderTarget(target);
+        r.render(this.upscaleScene!, CAMERA);
+      } else r.render(this.shader.scene, CAMERA);
     }
     if (this.canvas && this.opts.draw) {
       const g = this.canvas.g;
@@ -227,6 +255,9 @@ class KitScene implements SceneInstance {
   dispose(): void {
     this.canvas?.dispose();
     this.shader?.dispose();
+    this.lowRT?.dispose();
+    this.upscale?.dispose();
+    this.upscaleScene?.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
   }
 }
 
@@ -246,9 +277,13 @@ export function shaderScene(
   id: string,
   fragment: string,
   uniforms?: UniformFn,
-  extra: Partial<SceneModule> = {},
+  extra: Partial<SceneModule> & { shaderScale?: number } = {},
 ): SceneModule {
-  return { id, create: (ctx) => new KitScene(ctx, { fragment, uniforms }), ambientSound: extra.ambientSound };
+  return {
+    id,
+    create: (ctx) => new KitScene(ctx, { fragment, uniforms, shaderScale: extra.shaderScale }),
+    ambientSound: extra.ambientSound,
+  };
 }
 
 export function hybridScene(
@@ -256,11 +291,11 @@ export function hybridScene(
   fragment: string,
   uniforms: UniformFn | undefined,
   draw: DrawFn,
-  extra: Partial<SceneModule> = {},
+  extra: Partial<SceneModule> & { shaderScale?: number } = {},
 ): SceneModule {
   return {
     id,
-    create: (ctx) => new KitScene(ctx, { fragment, uniforms, draw }),
+    create: (ctx) => new KitScene(ctx, { fragment, uniforms, draw, shaderScale: extra.shaderScale }),
     ambientSound: extra.ambientSound,
   };
 }

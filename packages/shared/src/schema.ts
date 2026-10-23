@@ -232,6 +232,31 @@ export const StageAmbientSchema = z.object({
 export type StageAmbient = z.infer<typeof StageAmbientSchema>;
 
 // ---------------------------------------------------------------------------
+// Time schedule (auto mode): presets / boost applied at local clock times
+// ---------------------------------------------------------------------------
+export const ScheduleEntrySchema = z.object({
+  id,
+  /** Local time HH:MM */
+  at: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  themeId: id.nullable(),
+  presetId: id.nullable(),
+  boost: unit.nullable(),
+  /** true = all black (e.g. end of the show), false = resume, null = unchanged */
+  blackout: z.boolean().nullable(),
+});
+export type ScheduleEntry = z.infer<typeof ScheduleEntrySchema>;
+
+export const ScheduleSchema = z.object({
+  enabled: z.boolean(),
+  /** IANA time zone of the show location, e.g. Europe/Berlin */
+  timezone: z.string().min(1).max(64),
+  entries: z.array(ScheduleEntrySchema).max(24),
+  /** `${date}|${entryId}` of the last applied entry (set by the server). */
+  lastApplied: z.string().max(100).nullable(),
+});
+export type Schedule = z.infer<typeof ScheduleSchema>;
+
+// ---------------------------------------------------------------------------
 // Devices, controllers, session
 // ---------------------------------------------------------------------------
 export const TelemetrySchema = z.object({
@@ -282,6 +307,9 @@ export const SessionStateSchema = z.object({
   playlists: z.array(PlaylistSchema),
   cues: z.array(CueSchema),
   ambient: StageAmbientSchema,
+  /** Dusk visibility boost 0..1 (brightness + saturation lift on all outputs; black stays black). */
+  boost: unit.optional(),
+  schedule: ScheduleSchema.optional(),
   devices: z.array(DeviceSchema),
   controllers: z.array(ControllerSchema),
   lastChange: z.object({ actor: z.string(), at: z.number(), summary: z.string() }).nullable(),
@@ -305,6 +333,8 @@ export const CommandSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('session.blackoutAll'), on: z.boolean() }),
   z.object({ t: z.literal('session.setDefaultTheme'), themeId: id }),
   z.object({ t: z.literal('session.setAmbient'), ambient: StageAmbientSchema.omit({ seed: true }) }),
+  z.object({ t: z.literal('session.setBoost'), boost: unit }),
+  z.object({ t: z.literal('session.setSchedule'), schedule: ScheduleSchema.omit({ lastApplied: true }) }),
 
   z.object({
     t: z.literal('surface.create'),

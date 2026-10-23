@@ -57,6 +57,8 @@ export interface EffectDrawInfo {
   seed: number;
   params: ParamValues;
   rng: Rng;
+  /** Dusk visibility boost 0..1. */
+  boost?: number;
 }
 
 export interface EffectModule {
@@ -73,6 +75,8 @@ export interface ActorDrawInfo {
   t: number;
   seed: number;
   sizePx: number;
+  /** Dusk visibility boost 0..1 – draw stronger outlines/rims when > 0. */
+  boost?: number;
 }
 
 export interface ActorModule {

@@ -37,6 +37,7 @@ theme-specific content.
 | D21 | **Masks per output** in output space: polygon / rectangle / ellipse, include or exclude, safety margin, hard edges for safety masks, optional feather for cosmetic masks. Applied as the very last pixel stage over all layers. |
 | D22 | Calibration per output: **profiles** (several, duplicate, export/import), 4-corner homography **plus optional mesh grid** (up to 5×5) for uneven surfaces, rotation/flip, crop margins, test pattern with timeout, undo/redo and explicit *Apply*. Missing/invalid profile or resolution mismatch → output stays black until fixed or deliberately accepted. |
 | D23 | No reference photo upload in this release (schematic layout instead). Overlaps are shown in the stage editor; each output has manual edge blending (gamma-corrected ramps per edge) and *dim* masks. |
+| D25 | Dusk support: session-wide *boost* (brightness/saturation lift in the final pass, black stays black, thicker creature outlines) and Neon high-contrast scenes; **auto mode** = server-side schedule applying presets / boost / blackout at local times (IANA time zone). |
 | D24 | Playlist items support effects at fixed times in addition to random ambient effects. Effects inherit the color mood of the scene they play over. |
 
 ## 3. Concepts

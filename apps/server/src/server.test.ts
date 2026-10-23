@@ -328,4 +328,38 @@ describe('reliability', () => {
     await owner.wait((m) => m.type === 'snapshot' && m.state.surfaces[0]?.name === 'Imported');
     owner.close();
   });
+
+  it('auto mode: schedule applies preset, boost and blackout once per entry', async () => {
+    const { owner } = await createShow();
+    const ack = await owner.cmd({
+      t: 'session.setSchedule',
+      schedule: {
+        enabled: true,
+        timezone: 'UTC',
+        entries: [
+          {
+            id: 'e1',
+            at: '00:00',
+            themeId: 'halloween',
+            presetId: 'quietAtmosphere',
+            boost: 0.6,
+            blackout: false,
+          },
+        ],
+      },
+    });
+    expect(ack.type).toBe('ack');
+    ctx.hub.scheduleTick();
+    const snap = (await owner.wait((m) => m.type === 'snapshot' && m.state.boost === 0.6)) as Extract<
+      ServerMessage,
+      { type: 'snapshot' }
+    >;
+    expect(snap.state.schedule?.lastApplied).toMatch(/\|e1$/);
+    expect(snap.state.surfaces[0]!.playback.mode).toBe('scene'); // quietAtmosphere assigns scenes
+    const rev = snap.state.revision;
+    ctx.hub.scheduleTick();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(owner.state!.revision).toBe(rev); // not applied twice
+    owner.close();
+  });
 });

@@ -363,6 +363,20 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       requireTheme(ctx.catalog, cmd.themeId);
       state.defaultThemeId = cmd.themeId;
       return res('default theme');
+    case 'session.setBoost':
+      state.boost = cmd.boost;
+      return res(`dusk boost ${Math.round(cmd.boost * 100)}%`);
+    case 'session.setSchedule': {
+      for (const e of cmd.schedule.entries) {
+        if (e.themeId && e.presetId) {
+          const t = requireTheme(ctx.catalog, e.themeId);
+          if (!t.presets.some((p) => p.id === e.presetId)) fail('unknown_preset', 'Unknown preset');
+        }
+      }
+      // Re-evaluate on change so an edited schedule takes effect immediately.
+      state.schedule = { ...cmd.schedule, lastApplied: null };
+      return res(cmd.schedule.enabled ? 'schedule on' : 'schedule off');
+    }
     case 'session.setAmbient': {
       for (const a of cmd.ambient.actors) {
         const t = requireTheme(ctx.catalog, a.themeId);

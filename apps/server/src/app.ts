@@ -338,6 +338,7 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
       }
     }
   }, 20_000);
+  const scheduler = setInterval(() => hub.scheduleTick(), 15_000);
   const sweeper = setInterval(() => {
     hub.sweep();
     limiter.sweep();
@@ -376,6 +377,7 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
   const close = async () => {
     clearInterval(heartbeat);
     clearInterval(sweeper);
+    clearInterval(scheduler);
     for (const c of hub.allClients()) c.ws.close(1001, 'server shutdown');
     await app.close();
     store.close();

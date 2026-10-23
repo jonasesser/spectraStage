@@ -874,3 +874,198 @@ export function fadeInOut(t: number, dur: number, fin = 0.15, fout = 0.2): numbe
   const p = t / dur;
   return clamp01(p / fin) * clamp01((1 - p) / fout);
 }
+
+// ---------------------------------------------------------------------------
+// Neon / high-contrast helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Black fuzzy spider (top-down, facing +x, body length `size`). Dark silhouette with glowing
+ * eyes; `rim` (0..1) adds a bright outline so it reads on dark AND bright backgrounds.
+ */
+export function fuzzySpider(
+  g: CanvasRenderingContext2D,
+  size: number,
+  phase: number,
+  rim: number,
+  rimColor: string,
+  eyeColor = '#ffe14d',
+  seed = 0,
+): void {
+  const s = size;
+  const body = '#0d0714';
+  g.save();
+  g.lineCap = 'round';
+  g.lineJoin = 'round';
+  const baseAngles = [0.75, 1.25, 1.85, 2.35];
+  const legs: [number, number, number, number, number, number][] = [];
+  for (let i = 0; i < 4; i++) {
+    for (const side of [-1, 1]) {
+      const alt = (i + (side > 0 ? 0 : 1)) % 2 === 0 ? 0 : Math.PI;
+      const swing = Math.sin(phase + alt) * 0.22;
+      const a = side * (baseAngles[i]! + swing);
+      const ax = s * (0.12 - i * 0.05);
+      const ay = side * s * 0.05;
+      const kx = ax + Math.cos(a) * s * 0.36;
+      const ky = ay + Math.sin(a) * s * 0.36 - side * s * 0.04;
+      const a2 = a + side * (i < 2 ? 0.5 : -0.5);
+      legs.push([ax, ay, kx, ky, kx + Math.cos(a2) * s * 0.34, ky + Math.sin(a2) * s * 0.34]);
+    }
+  }
+  const legPath = () => {
+    g.beginPath();
+    for (const [ax, ay, kx, ky, fx, fy] of legs) {
+      g.moveTo(ax, ay);
+      g.lineTo(kx, ky);
+      g.lineTo(fx, fy);
+    }
+  };
+  const bodyPath = () => {
+    g.beginPath();
+    g.ellipse(-s * 0.26, 0, s * 0.3, s * 0.25, 0, 0, TAU);
+    g.moveTo(s * 0.27, 0);
+    g.ellipse(s * 0.12, 0, s * 0.15, s * 0.14, 0, 0, TAU);
+  };
+  const legW = Math.max(1.5, s * 0.055);
+  // Rim pass: always a thin glow so a black spider is never invisible on black; boost makes it bold.
+  const rimW = s * (0.018 + 0.03 * rim);
+  if (rim > 0) glowAt(g, -s * 0.1, 0, s * 1.1, rimColor, 0.25 * rim);
+  g.strokeStyle = rim > 0 ? rimColor : '#7a4dbf';
+  g.lineWidth = legW + rimW * 2;
+  legPath();
+  g.stroke();
+  g.fillStyle = g.strokeStyle;
+  bodyPath();
+  g.lineWidth = rimW * 2;
+  g.stroke();
+  // Dark legs and body
+  g.strokeStyle = body;
+  g.lineWidth = legW;
+  legPath();
+  g.stroke();
+  g.fillStyle = body;
+  bodyPath();
+  g.fill();
+  // Fuzz
+  g.strokeStyle = '#2a1a3a';
+  g.lineWidth = Math.max(1, s * 0.012);
+  g.beginPath();
+  for (let k = 0; k < 28; k++) {
+    const a = (k / 28) * TAU + seed;
+    const r1 = 0.27 + 0.03 * Math.sin(k * 7.3);
+    const bx = -s * 0.26 + Math.cos(a) * s * r1 * 1.05;
+    const by = Math.sin(a) * s * r1 * 0.88;
+    g.moveTo(bx, by);
+    g.lineTo(bx + Math.cos(a + 0.4) * s * 0.06, by + Math.sin(a + 0.4) * s * 0.06);
+  }
+  g.stroke();
+  // Eyes: big and glowing
+  glowAt(g, s * 0.2, 0, s * 0.28, eyeColor, 0.55 + 0.35 * rim);
+  for (const side of [-1, 1]) {
+    g.fillStyle = '#ffffff';
+    g.beginPath();
+    g.arc(s * 0.19, side * s * 0.065, s * 0.06, 0, TAU);
+    g.fill();
+    g.fillStyle = eyeColor;
+    g.beginPath();
+    g.arc(s * 0.2, side * s * 0.065, s * 0.04, 0, TAU);
+    g.fill();
+    g.fillStyle = '#120818';
+    g.beginPath();
+    g.arc(s * 0.215, side * s * 0.065, s * 0.02, 0, TAU);
+    g.fill();
+  }
+  g.restore();
+}
+
+/** Glowing paw print (pointing -y). */
+export function pawPrint(
+  g: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  angle: number,
+  color: string,
+  alpha: number,
+): void {
+  if (alpha <= 0.01) return;
+  g.save();
+  g.translate(x, y);
+  g.rotate(angle);
+  g.globalAlpha *= alpha;
+  glowAt(g, 0, 0, size * 1.1, color, 0.5);
+  g.fillStyle = color;
+  g.beginPath();
+  g.ellipse(0, size * 0.12, size * 0.26, size * 0.22, 0, 0, TAU);
+  g.fill();
+  for (const [tx, ty] of [
+    [-0.28, -0.18],
+    [-0.1, -0.32],
+    [0.1, -0.32],
+    [0.28, -0.18],
+  ]) {
+    g.beginPath();
+    g.ellipse(tx! * size, ty! * size, size * 0.1, size * 0.13, tx! * 0.8, 0, TAU);
+    g.fill();
+  }
+  g.restore();
+}
+
+/** Simple maple-ish autumn leaf. */
+export function leaf(
+  g: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  angle: number,
+  color: string,
+  alpha = 1,
+): void {
+  if (alpha <= 0.01) return;
+  g.save();
+  g.translate(x, y);
+  g.rotate(angle);
+  g.globalAlpha *= alpha;
+  glowAt(g, 0, 0, size * 0.9, color, 0.35);
+  g.fillStyle = color;
+  g.beginPath();
+  const pts = 5;
+  for (let i = 0; i <= pts * 2; i++) {
+    const a = -Math.PI / 2 + (i / (pts * 2)) * TAU * 0.92 - TAU * 0.04;
+    const r = i % 2 === 0 ? size * 0.5 : size * 0.24;
+    const px2 = Math.cos(a) * r;
+    const py2 = Math.sin(a) * r;
+    if (i === 0) g.moveTo(px2, py2);
+    else g.lineTo(px2, py2);
+  }
+  g.closePath();
+  g.fill();
+  g.strokeStyle = 'rgba(80,30,0,0.6)';
+  g.lineWidth = Math.max(1, size * 0.04);
+  g.beginPath();
+  g.moveTo(0, size * 0.55);
+  g.lineTo(0, -size * 0.3);
+  g.stroke();
+  g.restore();
+}
+
+/** Run a draw callback with a soft colored glow around everything it fills (dusk boost). */
+export function withRim(
+  g: CanvasRenderingContext2D,
+  size: number,
+  boost: number,
+  color: string,
+  fn: () => void,
+): void {
+  if (boost <= 0) {
+    fn();
+    return;
+  }
+  g.save();
+  g.shadowColor = color;
+  g.shadowBlur = Math.max(2, size * 0.1 * boost);
+  fn();
+  // A second pass strengthens the halo so dark bodies read on bright backgrounds too.
+  if (boost > 0.4) fn();
+  g.restore();
+}

@@ -531,6 +531,66 @@ export class Hub {
   }
 
   // -------------------------------------------------------------------------
+  // Auto mode: time schedule (presets / boost / blackout at local clock times)
+  // -------------------------------------------------------------------------
+  scheduleTick(): void {
+    const now = this.now();
+    for (const ls of this.live.values()) {
+      const sch = ls.state.schedule;
+      if (!sch?.enabled || sch.entries.length === 0) continue;
+      const today = localClock(now, sch.timezone);
+      const yesterday = localClock(now - 86_400_000, sch.timezone);
+      if (!today || !yesterday) continue;
+      const sorted = [...sch.entries].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+      let entry = [...sorted].reverse().find((e) => e.at <= today.hm);
+      let key: string;
+      if (entry) key = `${today.date}|${entry.id}`;
+      else {
+        // Before the first entry of the day: the last entry of yesterday is still active.
+        entry = sorted[sorted.length - 1]!;
+        key = `${yesterday.date}|${entry.id}`;
+      }
+      if (sch.lastApplied === key) continue;
+      try {
+        const ctx = {
+          now,
+          actor: { id: 'schedule', name: 'Zeitplan', role: 'owner' as const },
+          catalog: this.catalog,
+          newId,
+          newSeed,
+          leadMs: 300,
+        };
+        let next = ls.state;
+        const parts: string[] = [];
+        if (entry.themeId && entry.presetId && this.catalog.get(entry.themeId)) {
+          next = applyCommand(
+            next,
+            { t: 'preset.apply', themeId: entry.themeId, presetId: entry.presetId },
+            ctx,
+          ).state;
+          parts.push(`preset ${entry.presetId}`);
+        }
+        if (entry.blackout !== null) {
+          next = applyCommand(next, { t: 'session.blackoutAll', on: entry.blackout }, ctx).state;
+          parts.push(entry.blackout ? 'blackout' : 'resume');
+        }
+        next = structuredClone(next);
+        if (entry.boost !== null) {
+          next.boost = entry.boost;
+          parts.push(`boost ${Math.round(entry.boost * 100)}%`);
+        }
+        next.schedule = { ...sch, lastApplied: key };
+        this.commit(ls, next, 'Zeitplan', `${entry.at} ${parts.join(', ')}`);
+      } catch (e) {
+        this.log.warn({ err: e, session: ls.state.id }, 'schedule entry failed');
+        const next = structuredClone(ls.state);
+        next.schedule = { ...sch, lastApplied: key };
+        this.commit(ls, next, 'system', 'schedule skipped');
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Maintenance
   // -------------------------------------------------------------------------
   sweep(): void {
@@ -579,5 +639,24 @@ export class Hub {
 
   audit(sessionId: string) {
     return this.store.recentAudit(sessionId);
+  }
+}
+
+/** Local date (YYYY-MM-DD) and time (HH:MM) in an IANA time zone; null for invalid zones. */
+export function localClock(ms: number, timeZone: string): { date: string; hm: string } | null {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(new Date(ms));
+    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
+    return { date: `${get('year')}-${get('month')}-${get('day')}`, hm: `${get('hour')}:${get('minute')}` };
+  } catch {
+    return null;
   }
 }

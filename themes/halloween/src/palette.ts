@@ -69,6 +69,16 @@ export const PALETTES: Record<string, Palette> = {
     rim: '#7dff9e',
     party: ['#7dff6b', '#e3ff6b', '#ff8a1f', '#b38cff', '#6fe3ff'],
   }),
+  neon: make({
+    primary: '#ff7a1a',
+    secondary: '#ffe14d',
+    accent: '#b84dff',
+    ghost: '#f2f8ff',
+    sky: ['#1c0840', '#3a0f66'],
+    shadow: '#24093f',
+    rim: '#d98bff',
+    party: ['#ff7a1a', '#7dff4d', '#b84dff', '#ffe14d', '#4de8ff', '#ff4dd2'],
+  }),
   blue: make({
     primary: '#6ec6ff',
     secondary: '#c2ecff',
@@ -89,3 +99,6 @@ export function num(params: ParamValues, key: string, d: number): number {
   const v = params[key];
   return typeof v === 'number' && Number.isFinite(v) ? v : d;
 }
+
+/** Bright rim color used when the dusk boost is on (stays visible on dark and bright backgrounds). */
+export const BOOST_RIM = '#e8ff8a';

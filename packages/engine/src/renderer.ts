@@ -123,9 +123,16 @@ uniform sampler2D view;
 uniform sampler2D mask;
 uniform vec2 outSize;
 uniform float gain;
+uniform float boost;
 varying vec2 vUv;
 void main() {
   vec3 c = texture2D(view, vUv).rgb;
+  if (boost > 0.0) {
+    // Dusk boost: lift mid-tones and saturation so content survives ambient light. Black stays black.
+    c = pow(max(c, vec3(0.0)), vec3(1.0 / (1.0 + boost * 0.9)));
+    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    c = clamp(mix(vec3(l), c, 1.0 + boost * 0.6), 0.0, 1.0);
+  }
   float m = texture2D(mask, gl_FragCoord.xy / outSize).r;
   gl_FragColor = vec4(c * m * gain, 1.0);
 }
@@ -386,6 +393,7 @@ export class StageRenderer {
         mask: { value: this.maskTexture },
         outSize: { value: new THREE.Vector2(1, 1) },
         gain: { value: 0 },
+        boost: { value: 0 },
       },
       vertexShader: CLIP_VERT,
       fragmentShader: FINAL_FRAG,
@@ -734,6 +742,7 @@ export class StageRenderer {
       this.finalMaterial.uniforms.mask!.value = this.maskTexture;
       (this.finalMaterial.uniforms.outSize!.value as THREE.Vector2).set(this.width, this.height);
       this.finalMaterial.uniforms.gain!.value = finalGain;
+      this.finalMaterial.uniforms.boost!.value = state.boost ?? 0;
       r.render(this.finalScene, CLIP_CAMERA);
     }
     if (showOverlay) {
@@ -1024,6 +1033,7 @@ export class StageRenderer {
           ...it.params,
         },
         rng: createRng(it.seed),
+        boost: state.boost ?? 0,
       });
       g.restore();
       if (primary && mod.sound && !layer.startedEffects.has(it.key) && now - it.startAt < 600) {
@@ -1104,7 +1114,13 @@ export class StageRenderer {
         if (!mod.upright) g.rotate(pose.angle);
         const sizePx = manifest.sizeM * ppm;
         g.scale(1 / ppm, 1 / ppm);
-        mod.draw(g, pose, { ppm, t: (now - cue.startAt) / 1000, seed: cue.seed + i, sizePx });
+        mod.draw(g, pose, {
+          ppm,
+          t: (now - cue.startAt) / 1000,
+          seed: cue.seed + i,
+          sizePx,
+          boost: state.boost ?? 0,
+        });
         g.restore();
         drew = true;
         if (mod.sound && pose.moving && this.soundPrimaryFor(output, outputs, pose)) {

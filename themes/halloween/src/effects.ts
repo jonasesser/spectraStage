@@ -1,7 +1,19 @@
 import { clamp01, ease, smoothstep, TAU } from '@spectrastage/engine';
 import type { EffectDrawInfo, EffectModule } from '@spectrastage/engine';
-import { palette } from './palette.ts';
-import { bat, dancePose, footprint, ghost, glowAt, pumpkin, skeleton, spider, star } from './shapes.ts';
+import { BOOST_RIM, palette, PALETTES } from './palette.ts';
+import {
+  bat,
+  dancePose,
+  footprint,
+  fuzzySpider,
+  ghost,
+  glowAt,
+  pumpkin,
+  skeleton,
+  spider,
+  star,
+  withRim,
+} from './shapes.ts';
 
 type Info = EffectDrawInfo;
 
@@ -88,7 +100,8 @@ const batSwarm = effect(
       const u = p * 1.25 - 0.12;
       const x = (fromLeft ? u : 1 - u) * i.w;
       const y = i.h * (lane + Math.sin(p * 9 + ph) * amp - p * 0.12);
-      bat(g, x, y, bs * sc, Math.sin(i.t * 16 + ph), pal, a);
+      const boost = i.boost ?? 0;
+      withRim(g, bs * sc, boost, BOOST_RIM, () => bat(g, x, y, bs * sc, Math.sin(i.t * 16 + ph), pal, a));
     }
   },
   (snd) => snd.flutter({ duration: 2.4, gain: 0.12, rate: 16 }),
@@ -216,7 +229,11 @@ const spiderRush = effect(
       g.globalAlpha = a;
       g.translate(x, y);
       g.rotate((dirRight ? 0 : Math.PI) + Math.cos(p * 20 + wig) * 0.2);
-      spider(g, ss * (0.8 + (0.4 * ((k * 37) % 10)) / 10), i.t * 30 + k, pal);
+      const sz = ss * (0.8 + (0.4 * ((k * 37) % 10)) / 10);
+      const boost = i.boost ?? 0;
+      if (boost > 0 || pal === PALETTES.neon)
+        fuzzySpider(g, sz, i.t * 30 + k, Math.max(0.15, boost), BOOST_RIM, pal.secondary, k);
+      else spider(g, sz, i.t * 30 + k, pal);
       g.restore();
     }
   },
