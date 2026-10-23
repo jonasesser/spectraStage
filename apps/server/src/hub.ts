@@ -4,6 +4,7 @@ import {
   applyReportedResolution,
   CommandError,
   createInitialState,
+  createSurface,
   cueLeadMs,
   normalizeCode,
   isValidCode,
@@ -76,6 +77,7 @@ export class Hub {
   createSession(
     name: string,
     themeId: string | undefined,
+    locale: 'de' | 'en' = 'de',
   ): { state: SessionState; ownerToken: string; ownerId: string } {
     if (this.store.countSessions() >= this.config.maxSessions) {
       throw new HubError(503, 'capacity', 'Server has reached its show limit. Please try again later.');
@@ -94,6 +96,15 @@ export class Hub {
         .filter((a) => theme.actors.some((x) => x.id === a && x.childSafe))
         .map((actorId) => ({ themeId: theme.id, actorId }));
     }
+    // Starter stage: the preview shows something before any projector is paired.
+    const ctx = {
+      now,
+      actor: { id: ownerId, name: 'Owner', role: 'owner' as const },
+      catalog: this.catalog,
+      newId,
+      newSeed,
+    };
+    for (const s of theme.starterStage ?? []) createSurface(state, s.name[locale] || s.name.en, s.kind, ctx);
     const ownerToken = newToken();
     this.store.tx(() => {
       this.store.insertSession(state, now);

@@ -133,7 +133,7 @@ describe('sessions & pairing', () => {
     const devices = [];
     for (const n of ['Garage', 'Wall', 'Ground']) devices.push(await pairDevice(owner, n));
     await owner.wait((m) => m.type === 'snapshot' && m.state.outputs.length === 3);
-    expect(owner.state!.surfaces).toHaveLength(3);
+    expect(owner.state!.surfaces).toHaveLength(5); // 2 starter surfaces + 3 new
     expect(owner.state!.devices.every((d) => d.status === 'approved' && d.outputId)).toBe(true);
     for (const d of devices) d.dev.close();
     owner.close();

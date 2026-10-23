@@ -1,10 +1,19 @@
 import { useEffect, useState } from 'react';
-import { activeProfile, formatCode, type Device, type Output, type SessionState } from '@spectrastage/shared';
+import {
+  activeProfile,
+  bboxIntersects,
+  polygonBBox,
+  formatCode,
+  type Device,
+  type Output,
+  type SessionState,
+} from '@spectrastage/shared';
 import { useT, type Tr } from '../lib/i18n.tsx';
 import { api } from '../lib/api.ts';
 import { useShow, useStore } from './store.ts';
 import { Light, outputHealth, Sheet, Slider, kindLabel } from './ui.tsx';
 import { CalibrationEditor } from './CalibrationEditor.tsx';
+import { StagePreview } from './Preview.tsx';
 
 export function OutputsView() {
   const L = useT();
@@ -133,12 +142,16 @@ function PendingDevice({
 }) {
   const store = useStore();
   const [open, setOpen] = useState(false);
+  const uncovered = state.surfaces.filter((s) => {
+    const b = polygonBBox(s.polygon);
+    return !state.outputs.some((o) => bboxIntersects(b, activeProfile(o).viewport));
+  });
   const [mode, setMode] = useState<'newSurface' | 'existingSurface' | 'existingOutput'>(
-    state.surfaces.length === 0 ? 'newSurface' : 'newSurface',
+    uncovered.length > 0 ? 'existingSurface' : 'newSurface',
   );
   const [name, setName] = useState(device.name);
   const [kind, setKind] = useState<'wall' | 'floor' | 'other'>('wall');
-  const [surfaceId, setSurfaceId] = useState(state.surfaces[0]?.id ?? '');
+  const [surfaceId, setSurfaceId] = useState(uncovered[0]?.id ?? state.surfaces[0]?.id ?? '');
   const [outputId, setOutputId] = useState(state.outputs[0]?.id ?? '');
   const approve = async () => {
     const ok = await store.send(
@@ -286,6 +299,7 @@ function OutputCard({
   const store = useStore();
   const { presence } = useShow();
   const [details, setDetails] = useState(false);
+  const [preview, setPreview] = useState(false);
   const h = outputHealth(output, state, presence, L);
   const device = state.devices.find((d) => d.outputId === output.id && d.status === 'approved');
   const tel = device ? presence.devices[device.id]?.telemetry : null;
@@ -384,12 +398,26 @@ function OutputCard({
         >
           {testOn ? L('Test pattern off', 'Testbild aus') : L('Test pattern', 'Testbild')}
         </button>
+        <button className={`btn${preview ? ' on' : ''}`} onClick={() => setPreview((v) => !v)}>
+          {L('Preview', 'Vorschau')}
+        </button>
         {device && (
           <button className="btn" onClick={() => store.send({ t: 'device.identify', deviceId: device.id })}>
             {L('Identify', 'Identifizieren')}
           </button>
         )}
       </div>
+      {preview && (
+        <div style={{ marginTop: '0.75rem' }}>
+          <StagePreview state={state} now={() => store.conn.clock.now()} outputId={output.id} />
+          <p className="muted small" style={{ margin: '0.4rem 0 0' }}>
+            {L(
+              'Exactly what this projector shows – including calibration, masks and blackout.',
+              'Genau das, was dieser Beamer zeigt – inklusive Kalibrierung, Masken und Blackout.',
+            )}
+          </p>
+        </div>
+      )}
       <div className="stack" style={{ marginTop: '0.75rem' }}>
         <Slider
           label={L('Brightness', 'Helligkeit')}

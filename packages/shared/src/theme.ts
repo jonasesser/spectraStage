@@ -118,6 +118,8 @@ export interface ThemeManifest {
   defaults: Record<SurfaceKind, string>;
   /** Playlist templates that auto-start for newly created surfaces of a kind (template behaviour). */
   autoPlaylists?: Partial<Record<SurfaceKind, string>>;
+  /** Surfaces created for a new show so the preview works before any projector is connected. */
+  starterStage?: { name: LocalizedText; kind: SurfaceKind }[];
 }
 
 export interface ThemeCatalog {

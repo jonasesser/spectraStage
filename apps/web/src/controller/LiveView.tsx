@@ -1,11 +1,11 @@
-import { useContext, useEffect, useRef, useState } from 'react';
+import { useContext, useState } from 'react';
 import { catalog } from '@spectrastage/catalog/manifests';
-import { loadThemeRuntime } from '@spectrastage/catalog/runtime';
-import { StageRenderer } from '@spectrastage/engine';
 import { activeScene, playlistPosition, type SessionState, type Surface } from '@spectrastage/shared';
 import { useT, type Tr } from '../lib/i18n.tsx';
 import { useShow, useStore } from './store.ts';
 import { StageMap } from './StageMap.tsx';
+import { StagePreview } from './Preview.tsx';
+import { storage } from '../lib/storage.ts';
 import { SelectionCtx, Slider, SurfacePicker, useSelection } from './ui.tsx';
 
 export function LiveView() {
@@ -17,7 +17,17 @@ export function LiveView() {
   const [themeId, setThemeId] = useState(state.defaultThemeId);
   const theme = catalog.get(themeId) ?? catalog.themes[0]!;
   const [fired, setFired] = useState<string | null>(null);
-  const [preview, setPreview] = useState(false);
+  const anyOnline = state.devices.some((d) => d.status === 'approved' && presence.devices[d.id]?.online);
+  const [preview, setPreviewState] = useState(() => {
+    const stored = storage.get('ss.preview');
+    return stored ? stored === '1' : !anyOnline;
+  });
+  const setPreview = (fn: (v: boolean) => boolean) =>
+    setPreviewState((v) => {
+      const n = fn(v);
+      storage.set('ss.preview', n ? '1' : '0');
+      return n;
+    });
   const now = () => store.conn.clock.now();
 
   const toggle = (id: string) => {
@@ -50,6 +60,24 @@ export function LiveView() {
         now={now}
         L={L}
       />
+      <section className="panel">
+        <div className="section-title">
+          <h2>{L('Live preview', 'Live-Vorschau')}</h2>
+          <button className={`btn small${preview ? ' on' : ''}`} onClick={() => setPreview((v) => !v)}>
+            {preview ? L('Hide', 'Ausblenden') : L('Show', 'Anzeigen')}
+          </button>
+        </div>
+        {preview ? (
+          <StagePreview state={state} now={now} />
+        ) : (
+          <p className="muted small">
+            {L(
+              'Shows the whole stage on this device – also without any projector (uses battery).',
+              'Zeigt die ganze Bühne auf diesem Gerät – auch ganz ohne Beamer (kostet Akku).',
+            )}
+          </p>
+        )}
+      </section>
       <SurfacePicker state={state} L={L} />
 
       {catalog.themes.length > 1 && (
@@ -118,25 +146,6 @@ export function LiveView() {
       </section>
 
       <NowPlaying state={state} surfaces={targets} L={L} />
-
-      <section className="panel">
-        <div className="section-title">
-          <h2>{L('Live preview', 'Live-Vorschau')}</h2>
-          <button className={`btn small${preview ? ' on' : ''}`} onClick={() => setPreview((v) => !v)}>
-            {preview ? L('Hide', 'Ausblenden') : L('Show', 'Anzeigen')}
-          </button>
-        </div>
-        {preview ? (
-          <LivePreview state={state} now={now} />
-        ) : (
-          <p className="muted small">
-            {L(
-              'Renders the whole stage on this phone (uses battery).',
-              'Rendert die ganze Bühne auf diesem Handy (kostet Akku).',
-            )}
-          </p>
-        )}
-      </section>
     </div>
   );
 }
@@ -329,28 +338,4 @@ function NowPlaying({ state, surfaces, L }: { state: SessionState; surfaces: Sur
       </div>
     </section>
   );
-}
-
-export function LivePreview({ state, now }: { state: SessionState; now: () => number }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  const r = useRef<StageRenderer | null>(null);
-  useEffect(() => {
-    if (!ref.current) return;
-    const renderer = new StageRenderer({
-      canvas: ref.current,
-      catalog,
-      loadRuntime: loadThemeRuntime,
-      now,
-      preview: true,
-      maxPixelRatio: 1,
-    });
-    r.current = renderer;
-    renderer.start();
-    return () => renderer.dispose();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useEffect(() => {
-    r.current?.setState(state, null);
-  }, [state]);
-  return <canvas ref={ref} className="preview-canvas" />;
 }

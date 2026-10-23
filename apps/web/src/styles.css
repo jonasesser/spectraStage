@@ -911,3 +911,10 @@ label.check {
   hyphens: auto;
   overflow-wrap: anywhere;
 }
+
+.stage-map svg {
+  max-height: 46vh;
+}
+.preview-canvas {
+  max-height: 70vh;
+}

@@ -32,11 +32,16 @@ async function openDisplay(browser: Browser, code: string, name: string): Promis
   return page;
 }
 
-async function approve(phone: Page, name: string, kind: 'Wand' | 'Boden' = 'Wand') {
+async function approve(phone: Page, name: string, kind?: 'Wand' | 'Boden') {
   const item = phone.locator('.list-item.pending', { hasText: name });
   await item.getByRole('button', { name: /Freigeben|Approve/ }).click();
-  await phone.locator('.sheet').getByRole('button', { name: kind, exact: true }).click();
-  await phone.getByRole('button', { name: /Gerät freigeben|Approve device/ }).click();
+  const sheet = phone.locator('.sheet');
+  if (kind) {
+    // new projector on a new surface (otherwise the dialog pre-selects an uncovered starter surface)
+    await sheet.getByLabel(/Neuer Beamer auf neuer Fläche/).check();
+    await sheet.getByRole('button', { name: kind, exact: true }).click();
+  }
+  await sheet.getByRole('button', { name: /Gerät freigeben|Approve device/ }).click();
 }
 
 test('anonymous show: pair two projectors, play scenes, effects, creatures, blackout', async ({
@@ -45,8 +50,8 @@ test('anonymous show: pair two projectors, play scenes, effects, creatures, blac
   const { phone, code } = await createShow(browser);
   const garage = await openDisplay(browser, code, 'Garage');
   const wall = await openDisplay(browser, code, 'Hauswand');
-  await approve(phone, 'Garage');
-  await approve(phone, 'Hauswand');
+  await approve(phone, 'Garage'); // uses the starter surface “Garage”
+  await approve(phone, 'Hauswand', 'Wand');
   await expect(garage.getByText(/Warte auf Freigabe/)).toBeHidden({ timeout: 10_000 });
   await expect(phone.locator('section.panel h2', { hasText: '📽 Garage' })).toBeVisible();
   await expect(phone.locator('section.panel h2', { hasText: '📽 Hauswand' })).toBeVisible();

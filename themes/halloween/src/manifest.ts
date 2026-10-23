@@ -474,5 +474,9 @@ export const halloweenManifest: ThemeManifest = {
     },
   ],
   defaults: { wall: 'hauntedHouse', floor: 'spidersAndFog', other: 'ghostParty' },
+  starterStage: [
+    { name: L('Garage', 'Garage'), kind: 'wall' },
+    { name: L('Driveway', 'Einfahrt'), kind: 'floor' },
+  ],
   autoPlaylists: { wall: 'wallShow', floor: 'floorShow', other: 'wallShow' },
 };

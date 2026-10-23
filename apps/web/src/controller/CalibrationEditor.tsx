@@ -16,6 +16,7 @@ import { useT, type Tr } from '../lib/i18n.tsx';
 import { uuid } from '../lib/storage.ts';
 import { useShow, useStore } from './store.ts';
 import { download, pickJsonFile, Slider } from './ui.tsx';
+import { StagePreview } from './Preview.tsx';
 
 type Mode = 'corners' | 'mesh' | 'masks' | 'image';
 type Handle =
@@ -39,6 +40,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
   const [maskId, setMaskId] = useState<string | null>(null);
   const [drawing, setDrawing] = useState<Pt[] | null>(null);
   const [fine, setFine] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const [zoom, setZoom] = useState({ s: 1, cx: 0.5, cy: 0.5 });
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<{ handle: NonNullable<Handle>; before: Profile } | null>(null);
@@ -509,6 +511,24 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
                 {L('Zoom to point', 'Zum Punkt zoomen')}
               </button>
             )}
+            <div style={{ marginTop: '0.4rem' }}>
+              <button
+                className={`btn small${showPreview ? ' on' : ''}`}
+                onClick={() => setShowPreview((v) => !v)}
+              >
+                {L('Preview projector image', 'Vorschau Beamerbild')}
+              </button>
+              {showPreview && (
+                <div style={{ marginTop: '0.5rem' }}>
+                  <StagePreview
+                    state={state}
+                    now={() => store.conn.clock.now()}
+                    outputId={output.id}
+                    profile={dirty ? draft : null}
+                  />
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

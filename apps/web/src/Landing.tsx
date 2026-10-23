@@ -68,6 +68,7 @@ export default function Landing() {
         const r = await api<{ ownerToken: string }>('POST', '/api/sessions', {
           name: name.trim() || 'Show',
           themeId,
+          locale,
         });
         storage.set('ss.controller.showRecovery', '1');
         go(r.ownerToken, 'owner');

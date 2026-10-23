@@ -134,5 +134,6 @@ export const basicManifest: ThemeManifest = {
       ],
     },
   ],
+  starterStage: [{ name: L('Wall', 'Wand'), kind: 'wall' }],
   defaults: { wall: 'aurora', floor: 'starfield', other: 'colorWaves' },
 };
