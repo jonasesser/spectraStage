@@ -438,6 +438,30 @@ function OutputCard({
           onChange={(v) => store.send({ t: 'output.update', outputId: output.id, volume: v / 100 })}
         />
         {details && (
+          <label>
+            {L('Performance', 'Leistung')}
+            <select
+              value={output.performance ?? 'auto'}
+              onChange={(e) =>
+                store.send({
+                  t: 'output.update',
+                  outputId: output.id,
+                  performance: e.target.value as 'auto' | 'high' | 'eco',
+                })
+              }
+            >
+              <option value="auto">{L('Automatic (recommended)', 'Automatisch (empfohlen)')}</option>
+              <option value="high">{L('Always 60 fps, full quality', 'Immer 60 fps, volle Qualität')}</option>
+              <option value="eco">
+                {L(
+                  'Eco – 30 fps for weak PCs / projector browsers',
+                  'Eco – 30 fps für schwache PCs / Beamer-Browser',
+                )}
+              </option>
+            </select>
+          </label>
+        )}
+        {details && (
           <div className="row">
             <label className="grow">
               {L('If the projector PC loses the server', 'Wenn der Beamer-PC den Server verliert')}

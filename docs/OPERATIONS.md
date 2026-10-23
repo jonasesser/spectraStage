@@ -104,7 +104,21 @@ area.
 - [ ] Test: blackout, local key `B`, internet off for 60 s on one PC (keeps playing, phone shows
       offline, no late effects), container restart (shows, devices and calibration survive).
 
-## 6. Burn-in
+## 6. Performance
+
+The show is rendered live (like a game), not played back like a video, so it needs a GPU rather
+than a video decoder. The engine keeps the load low automatically:
+
+- Internal resolution is capped at about Full HD; 4K projectors receive an upscaled image.
+- If a PC cannot hold 60 fps, the internal resolution drops first, then the output switches to a
+  steady 30 fps (*Performance: Automatic*). *Eco* forces 30 fps and a lower resolution – use it for
+  very weak PCs or projector-internal browsers; *Always 60 fps* disables the 30 fps fallback.
+- Creature and effect overlays are uploaded at reduced resolution; the child-safe brightness
+  measurement reads back asynchronously so it never stalls the GPU.
+
+Check the frame rate on the projector PC with key **I**.
+
+## 7. Burn-in
 
 Before the first public show, run the *Full Halloween Show* for ≥ 4 hours on the real PCs and
 watch the status info (`I`): fps should stay stable and the browser's memory (Task Manager) should

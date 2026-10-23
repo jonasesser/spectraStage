@@ -213,6 +213,8 @@ function Projection({
       loadRuntime: loadThemeRuntime,
       now: () => connRef.current?.clock.now() ?? Date.now(),
       sound: soundRef.current,
+      // Projector pixels are physical pixels; never render above 1:1.
+      maxPixelRatio: 1,
     });
     rendererRef.current = r;
     r.start();

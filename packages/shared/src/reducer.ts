@@ -494,6 +494,7 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       if (cmd.volume !== undefined) o.volume = cmd.volume;
       if (cmd.failover !== undefined) o.failover = cmd.failover;
       if (cmd.showMasks !== undefined) o.showMasks = cmd.showMasks;
+      if (cmd.performance !== undefined) o.performance = cmd.performance;
       return res(`${o.name} updated`);
     }
     case 'output.blackout': {

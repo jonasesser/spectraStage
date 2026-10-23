@@ -101,6 +101,8 @@ export const OutputSchema = z.object({
   }),
   testPattern: z.object({ mode: z.enum(['off', 'grid', 'raw']), until: z.number() }),
   showMasks: z.boolean(),
+  /** Rendering budget: auto (adaptive, may drop to 30 fps), high (always 60 fps target), eco (30 fps, lower internal resolution). */
+  performance: z.enum(['auto', 'high', 'eco']).optional(),
   /** Set when the client reported a resolution different from the active profile. */
   resolutionMismatch: z.object({ w: z.number().int(), h: z.number().int() }).nullable(),
 });
@@ -377,6 +379,7 @@ export const CommandSchema = z.discriminatedUnion('t', [
     volume: unit.optional(),
     failover: OutputSchema.shape.failover.optional(),
     showMasks: z.boolean().optional(),
+    performance: z.enum(['auto', 'high', 'eco']).optional(),
   }),
   z.object({ t: z.literal('output.blackout'), outputIds, on: z.boolean() }),
   z.object({

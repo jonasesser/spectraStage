@@ -153,6 +153,10 @@ void main() {
 `;
 
 const CLIP_CAMERA = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+/** Creature/effect overlays are uploaded at this fraction of the view resolution. */
+const OVERLAY_SCALE = 0.75;
+/** Upper bound for the internal render resolution (≈ 1920×1200); 4K outputs are upscaled. */
+const MAX_RENDER_PIXELS = 1920 * 1200;
 
 function makeRT(w: number, h: number): THREE.WebGLRenderTarget {
   return new THREE.WebGLRenderTarget(w, h, {
@@ -252,7 +256,10 @@ class SurfaceLayer {
     this.w = w;
     this.h = h;
     this.layerRT.setSize(w, h);
-    this.overlay.resize(w, h);
+    this.overlay.resize(
+      Math.max(2, Math.round(w * OVERLAY_SCALE)),
+      Math.max(2, Math.round(h * OVERLAY_SCALE)),
+    );
     this.material.uniforms.overlay!.value = this.overlay.texture;
     for (const s of [this.current, this.previous]) {
       if (!s) continue;
@@ -329,6 +336,9 @@ export class StageRenderer {
   private lastFrame = 0;
   private frameTimes: number[] = [];
   private quality = 1;
+  private autoCap = false;
+  private lumPending = false;
+  private lumAt = 0;
   private goodSince = 0;
   private gain = 0;
   private limiterDisplayed = 0;
@@ -603,6 +613,22 @@ export class StageRenderer {
     if (this.frameTimes.length > 90) this.frameTimes.shift();
     if (this.frameTimes.length < 60 || this.opts.preview) return;
     const fps = 1000 / (this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length);
+    const perf = this.output()?.performance ?? 'auto';
+    const capped = perf === 'eco' || (perf === 'auto' && this.autoCap);
+    if (capped) {
+      // Running at 30 fps: only lower the resolution if even that is not reached.
+      if (fps < 26 && this.quality > 0.36) {
+        this.quality = Math.max(0.35, this.quality * 0.85);
+        this.frameTimes = [];
+      }
+      return;
+    }
+    if (fps < 45 && perf === 'auto' && this.quality <= 0.6) {
+      // Resolution already reduced and still slow: switch to a smooth 30 fps instead of stuttering.
+      this.autoCap = true;
+      this.frameTimes = [];
+      return;
+    }
     if (fps < 45 && this.quality > 0.36) {
       this.quality = Math.max(0.35, this.quality * 0.8);
       this.frameTimes = [];
@@ -619,6 +645,10 @@ export class StageRenderer {
 
   private frame(wall: number): void {
     if (this.contextLost) return;
+    // Frame-rate cap (eco or automatic 30 fps fallback on weak hardware).
+    const perfMode = this.opts.preview ? 'auto' : (this.output()?.performance ?? 'auto');
+    const interval = perfMode === 'eco' || (perfMode === 'auto' && this.autoCap) ? 1000 / 30 : 0;
+    if (interval > 0 && this.lastFrame && wall - this.lastFrame < interval - 4) return;
     const dtMs = this.lastFrame ? Math.min(250, wall - this.lastFrame) : 16.7;
     this.lastFrame = wall;
     this.frameNo++;
@@ -670,11 +700,18 @@ export class StageRenderer {
     }
 
     const vp = profile.viewport;
-    const vw = Math.max(2, Math.round(this.width * this.quality));
-    const vh = Math.max(2, Math.round(this.height * this.quality));
+    // Internal resolution: capped to ~Full HD (4K projectors get upscaled soft content) × adaptive quality.
+    const perf = output?.performance ?? 'auto';
+    const cap = Math.min(1, Math.sqrt(MAX_RENDER_PIXELS / Math.max(1, this.width * this.height)));
+    const q = this.quality * cap * (perf === 'eco' ? 0.7 : 1);
+    const vw = Math.max(2, Math.round(this.width * q));
+    const vh = Math.max(2, Math.round(this.height * q));
     if (this.viewRT.width !== vw || this.viewRT.height !== vh) {
       this.viewRT.setSize(vw, vh);
-      this.actorOverlay.resize(vw, vh);
+      this.actorOverlay.resize(
+        Math.max(2, Math.round(vw * OVERLAY_SCALE)),
+        Math.max(2, Math.round(vh * OVERLAY_SCALE)),
+      );
       this.actorMaterial.uniforms.map!.value = this.actorOverlay.texture;
       this.viewOverlay.resize(vw, vh);
       this.viewOverlayMaterial.uniforms.map!.value = this.viewOverlay.texture;
@@ -763,21 +800,33 @@ export class StageRenderer {
 
   private updateLimiter(dtMs: number): number {
     // Measure the composed view at low resolution every other frame (1 frame latency is fine).
-    if (this.frameNo % 2 === 0) {
+    // Asynchronous readback (no GPU pipeline stall); at most one measurement in flight.
+    void dtMs;
+    if (!this.lumPending) {
       const r = this.renderer;
       this.lumMaterial.uniforms.map!.value = this.viewRT.texture;
       r.setRenderTarget(this.lumRT);
       r.render(this.lumScene, CLIP_CAMERA);
-      r.readRenderTargetPixels(this.lumRT, 0, 0, 32, 18, this.lumBuf);
-      let sum = 0;
-      for (let i = 0; i < this.lumBuf.length; i += 4) {
-        sum += 0.2126 * this.lumBuf[i]! + 0.7152 * this.lumBuf[i + 1]! + 0.0722 * this.lumBuf[i + 2]!;
-      }
-      const raw = (sum / (this.lumBuf.length / 4) / 255) * this.gain;
-      const maxRise = (dtMs / 1000) * 1.6 * 2; // measured every 2nd frame
-      const allowed = this.limiterDisplayed + maxRise;
-      this.limiterGain = raw > allowed && raw > 0.02 ? allowed / raw : 1;
-      this.limiterDisplayed = Math.min(raw, allowed);
+      this.lumPending = true;
+      const gain = this.gain;
+      r.readRenderTargetPixelsAsync(this.lumRT, 0, 0, 32, 18, this.lumBuf)
+        .then(() => {
+          let sum = 0;
+          for (let i = 0; i < this.lumBuf.length; i += 4) {
+            sum += 0.2126 * this.lumBuf[i]! + 0.7152 * this.lumBuf[i + 1]! + 0.0722 * this.lumBuf[i + 2]!;
+          }
+          const now = performance.now();
+          const elapsed = this.lumAt ? Math.min(250, now - this.lumAt) : 16.7;
+          this.lumAt = now;
+          const raw = (sum / (this.lumBuf.length / 4) / 255) * gain;
+          const allowed = this.limiterDisplayed + (elapsed / 1000) * 1.6;
+          this.limiterGain = raw > allowed && raw > 0.02 ? allowed / raw : 1;
+          this.limiterDisplayed = Math.min(raw, allowed);
+        })
+        .catch(() => {
+          /* context lost etc. */
+        })
+        .finally(() => (this.lumPending = false));
     }
     return this.limiterGain;
   }
@@ -1014,6 +1063,8 @@ export class StageRenderer {
     }
     layer.overlay.clear();
     const g = layer.overlay.g;
+    // Overlays are uploaded at reduced resolution; effects still draw in layer pixels.
+    g.setTransform(layer.overlay.canvas.width / layer.w, 0, 0, layer.overlay.canvas.height / layer.h, 0, 0);
     for (const it of items) {
       const mod = this.runtimes.get(it.themeId)?.effects[it.effectId];
       if (!mod) continue;
@@ -1080,7 +1131,8 @@ export class StageRenderer {
     }
     o.clear();
     const g = o.g;
-    g.setTransform(ppm, 0, 0, ppm, -vp.x * ppm, -vp.y * ppm);
+    const os = o.canvas.width / vw;
+    g.setTransform(ppm * os, 0, 0, ppm * os, -vp.x * ppm * os, -vp.y * ppm * os);
     const layoutKey = hashString(
       state.surfaces.map((s) => `${s.id}:${JSON.stringify(s.polygon)}:${s.kind}`).join('|'),
     );
