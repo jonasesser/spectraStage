@@ -355,14 +355,14 @@ export class Hub {
     }
   }
 
-  relayPreview(client: Client, outputId: string, profile: Profile | null): void {
+  relayPreview(client: Client, outputId: string, profile: Profile | null, focus?: number): void {
     if (client.role !== 'owner' && client.role !== 'controller') return;
     const ls = this.live.get(client.sessionId);
     if (!ls || !ls.state.outputs.some((o) => o.id === outputId)) return;
     for (const c of ls.clients) {
       if (c.role !== 'device') continue;
       const d = ls.state.devices.find((x) => x.id === c.subjectId);
-      if (d?.outputId === outputId) this.send(c, { type: 'preview', outputId, profile });
+      if (d?.outputId === outputId) this.send(c, { type: 'preview', outputId, profile, focus });
     }
   }
 

@@ -54,7 +54,16 @@ export function StageEditor() {
 
   const polyOf = (s: Surface) => drafts.polys[s.id] ?? s.polygon;
   const vpOf = (o: Output) => drafts.vps[o.id] ?? activeProfile(o).viewport;
-  const unit = box.w / 60; // handle size in stage units
+  const [svgW, setSvgW] = useState(600);
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setSvgW(el.clientWidth || 600));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  // Handle size in stage units ≈ 16 screen pixels, whatever the zoom or screen size.
+  const unit = (16 * box.w) / Math.max(200, svgW);
   const sn = (v: number) => (snap ? Math.round(v / 0.05) * 0.05 : Math.round(v * 1000) / 1000);
 
   const toStage = (e: { clientX: number; clientY: number }): V => {

@@ -467,7 +467,13 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ping'), t: z.number() }),
   z.object({ type: z.literal('telemetry'), telemetry: TelemetrySchema }),
   /** Transient calibration preview relayed to the output's device (not persisted). */
-  z.object({ type: z.literal('preview'), outputId: id, profile: ProfileSchema.nullable() }),
+  z.object({
+    type: z.literal('preview'),
+    outputId: id,
+    profile: ProfileSchema.nullable(),
+    /** Selected corner (0–3) to highlight on the projector while calibrating. */
+    focus: z.number().int().min(-1).max(3).optional(),
+  }),
 ]);
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
 
@@ -500,7 +506,7 @@ export type ServerMessage =
   | { type: 'nack'; id: string; code: string; message: string }
   | { type: 'pong'; t: number; serverTime: number }
   | { type: 'identify'; deviceId: string; label: string; until: number }
-  | { type: 'preview'; outputId: string; profile: Profile | null }
+  | { type: 'preview'; outputId: string; profile: Profile | null; focus?: number }
   | { type: 'approved'; deviceToken: string; deviceId: string }
   | { type: 'rejected' }
   | {

@@ -792,7 +792,10 @@ export function applyReportedResolution(
     p.viewport = { x: p.viewport.x, y: cy - vh / 2, w: p.viewport.w, h: vh };
     return true;
   }
-  const mismatch = p.referenceResolution.w !== w || p.referenceResolution.h !== h;
+  // Calibration is stored in normalized coordinates, so only a changed aspect ratio invalidates it
+  // (e.g. 16:9 → 16:10 or 4:3). Small differences (rounding, scaling) are tolerated.
+  const refAspect = p.referenceResolution.w / p.referenceResolution.h;
+  const mismatch = Math.abs(w / h - refAspect) / refAspect > 0.03;
   if (mismatch && (o.resolutionMismatch?.w !== w || o.resolutionMismatch?.h !== h)) {
     o.resolutionMismatch = { w, h };
     return true;

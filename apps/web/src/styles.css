@@ -918,3 +918,142 @@ label.check {
 .preview-canvas {
   max-height: 70vh;
 }
+
+/* ---------- iPhone / touch ---------- */
+html,
+body,
+#root {
+  height: 100dvh;
+}
+.shell {
+  height: 100dvh;
+}
+.calib-bar {
+  position: sticky;
+  bottom: calc(68px + env(safe-area-inset-bottom));
+  z-index: 15;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.6rem;
+  background: rgba(13, 11, 31, 0.94);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(8px);
+}
+@media (min-width: 900px) {
+  .calib-bar {
+    bottom: 12px;
+  }
+}
+.corner-pick {
+  width: 56px;
+  font-size: 1.2rem;
+  border-color: var(--c);
+  color: var(--c);
+}
+.corner-pick.on {
+  background: var(--c);
+  color: #000;
+  border-color: var(--c);
+}
+.editor svg {
+  touch-action: none;
+}
+
+/* Full-screen adjust mode: look at the wall, swipe on the phone */
+.justify {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: var(--bg, #0d0b1e);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: calc(env(safe-area-inset-top) + 0.5rem) calc(env(safe-area-inset-right) + 0.6rem)
+    calc(env(safe-area-inset-bottom) + 0.5rem) calc(env(safe-area-inset-left) + 0.6rem);
+  overscroll-behavior: contain;
+}
+.justify-top,
+.justify-pick,
+.justify-bottom {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.justify-pick .corner-pick {
+  flex: 1;
+}
+.justify-bottom .btn {
+  min-height: 3.4rem;
+  min-width: 3.4rem;
+  font-size: 1.2rem;
+}
+.justify-pad {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  border: 2px dashed #39336b;
+  border-radius: 16px;
+  background: radial-gradient(circle at 50% 50%, #1b1640, #0a0818);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.justify-mini {
+  position: absolute;
+  inset: 8%;
+  width: 84%;
+  height: 84%;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.justify-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0.8rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  pointer-events: none;
+  padding: 0 1rem;
+}
+.justify-hint span {
+  color: var(--muted, #a9a3d0);
+  font-size: 0.9rem;
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .justify {
+    display: grid;
+    grid-template-columns: 1fr 13rem;
+    grid-template-rows: auto auto 1fr;
+    grid-template-areas: 'pad top' 'pad pick' 'pad bottom';
+  }
+  .justify-pad {
+    grid-area: pad;
+  }
+  .justify-top {
+    grid-area: top;
+    flex-wrap: wrap;
+  }
+  .justify-pick {
+    grid-area: pick;
+    flex-wrap: wrap;
+  }
+  .justify-bottom {
+    grid-area: bottom;
+    flex-wrap: wrap;
+    align-content: flex-end;
+  }
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .justify-hint span { display: none; }
+  .justify-hint { top: 0.6rem; bottom: auto; }
+}

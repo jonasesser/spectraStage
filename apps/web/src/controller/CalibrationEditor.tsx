@@ -36,15 +36,28 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
   const [history, setHistory] = useState<Profile[]>([]);
   const [future, setFuture] = useState<Profile[]>([]);
   const [mode, setMode] = useState<Mode>('corners');
-  const [handle, setHandle] = useState<Handle>(null);
+  const [handle, setHandle] = useState<Handle>({ kind: 'corner', i: 0 });
   const [maskId, setMaskId] = useState<string | null>(null);
   const [drawing, setDrawing] = useState<Pt[] | null>(null);
   const [fine, setFine] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  /** Full-screen touchpad for adjusting while looking at the wall (phones). */
+  const [justify, setJustify] = useState(false);
+  const jpadRef = useRef<{ x: number; y: number; start: Pt; before: Profile; w: number } | null>(null);
   const [zoom, setZoom] = useState({ s: 1, cx: 0.5, cy: 0.5 });
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<{ handle: NonNullable<Handle>; before: Profile } | null>(null);
   const panRef = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null);
+  /** Touchpad mode: drag anywhere to move the selected point relatively (finger never covers it). */
+  const padRef = useRef<{ x: number; y: number; start: Pt; before: Profile } | null>(null);
+  const [svgW, setSvgW] = useState(600);
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setSvgW(el.clientWidth || 600));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const previewTimer = useRef(0);
 
   const res = saved.referenceResolution ?? output.resolutionMismatch ?? { w: 1920, h: 1080 };
@@ -58,10 +71,15 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
   useEffect(() => {
     window.clearTimeout(previewTimer.current);
     previewTimer.current = window.setTimeout(
-      () => store.conn.sendPreview(output.id, dirty ? draft : null),
+      () =>
+        store.conn.sendPreview(
+          output.id,
+          draft,
+          mode === 'corners' && handle?.kind === 'corner' ? handle.i : -1,
+        ),
       60,
     );
-  }, [draft, dirty, output.id, store]);
+  }, [draft, output.id, store, mode, handle]);
   useEffect(() => () => store.conn.sendPreview(output.id, null), [output.id, store]);
 
   // Pick up server-side changes (other controller / profile switch) when not editing
@@ -142,7 +160,24 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
     setHandle(h);
     dragRef.current = { handle: h, before: draft };
   };
+  const handlePos = (h: NonNullable<Handle>, p: Profile): Pt | undefined =>
+    h.kind === 'corner'
+      ? p.corners[h.i]
+      : h.kind === 'mesh'
+        ? meshPos(h.i)
+        : p.masks.find((m) => m.id === h.maskId)?.points[h.i];
   const onMove = (e: RPointerEvent) => {
+    if (padRef.current && handle) {
+      const rect = svgRef.current!.getBoundingClientRect();
+      const k = (vbW / W / rect.width) * (fine ? 0.2 : 1);
+      const pr = padRef.current;
+      const p = {
+        x: pr.start.x + (e.clientX - pr.x) * k,
+        y: pr.start.y + (e.clientY - pr.y) * k * aspect * (H / W) * (W / H),
+      };
+      setDraftRaw(moveHandle(handle, p, pr.before));
+      return;
+    }
     if (dragRef.current) {
       setDraftRaw(moveHandle(dragRef.current.handle, toNorm(e), draft));
       return;
@@ -158,6 +193,14 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
     }
   };
   const onUp = () => {
+    if (padRef.current) {
+      const before = padRef.current.before;
+      padRef.current = null;
+      if (JSON.stringify(before) !== JSON.stringify(draft)) {
+        setHistory((h) => [...h.slice(-49), before]);
+        setFuture([]);
+      }
+    }
     if (dragRef.current) {
       const before = dragRef.current.before;
       dragRef.current = null;
@@ -175,6 +218,11 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
       return;
     }
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    const start = handle && mode !== 'image' ? handlePos(handle, draft) : undefined;
+    if (handle && start) {
+      padRef.current = { x: e.clientX, y: e.clientY, start, before: draft };
+      return;
+    }
     panRef.current = { x: e.clientX, y: e.clientY, cx: zoom.cx, cy: zoom.cy };
   };
 
@@ -277,13 +325,181 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
     });
   }, [draft, state.surfaces, W, H]);
 
-  const vbW = W / zoom.s;
-  const vbH = H / zoom.s;
+  // Margin around the projector image so points on the edge stay grabbable.
+  const PAD = 0.08;
+  const vbW = (W * (1 + 2 * PAD)) / zoom.s;
+  const vbH = (H * (1 + 2 * PAD)) / zoom.s;
   const vbX = zoom.cx * W - vbW / 2;
   const vbY = zoom.cy * H - vbH / 2;
-  const hs = 14 / zoom.s; // handle radius in svg units
+  const hs = (15 * vbW) / Math.max(200, svgW); // ~15 px handle radius on screen
 
   const selMask = draft.masks.find((m) => m.id === maskId) ?? null;
+
+  const jDown = (e: RPointerEvent) => {
+    if (!handle) return;
+    const start = handlePos(handle, draft);
+    if (!start) return;
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    const w = (e.currentTarget as Element).getBoundingClientRect().width;
+    jpadRef.current = { x: e.clientX, y: e.clientY, start, before: draft, w };
+  };
+  const jMove = (e: RPointerEvent) => {
+    const pr = jpadRef.current;
+    if (!pr || !handle) return;
+    // A swipe across the whole pad moves the point by 40 % of the image (fine: 8 %).
+    const k = (fine ? 0.08 : 0.4) / Math.max(200, pr.w);
+    const p = { x: pr.start.x + (e.clientX - pr.x) * k, y: pr.start.y + (e.clientY - pr.y) * k * aspect };
+    setDraftRaw(moveHandle(handle, p, pr.before));
+  };
+  const jUp = () => {
+    const pr = jpadRef.current;
+    jpadRef.current = null;
+    if (pr && JSON.stringify(pr.before) !== JSON.stringify(draft)) {
+      setHistory((h) => [...h.slice(-49), pr.before]);
+      setFuture([]);
+    }
+  };
+  const meshCount = draft.mesh?.offsets.length ?? 0;
+  const stepHandle = (d: number) => {
+    if (mode === 'corners') {
+      const i = handle?.kind === 'corner' ? handle.i : 0;
+      setHandle({ kind: 'corner', i: (i + d + 4) % 4 });
+    } else if (mode === 'mesh' && meshCount) {
+      const i = handle?.kind === 'mesh' ? handle.i : 0;
+      setHandle({ kind: 'mesh', i: (i + d + meshCount) % meshCount });
+    } else if (mode === 'masks' && selMask) {
+      const n = selMask.points.length;
+      const i = handle?.kind === 'mask' ? handle.i : 0;
+      setHandle({ kind: 'mask', maskId: selMask.id, i: (i + d + n) % n });
+    }
+  };
+  const handleLabel =
+    handle?.kind === 'corner'
+      ? L(`Corner ${handle.i + 1}`, `Ecke ${handle.i + 1}`)
+      : handle?.kind === 'mesh'
+        ? L(`Grid point ${handle.i + 1}/${meshCount}`, `Gitterpunkt ${handle.i + 1}/${meshCount}`)
+        : handle?.kind === 'mask'
+          ? L(`Mask point ${handle.i + 1}`, `Maskenpunkt ${handle.i + 1}`)
+          : L('No point selected', 'Kein Punkt gewählt');
+
+  if (justify) {
+    return (
+      <div className="justify" role="dialog" aria-label={L('Adjust', 'Justieren')}>
+        <div className="justify-top">
+          <button className="btn" onClick={() => setJustify(false)}>
+            ‹ {L('Editor', 'Editor')}
+          </button>
+          <button
+            className="btn icon"
+            onClick={undo}
+            disabled={history.length === 0}
+            aria-label={L('Undo', 'Rückgängig')}
+          >
+            ↶
+          </button>
+          <button className="btn primary grow" disabled={!dirty} onClick={apply}>
+            {dirty ? L('Apply', 'Übernehmen') : L('Saved', 'Gespeichert')}
+          </button>
+        </div>
+        {mode === 'corners' ? (
+          <div className="justify-pick" role="group" aria-label={L('Select corner', 'Ecke wählen')}>
+            {[0, 1, 2, 3].map((i) => (
+              <button
+                key={i}
+                className={`btn corner-pick${handle?.kind === 'corner' && handle.i === i ? ' on' : ''}`}
+                style={{ ['--c' as string]: CORNER_COLORS[i] }}
+                onClick={() => setHandle({ kind: 'corner', i })}
+              >
+                {i + 1}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="justify-pick">
+            <button className="btn" onClick={() => stepHandle(-1)} aria-label={L('Previous', 'Vorheriger')}>
+              ◀
+            </button>
+            <strong className="grow" style={{ textAlign: 'center' }}>
+              {handleLabel}
+            </strong>
+            <button className="btn" onClick={() => stepHandle(1)} aria-label={L('Next', 'Nächster')}>
+              ▶
+            </button>
+          </div>
+        )}
+        <div
+          className="justify-pad"
+          onPointerDown={jDown}
+          onPointerMove={jMove}
+          onPointerUp={jUp}
+          onPointerCancel={jUp}
+        >
+          <svg
+            viewBox={`${-W * 0.05} ${-H * 0.05} ${W * 1.1} ${H * 1.1}`}
+            className="justify-mini"
+            aria-hidden
+          >
+            <rect x={0} y={0} width={W} height={H} fill="none" stroke="#39336b" strokeWidth={4} />
+            <polygon
+              points={draft.corners.map((c) => `${c.x * W},${c.y * H}`).join(' ')}
+              fill="rgba(255,255,255,0.06)"
+              stroke="#fff"
+              strokeWidth={5}
+            />
+            {draft.corners.map((c, i) => (
+              <circle
+                key={i}
+                cx={c.x * W}
+                cy={c.y * H}
+                r={handle?.kind === 'corner' && handle.i === i ? 34 : 18}
+                fill={CORNER_COLORS[i]}
+                stroke="#fff"
+                strokeWidth={handle?.kind === 'corner' && handle.i === i ? 6 : 0}
+              />
+            ))}
+            {handle &&
+              handle.kind !== 'corner' &&
+              (() => {
+                const p = handlePos(handle, draft);
+                return p ? (
+                  <circle cx={p.x * W} cy={p.y * H} r={26} fill="#ffb347" stroke="#fff" strokeWidth={5} />
+                ) : null;
+              })()}
+          </svg>
+          <div className="justify-hint">
+            <strong>{handleLabel}</strong>
+            <span>
+              {L(
+                'Look at the wall and swipe here – the point moves on the projector.',
+                'Auf die Wand schauen und hier wischen – der Punkt bewegt sich am Beamer.',
+              )}
+            </span>
+          </div>
+        </div>
+        <div className="justify-bottom">
+          <button className="btn" onClick={() => nudge(-1, 0)} aria-label="left">
+            ◀
+          </button>
+          <button className="btn" onClick={() => nudge(0, -1)} aria-label="up">
+            ▲
+          </button>
+          <button className="btn" onClick={() => nudge(0, 1)} aria-label="down">
+            ▼
+          </button>
+          <button className="btn" onClick={() => nudge(1, 0)} aria-label="right">
+            ▶
+          </button>
+          <button
+            className={`btn grow${fine ? ' on' : ''}`}
+            onClick={() => setFine((f) => !f)}
+            aria-pressed={fine}
+          >
+            {fine ? L('Fine', 'Fein') : L('Coarse', 'Grob')}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="stack">
@@ -333,6 +549,12 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
         </div>
       )}
 
+      {mode !== 'image' && (
+        <button className="btn primary big" onClick={() => setJustify(true)}>
+          ✋ {L('Adjust on the wall (full screen touchpad)', 'An der Wand justieren (Vollbild-Touchpad)')}
+        </button>
+      )}
+
       <div className="split">
         <div>
           <div className="row" role="tablist">
@@ -365,7 +587,15 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
               onPointerCancel={onUp}
             >
               <rect x={-W} y={-H} width={W * 3} height={H * 3} fill="#05040c" />
-              <rect x={0} y={0} width={W} height={H} fill="#000" stroke="#39336b" strokeWidth={2 / zoom.s} />
+              <rect
+                x={0}
+                y={0}
+                width={W}
+                height={H}
+                fill="#000"
+                stroke="#39336b"
+                strokeWidth={(2 * vbW) / Math.max(200, svgW)}
+              />
               {gridPaths.map((d, i) => (
                 <path
                   key={i}
@@ -382,7 +612,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
                   d={s.d}
                   fill="rgba(255,179,71,0.08)"
                   stroke="#ffb347"
-                  strokeWidth={2 / zoom.s}
+                  strokeWidth={(2 * vbW) / Math.max(200, svgW)}
                   pointerEvents="none"
                 />
               ))}
@@ -390,7 +620,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
                 points={draft.corners.map((c) => `${c.x * W},${c.y * H}`).join(' ')}
                 fill="none"
                 stroke="#fff"
-                strokeWidth={2.5 / zoom.s}
+                strokeWidth={(2.5 * vbW) / Math.max(200, svgW)}
                 pointerEvents="none"
               />
               {/* crop */}
@@ -416,7 +646,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
                   points={drawing.map((p) => `${p.x * W},${p.y * H}`).join(' ')}
                   fill="rgba(255,60,60,0.2)"
                   stroke="#ff3c3c"
-                  strokeWidth={2 / zoom.s}
+                  strokeWidth={(2 * vbW) / Math.max(200, svgW)}
                 />
               )}
               {mode === 'corners' &&
@@ -429,7 +659,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
                       r={hs}
                       fill={CORNER_COLORS[i]}
                       stroke={handle?.kind === 'corner' && handle.i === i ? '#fff' : '#000'}
-                      strokeWidth={3 / zoom.s}
+                      strokeWidth={(3 * vbW) / Math.max(200, svgW)}
                     />
                     <text
                       x={c.x * W}
@@ -457,7 +687,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
                       r={hs * 0.8}
                       fill="#ffb347"
                       stroke={handle?.kind === 'mesh' && handle.i === i ? '#fff' : '#2a1600'}
-                      strokeWidth={3 / zoom.s}
+                      strokeWidth={(3 * vbW) / Math.max(200, svgW)}
                       onPointerDown={(e) => onHandleDown(e, { kind: 'mesh', i })}
                     />
                   );
@@ -473,12 +703,39 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
                     r={hs * 0.8}
                     fill="#fff"
                     stroke={handle?.kind === 'mask' && handle.i === i ? '#ffb347' : '#ff3c3c'}
-                    strokeWidth={3 / zoom.s}
+                    strokeWidth={(3 * vbW) / Math.max(200, svgW)}
                     onPointerDown={(e) => onHandleDown(e, { kind: 'mask', maskId: selMask.id, i })}
                   />
                 ))}
             </svg>
           </div>
+          {mode === 'corners' && (
+            <div
+              className="row"
+              style={{ marginTop: '0.6rem' }}
+              role="group"
+              aria-label={L('Select corner', 'Ecke wählen')}
+            >
+              {[0, 1, 2, 3].map((i) => (
+                <button
+                  key={i}
+                  className={`btn corner-pick${handle?.kind === 'corner' && handle.i === i ? ' on' : ''}`}
+                  style={{ ['--c' as string]: CORNER_COLORS[i] }}
+                  onClick={() => setHandle({ kind: 'corner', i })}
+                >
+                  {i + 1}
+                </button>
+              ))}
+            </div>
+          )}
+          <p className="muted small" style={{ margin: '0.4rem 0 0' }}>
+            {mode === 'image'
+              ? L('Drag to move the view.', 'Ziehen verschiebt die Ansicht.')
+              : L(
+                  'Pick a point, then swipe anywhere on the image – the point follows your finger without being covered. “Fine” moves it 5× slower.',
+                  'Punkt wählen, dann irgendwo aufs Bild wischen – der Punkt folgt, ohne vom Finger verdeckt zu werden. „Fein“ bewegt 5× langsamer.',
+                )}
+          </p>
           <div className="editor-tools">
             <button
               className="btn small"
@@ -620,8 +877,8 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
             <div className="panel">
               <p className="muted small">
                 {L(
-                  'Drag the numbered corners until the white frame on the wall sits exactly on the edges of your surfaces. The colors match the test pattern.',
-                  'Ziehe die nummerierten Ecken, bis der weiße Rahmen an der Wand genau auf den Kanten deiner Flächen liegt. Die Farben entsprechen dem Testbild.',
+                  'Move the numbered corners until the white frame on the wall sits exactly on the edges of your surfaces. The colors match the test pattern on the projector.',
+                  'Verschiebe die nummerierten Ecken, bis der weiße Rahmen an der Wand genau auf den Kanten deiner Flächen liegt. Die Farben entsprechen dem Testbild am Beamer.',
                 )}
               </p>
               <button
@@ -689,6 +946,38 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
 
           <ProfilesPanel output={output} draft={draft} dirty={dirty} L={L} onLoad={(p) => commit(p, draft)} />
 
+          <div
+            className="calib-bar"
+            role="toolbar"
+            aria-label={L('Calibration actions', 'Kalibrier-Aktionen')}
+          >
+            <button
+              className="btn icon"
+              onClick={undo}
+              disabled={history.length === 0}
+              aria-label={L('Undo', 'Rückgängig')}
+            >
+              ↶
+            </button>
+            <button
+              className="btn icon"
+              onClick={redo}
+              disabled={future.length === 0}
+              aria-label={L('Redo', 'Wiederholen')}
+            >
+              ↷
+            </button>
+            <button
+              className={`btn${fine ? ' on' : ''}`}
+              onClick={() => setFine((f) => !f)}
+              aria-pressed={fine}
+            >
+              {fine ? L('Fine', 'Fein') : L('Coarse', 'Grob')}
+            </button>
+            <button className="btn primary grow" disabled={!dirty} onClick={apply}>
+              {L('Apply', 'Übernehmen')}
+            </button>
+          </div>
           <div className="panel stack">
             <button className="btn primary big" disabled={!dirty} onClick={apply}>
               {L('Apply calibration', 'Kalibrierung übernehmen')}

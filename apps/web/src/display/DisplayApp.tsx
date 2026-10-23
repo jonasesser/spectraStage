@@ -196,7 +196,7 @@ function Projection({
               ),
         ),
       onIdentify: (label, until) => rendererRef.current?.showIdentify(label, until),
-      onPreview: (_outputId, profile) => rendererRef.current?.setPreviewProfile(profile),
+      onPreview: (_outputId, profile, focus) => rendererRef.current?.setPreviewProfile(profile, focus),
     });
     connRef.current = conn;
     conn.start();
@@ -260,8 +260,7 @@ function Projection({
       conn.sendTelemetry({
         fps: st.fps,
         quality: st.quality,
-        width: Math.round(screen.width * dpr),
-        height: Math.round(screen.height * dpr),
+        ...screenResolution(dpr),
         version: VERSION,
         localBlackout: r.localBlackoutOn,
         audioUnlocked: soundRef.current.unlocked,
@@ -373,10 +372,15 @@ function Projection({
       )}
       {hint && phase === 'run' && (
         <div className="projection-hint">
-          {L(
-            'Click once for fullscreen and sound · B = blackout · I = info',
-            'Einmal klicken für Vollbild und Ton · B = Blackout · I = Info',
-          )}
+          {needsHomeScreenForFullscreen()
+            ? L(
+                'iPhone/iPad: Share → “Add to Home Screen”, then open it from there for fullscreen · tap once for sound',
+                'iPhone/iPad: Teilen → „Zum Home-Bildschirm“, dann von dort öffnen = Vollbild · einmal tippen für Ton',
+              )
+            : L(
+                'Click once for fullscreen and sound · B = blackout · I = info',
+                'Einmal klicken für Vollbild und Ton · B = Blackout · I = Info',
+              )}
         </div>
       )}
       {localBlackout && showInfo && (
@@ -407,6 +411,25 @@ function Projection({
       )}
     </div>
   );
+}
+
+/** Physical screen size in the current orientation (iOS reports portrait dimensions even in landscape). */
+function screenResolution(dpr: number): { width: number; height: number } {
+  let w = screen.width;
+  let h = screen.height;
+  if (window.innerWidth > window.innerHeight !== w > h) [w, h] = [h, w];
+  return { width: Math.round(w * dpr), height: Math.round(h * dpr) };
+}
+
+/** iPhone/iPad Safari cannot make a web page fullscreen – only a home-screen web app can. */
+export function needsHomeScreenForFullscreen(): boolean {
+  const standalone =
+    window.matchMedia?.('(display-mode: standalone)').matches ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  const ios =
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  return ios && !standalone;
 }
 
 let wakeLock: { release: () => Promise<void> } | null = null;

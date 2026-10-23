@@ -311,7 +311,7 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
           hub.handleTelemetry(client, msg.telemetry);
           return;
         case 'preview':
-          hub.relayPreview(client, msg.outputId, msg.profile);
+          hub.relayPreview(client, msg.outputId, msg.profile, msg.focus);
           return;
       }
     });

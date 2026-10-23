@@ -33,7 +33,7 @@ export interface ConnectionHandlers {
   onSnapshot?(state: SessionState, secrets: ControllerSecrets | undefined): void;
   onPresence?(p: Presence): void;
   onIdentify?(label: string, until: number): void;
-  onPreview?(outputId: string, profile: Profile | null): void;
+  onPreview?(outputId: string, profile: Profile | null, focus?: number): void;
   onApproved?(deviceToken: string, deviceId: string): void;
   onRejected?(): void;
   /** Fatal auth errors: the token is invalid → caller should forget it. */
@@ -211,7 +211,7 @@ export class Connection {
         this.handlers.onIdentify?.(msg.label, msg.until);
         return;
       case 'preview':
-        this.handlers.onPreview?.(msg.outputId, msg.profile);
+        this.handlers.onPreview?.(msg.outputId, msg.profile, msg.focus);
         return;
       case 'approved':
         this.token = msg.deviceToken;
@@ -255,7 +255,7 @@ export class Connection {
     if (this.online) this.ws?.send(JSON.stringify({ type: 'telemetry', telemetry: t }));
   }
 
-  sendPreview(outputId: string, profile: Profile | null): void {
-    if (this.online) this.ws?.send(JSON.stringify({ type: 'preview', outputId, profile }));
+  sendPreview(outputId: string, profile: Profile | null, focus?: number): void {
+    if (this.online) this.ws?.send(JSON.stringify({ type: 'preview', outputId, profile, focus }));
   }
 }

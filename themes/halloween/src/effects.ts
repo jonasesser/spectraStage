@@ -8,6 +8,7 @@ import {
   fuzzySpider,
   ghost,
   glowAt,
+  leaf,
   pumpkin,
   skeleton,
   spider,
@@ -291,19 +292,7 @@ const confettiLeaves = effect(
       g.translate(x, y);
       g.rotate(t * spin + sw);
       g.scale(1, 0.5 + 0.5 * Math.cos(t * 3 + sw));
-      g.globalAlpha = 0.9 * fade;
-      g.fillStyle = col;
-      g.beginPath();
-      g.moveTo(-ls, 0);
-      g.quadraticCurveTo(0, -ls * 0.75, ls, 0);
-      g.quadraticCurveTo(0, ls * 0.75, -ls, 0);
-      g.fill();
-      g.strokeStyle = 'rgba(80,30,0,0.6)';
-      g.lineWidth = Math.max(1, ls * 0.08);
-      g.beginPath();
-      g.moveTo(-ls, 0);
-      g.lineTo(ls, 0);
-      g.stroke();
+      leaf(g, 0, 0, ls * 1.9, 0, col, 0.9 * fade, 0);
       g.restore();
     }
   },
@@ -352,23 +341,38 @@ const windowKnock = effect(
     g.globalAlpha = a;
     g.translate(cx + shake * ws * 0.02, cy);
     glowAt(g, 0, 0, ws * 1.1, pal.secondary, 0.4);
-    g.fillStyle = pal.secondary;
-    g.globalAlpha = a * 0.75;
+    // warm window light, brightest in the middle
+    const wg = g.createRadialGradient(0, -ws * 0.05, 0, 0, 0, ws * 0.62);
+    wg.addColorStop(0, '#fff6d8');
+    wg.addColorStop(0.45, pal.secondary);
+    wg.addColorStop(1, pal.primary);
+    g.fillStyle = wg;
+    g.globalAlpha = a * 0.85;
     g.fillRect(-ws * 0.4, -ws * 0.5, ws * 0.8, ws);
     g.globalAlpha = a;
-    // knocking hand silhouette
+    // knocking fist + forearm silhouette with a warm rim from the window light
     const hx = ws * 0.05;
     const hy = -ws * 0.05;
-    g.fillStyle = '#1b1030';
-    g.beginPath();
-    g.arc(hx, hy, ws * 0.13 * (1 + shake * 0.05), 0, TAU);
-    g.fill();
-    g.fillRect(hx - ws * 0.07, hy, ws * 0.14, ws * 0.55);
+    const k = 1 + shake * 0.05;
+    const hand = new Path2D();
+    hand.moveTo(hx - ws * 0.09, hy + ws * 0.06);
+    hand.lineTo(hx - ws * 0.12, ws * 0.5);
+    hand.lineTo(hx + ws * 0.12, ws * 0.5);
+    hand.lineTo(hx + ws * 0.09, hy + ws * 0.06);
+    hand.closePath();
+    hand.roundRect(hx - ws * 0.13 * k, hy - ws * 0.11 * k, ws * 0.26 * k, ws * 0.2 * k, ws * 0.08 * k);
     for (let f = 0; f < 4; f++) {
-      g.beginPath();
-      g.arc(hx - ws * 0.09 + f * ws * 0.06, hy - ws * 0.12, ws * 0.035, 0, TAU);
-      g.fill();
+      const fx = hx - ws * 0.095 + f * ws * 0.063;
+      hand.moveTo(fx + ws * 0.04, hy - ws * 0.105);
+      hand.arc(fx, hy - ws * 0.105, ws * 0.04, 0, TAU);
     }
+    hand.ellipse(hx + ws * 0.115, hy + ws * 0.005, ws * 0.045, ws * 0.07, -0.4, 0, TAU);
+    g.save();
+    g.shadowColor = pal.secondary;
+    g.shadowBlur = ws * 0.04;
+    g.fillStyle = '#140a22';
+    g.fill(hand);
+    g.restore();
     g.strokeStyle = '#3b2547';
     g.lineWidth = ws * 0.05;
     g.strokeRect(-ws * 0.4, -ws * 0.5, ws * 0.8, ws);

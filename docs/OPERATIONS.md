@@ -29,6 +29,14 @@ Windows – shortcut target (one per projector, adjust the screen position):
 
 Edge accepts the same flags (`msedge.exe`).
 
+### iPhone / iPad
+
+Safari on iPhone has no fullscreen for web pages. Open the page, tap **Share → Add to Home
+Screen**, then start SpectraStage from the home-screen icon: it runs without browser bars (also
+recommended for the controller – no toolbars jumping in and out). In the calibration editor
+select a point (1–4) and drag anywhere on the canvas – it works like a touchpad, so your finger
+never covers the point; *Fine* slows it down.
+
 ## 2. Building the stage
 
 1. *Stage* tab: each approved projector created a surface automatically. Rename surfaces, set

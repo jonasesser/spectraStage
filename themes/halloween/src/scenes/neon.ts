@@ -6,13 +6,12 @@ import * as THREE from 'three';
 import { createRng } from '@spectrastage/shared';
 import { clamp01, hash01, hybridScene, memo, noise1, TAU } from '@spectrastage/engine';
 import type { DrawState, SceneModule } from '@spectrastage/engine';
-import { num, palette, type Palette } from '../palette.ts';
+import { num, palette } from '../palette.ts';
 import {
   bat,
   dancePose,
   fuzzySpider,
   ghost,
-  glowAt,
   leaf,
   pawPrint,
   pumpkin,
@@ -23,6 +22,8 @@ import {
 } from '../shapes.ts';
 import { countOf, densityOf, mod, speedOf } from './common.ts';
 import { FBM_GLSL } from './glsl.ts';
+import { addGlow, envPalette, lightPool, offscreen, paintLeaf, SKY_FRAG, skyUniforms } from './env.ts';
+import { backdrop, drawManor, MOON_POS } from './manor.ts';
 
 const FACES: GhostFace[] = ['happy', 'oo', 'wow', 'sleepy'];
 const LIME = '#7dff4d';
@@ -55,257 +56,46 @@ ${FBM_GLSL}
 // ---------------------------------------------------------------------------
 // Neon Manor (wall)
 // ---------------------------------------------------------------------------
-const MANOR_FRAG = /* glsl */ `
-${HEADER}
-uniform vec2 uMoon;
-void main() {
-  vec2 uv = vUv;
-  float aspect = uRes.x / uRes.y;
-  float t = uTime * uSpeed * 0.05;
-  vec3 top = uA * 0.42 + vec3(0.03, 0.0, 0.08);
-  vec3 low = mix(uA, uC, 0.18) * 0.85;
-  vec3 col = mix(low, top, smoothstep(0.25, 1.0, uv.y));
-  vec2 p = vec2(uv.x * aspect * 1.5, uv.y * 2.4);
-  float n = fbm(p + vec2(t, -t * 0.35) + uSeed);
-  float n2 = fbm(p * 1.7 - vec2(t * 1.3, t * 0.15) + 7.0 + uSeed);
-  float lowBand = 1.0 - smoothstep(0.2, 0.75, uv.y);
-  col = mix(col, uC * 0.9, smoothstep(0.45, 0.78, n) * (0.45 + 0.45 * lowBand) * clamp(uDensity, 0.3, 1.5));
-  col = mix(col, uA * 1.1, smoothstep(0.5, 0.85, n2) * 0.4);
-  float d = length((uv - uMoon) * vec2(aspect, 1.0));
-  col += uB * (0.6 * exp(-d * 4.0) + 0.1 * exp(-d * 1.4));
-  col = max(col, uA * 0.3);
-  gl_FragColor = vec4(min(col, vec3(1.0)), 1.0);
-}
-`;
-
-function mansion(
-  g: CanvasRenderingContext2D,
-  cx: number,
-  baseY: number,
-  W: number,
-  pal: Palette,
-  t: number,
-): void {
-  const H = W * 0.62;
-  const body = '#1d0a36';
-  const rim = pal.rim;
-  const lw = Math.max(2, W * 0.006);
-  const win = pal.primary === '#ff7a1a' ? '#ffb13b' : pal.secondary;
-  g.save();
-  g.lineJoin = 'round';
-  // silhouette parts: [x, y, w, h, roofH]
-  const parts: [number, number, number, number, number][] = [
-    [-0.5, -0.42, 0.26, 0.42, 0.2], // left wing
-    [0.24, -0.42, 0.26, 0.42, 0.2], // right wing
-    [-0.26, -0.58, 0.52, 0.58, 0.22], // center block
-    [-0.1, -0.86, 0.2, 0.86, 0.28], // tower
-    [-0.43, -0.6, 0.1, 0.2, 0.16], // left turret
-    [0.33, -0.6, 0.1, 0.2, 0.16], // right turret
-  ];
-  const shape = (x: number, y: number, w: number, h: number, roof: number) => {
-    const X = cx + x * W;
-    const Y = baseY + y * H;
-    g.beginPath();
-    g.moveTo(X - w * W * 0.08, Y);
-    g.lineTo(X + w * W * 0.5, Y - roof * H);
-    g.lineTo(X + w * W * 1.08, Y);
-    g.lineTo(X + w * W, Y);
-    g.lineTo(X + w * W, Y + h * H);
-    g.lineTo(X, Y + h * H);
-    g.lineTo(X, Y);
-    g.closePath();
-  };
-  glowAt(g, cx, baseY - H * 0.4, W * 0.75, rim, 0.35);
-  for (const [x, y, w, h, roof] of parts) {
-    shape(x, y, w, h, roof);
-    g.fillStyle = body;
-    g.fill();
-    g.strokeStyle = rim;
-    g.lineWidth = lw;
-    g.stroke();
-  }
-  // spires
-  for (const [x, y, w, roof] of [
-    [-0.1, -0.86, 0.2, 0.28],
-    [-0.43, -0.6, 0.1, 0.16],
-    [0.33, -0.6, 0.1, 0.16],
-  ] as const) {
-    const X = cx + (x + w / 2) * W;
-    const Y = baseY + (y - roof) * H;
-    g.strokeStyle = rim;
-    g.lineWidth = lw;
-    g.beginPath();
-    g.moveTo(X, Y);
-    g.lineTo(X, Y - H * 0.09);
-    g.moveTo(X - H * 0.025, Y - H * 0.06);
-    g.lineTo(X + H * 0.025, Y - H * 0.06);
-    g.stroke();
-  }
-  // windows
-  const winRect = (x: number, y: number, w: number, h: number, seed: number) => {
-    const X = cx + x * W;
-    const Y = baseY + y * H;
-    const ww = w * W;
-    const hh = h * H;
-    const flick = 0.85 + 0.15 * noise1(t * 0.8 + seed * 3.1, seed);
-    glowAt(g, X + ww / 2, Y + hh / 2, Math.max(ww, hh) * 1.3, win, 0.5 * flick);
-    g.fillStyle = win;
-    g.globalAlpha = 0.75 + 0.25 * flick;
-    g.beginPath();
-    g.moveTo(X, Y + hh);
-    g.lineTo(X, Y + ww / 2);
-    g.arc(X + ww / 2, Y + ww / 2, ww / 2, Math.PI, 0);
-    g.lineTo(X + ww, Y + hh);
-    g.closePath();
-    g.fill();
-    g.globalAlpha = 1;
-    g.strokeStyle = body;
-    g.lineWidth = Math.max(1.5, ww * 0.12);
-    g.beginPath();
-    g.moveTo(X + ww / 2, Y + ww * 0.2);
-    g.lineTo(X + ww / 2, Y + hh);
-    g.moveTo(X, Y + hh * 0.6);
-    g.lineTo(X + ww, Y + hh * 0.6);
-    g.stroke();
-    // a cat in some windows
-    if (seed % 4 === 1) {
-      g.fillStyle = body;
-      const cxw = X + ww * 0.3;
-      const by = Y + hh * 0.98;
-      g.beginPath();
-      g.ellipse(cxw, by - hh * 0.14, ww * 0.16, hh * 0.15, 0, 0, TAU);
-      g.arc(cxw, by - hh * 0.36, ww * 0.12, 0, TAU);
-      g.fill();
-      g.beginPath();
-      g.moveTo(cxw - ww * 0.12, by - hh * 0.4);
-      g.lineTo(cxw - ww * 0.1, by - hh * 0.52);
-      g.lineTo(cxw - ww * 0.02, by - hh * 0.44);
-      g.lineTo(cxw + ww * 0.06, by - hh * 0.52);
-      g.lineTo(cxw + ww * 0.12, by - hh * 0.4);
-      g.fill();
-    }
-  };
-  let k = 0;
-  for (const x of [-0.45, -0.36]) winRect(x, -0.32, 0.06, 0.2, k++);
-  for (const x of [0.3, 0.39]) winRect(x, -0.32, 0.06, 0.2, k++);
-  for (const x of [-0.2, -0.06, 0.08]) winRect(x, -0.5, 0.08, 0.2, k++);
-  for (const x of [-0.2, 0.12]) winRect(x, -0.22, 0.08, 0.2, k++);
-  winRect(-0.05, -0.75, 0.1, 0.2, k++);
-  winRect(-0.41, -0.55, 0.06, 0.1, k++);
-  winRect(0.35, -0.55, 0.06, 0.1, k++);
-  // door
-  const dX = cx - W * 0.05;
-  const dW = W * 0.1;
-  const dH = H * 0.24;
-  glowAt(g, dX + dW / 2, baseY - dH / 2, dW * 1.4, pal.primary, 0.45);
-  g.fillStyle = '#b8571a';
-  g.beginPath();
-  g.moveTo(dX, baseY);
-  g.lineTo(dX, baseY - dH + dW / 2);
-  g.arc(dX + dW / 2, baseY - dH + dW / 2, dW / 2, Math.PI, 0);
-  g.lineTo(dX + dW, baseY);
-  g.closePath();
-  g.fill();
-  g.strokeStyle = rim;
-  g.lineWidth = lw;
-  g.stroke();
-  // wreath
-  g.strokeStyle = LIME;
-  g.lineWidth = Math.max(2, dW * 0.12);
-  g.beginPath();
-  g.arc(dX + dW / 2, baseY - dH * 0.62, dW * 0.2, 0, TAU);
-  g.stroke();
-  // lanterns
-  for (const side of [-1, 1]) {
-    const lx = dX + dW / 2 + side * dW * 0.95;
-    const ly = baseY - dH * 0.7;
-    glowAt(g, lx, ly, dW * 0.9, pal.secondary, 0.7);
-    g.fillStyle = pal.secondary;
-    g.fillRect(lx - dW * 0.08, ly - dW * 0.12, dW * 0.16, dW * 0.24);
-  }
-  g.restore();
+/** Neon scenes default to the neon environment unless another (non-classic) mood is chosen. */
+function neonEnv(s: DrawState) {
+  const mood = String(s.params.mood ?? 'neon');
+  return envPalette({ mood: mood === 'classic' ? 'neon' : mood });
 }
 
 const neonManor: SceneModule = hybridScene(
   'neonManor',
-  MANOR_FRAG,
-  (s) => ({ ...neonUniforms(s), uMoon: new THREE.Vector2(0.74, 0.74) }),
+  SKY_FRAG,
+  (s) => skyUniforms(s, neonEnv(s), { moon: MOON_POS, moonR: 0.1, horizonY: 0.25, clouds: 1.1 }, speedOf(s)),
   (g, s, f) => {
     const pal = palette(s.params);
+    const env = neonEnv(s);
     const t = f.time * speedOf(s);
     const { w, h } = s;
-    const m = Math.min(w, h);
-    // stars
-    const stars = memo(s, 'nstars', () => {
-      const rng = createRng(s.seed ^ 77);
-      return Array.from({ length: countOf(s, 40, 8, 100) }, () => ({
-        x: rng() * w,
-        y: rng() * h * 0.45,
-        r: m * (0.004 + rng() * 0.006),
-        p: rng() * TAU,
-      }));
-    });
-    for (const st of stars) star(g, st.x, st.y, st.r * 2, '#ffffff', 0.5 + 0.5 * Math.sin(t * 1.2 + st.p));
-    // moon
-    const mx = w * 0.74;
-    const my = h * 0.26;
-    const mr = m * 0.15;
-    glowAt(g, mx, my, mr * 2.6, '#ffc24d', 0.6);
-    g.fillStyle = '#ffd36b';
-    g.beginPath();
-    g.arc(mx, my, mr, 0, TAU);
-    g.fill();
-    g.fillStyle = 'rgba(230,150,40,0.45)';
-    for (const [dx, dy, rr] of [
-      [-0.3, -0.2, 0.18],
-      [0.25, 0.15, 0.22],
-      [-0.1, 0.4, 0.12],
-    ] as const) {
-      g.beginPath();
-      g.arc(mx + dx * mr, my + dy * mr, rr * mr, 0, TAU);
-      g.fill();
-    }
-    // ground
-    const groundY = h * 0.88;
-    g.fillStyle = '#1a0830';
-    g.beginPath();
-    g.moveTo(0, h);
-    for (let i = 0; i <= 24; i++) g.lineTo((i / 24) * w, groundY + Math.sin(i * 0.9 + s.seed) * h * 0.012);
-    g.lineTo(w, h);
-    g.closePath();
-    g.fill();
-    g.strokeStyle = LIME;
-    g.globalAlpha = 0.7;
-    g.lineWidth = Math.max(2, h * 0.006);
-    g.stroke();
-    g.globalAlpha = 1;
-    // mansion
-    const W = Math.min(w * 0.62, h * 1.25);
-    mansion(g, w * 0.5, groundY, W, pal, t);
     // bats
     const nb = countOf(s, 4, 2, 8);
     for (let i = 0; i < nb; i++) {
       const period = 14 + hash01(i * 7 + 1) * 8;
       const u = mod(t / period + hash01(i * 3), 1);
       const x = -0.1 * w + u * 1.2 * w;
-      const y = h * (0.12 + 0.25 * hash01(i * 5)) + Math.sin(u * TAU * 3 + i) * h * 0.05;
-      bat(g, x, y, px(s, 0.6, 0.06, 0.16), Math.sin(t * 8 + i * 2), pal);
+      const y = h * (0.1 + 0.22 * hash01(i * 5)) + Math.sin(u * TAU * 3 + i) * h * 0.04;
+      bat(g, x, y, px(s, 0.5, 0.04, 0.1), Math.sin(t * 8 + i * 2), pal);
     }
-    // big ghosts
+    const L = drawManor(g, s, env, t, { fog: 1.2 });
+    // big friendly ghosts floating around the house
     const ng = countOf(s, 4, 2, 6);
     const spots = [
-      [0.1, 0.36],
-      [0.9, 0.4],
-      [0.25, 0.16],
-      [0.62, 0.12],
-      [0.4, 0.3],
-      [0.82, 0.16],
+      [0.12, 0.42],
+      [0.88, 0.5],
+      [0.22, 0.2],
+      [0.66, 0.14],
+      [0.36, 0.34],
+      [0.8, 0.3],
     ] as const;
     for (let i = 0; i < Math.min(ng, spots.length); i++) {
       const side = spots[i]![0] < 0.5 ? -1 : 1;
       const x = w * spots[i]![0] + Math.sin(t * 0.35 + i * 1.7) * w * 0.04;
       const y = h * spots[i]![1] + Math.sin(t * 0.8 + i) * h * 0.04;
-      const size = Math.min(h * 0.3, px(s, 1.0, 0.12, 0.34)) * (i < 2 ? 1 : 0.7);
+      const size = Math.min(h * 0.26, px(s, 1.0, 0.1, 0.3)) * (i < 2 ? 1 : 0.65);
       ghost(g, x, y, size, {
         color: pal.ghost,
         t: t + i,
@@ -316,13 +106,13 @@ const neonManor: SceneModule = hybridScene(
         blush: '#ff9ac8',
       });
     }
-    // pumpkins
+    // pumpkins along the front
     const np = countOf(s, 6, 3, 10);
     for (let i = 0; i < np; i++) {
       const x = w * ((i + 0.5) / np);
-      if (Math.abs(x - w * 0.5) < W * 0.08) continue;
-      const size = Math.min(h * 0.16, px(s, 0.5, 0.06, 0.2)) * (0.8 + 0.4 * hash01(i * 17));
-      pumpkin(g, x, groundY + size * 0.05, size, {
+      if (Math.abs(x - L.doorX) < L.manor.door.w * 2.5) continue;
+      const size = Math.min(h * 0.14, px(s, 0.45, 0.05, 0.16)) * (0.8 + 0.4 * hash01(i * 17));
+      pumpkin(g, x, h * 0.955 - size * 0.2, size, {
         pal,
         face: i % 6,
         glow: 1.2 + 0.2 * Math.sin(t * 1.5 + i),
@@ -330,50 +120,84 @@ const neonManor: SceneModule = hybridScene(
       });
     }
   },
-  { ambientSound: (snd) => snd.ambience('wind', 0.03) },
+  { ambientSound: (snd) => snd.ambience('wind', 0.03), shaderScale: 0.5 },
 );
 
 // ---------------------------------------------------------------------------
 // Neon Party (wall)
 // ---------------------------------------------------------------------------
-const PARTY_FRAG = /* glsl */ `
-${HEADER}
-uniform float uBeat;
-void main() {
-  vec2 uv = vUv;
-  float aspect = uRes.x / uRes.y;
-  float t = uTime * uSpeed;
-  vec3 col = mix(uA * 0.42, uA * 0.62 + uB * 0.06, uv.y);
-  vec3 cs[4];
-  cs[0] = uA; cs[1] = uB; cs[2] = uC; cs[3] = vec3(1.0, 0.3, 0.8);
-  for (int i = 0; i < 4; i++) {
-    float fi = float(i);
-    vec2 c = vec2(0.5 + 0.38 * sin(t * 0.13 + fi * 1.9), 0.55 + 0.3 * cos(t * 0.11 + fi * 2.4));
-    float d = length((uv - c) * vec2(aspect, 1.0));
-    col += cs[i] * 0.3 * exp(-d * d * 6.0);
-  }
-  float n = fbm(vec2(uv.x * aspect * 2.0, uv.y * 2.0) + vec2(t * 0.04, 0.0) + uSeed);
-  col *= 0.85 + 0.3 * n;
-  col *= 1.0 + 0.05 * sin(uTime * uBeat * 6.2831);
-  col = max(col, uA * 0.3);
-  gl_FragColor = vec4(min(col, vec3(1.0)), 1.0);
+/** Cached wooden party stage with front fascia and bunting. */
+function partyStage(s: DrawState, floorY: number, party: string[]) {
+  return memo(s, 'stage', () => {
+    const { w, h } = s;
+    const { c, g } = offscreen(w, h);
+    const sh = h - floorY;
+    // plank deck
+    const deck = g.createLinearGradient(0, floorY, 0, floorY + sh * 0.45);
+    deck.addColorStop(0, '#5a2e7a');
+    deck.addColorStop(1, '#2a0f45');
+    g.fillStyle = deck;
+    g.fillRect(0, floorY, w, sh * 0.45);
+    g.fillStyle = 'rgba(0,0,0,0.35)';
+    for (let k = 1; k < 4; k++) g.fillRect(0, floorY + (sh * 0.45 * k) / 4, w, Math.max(1, sh * 0.012));
+    const pw = Math.max(20, h * 0.12);
+    for (let x = 0, r = 0; x < w; x += pw, r++) {
+      for (let k = 0; k < 4; k++) {
+        const xx = x + ((k % 2) * pw) / 2;
+        g.fillRect(xx, floorY + (sh * 0.45 * k) / 4, Math.max(1, sh * 0.01), (sh * 0.45) / 4);
+      }
+    }
+    // stage lip highlight
+    g.fillStyle = '#c77dff';
+    g.fillRect(0, floorY + sh * 0.45, w, Math.max(2, sh * 0.04));
+    // fascia
+    const fas = g.createLinearGradient(0, floorY + sh * 0.49, 0, h);
+    fas.addColorStop(0, '#22093f');
+    fas.addColorStop(1, '#0c0218');
+    g.fillStyle = fas;
+    g.fillRect(0, floorY + sh * 0.49, w, h);
+    // bunting
+    const n = Math.max(8, Math.round(w / (sh * 0.5)));
+    for (let i = 0; i < n; i++) {
+      const x0 = (i / n) * w;
+      const x1 = ((i + 1) / n) * w;
+      g.fillStyle = party[i % party.length]!;
+      g.beginPath();
+      g.moveTo(x0 + 2, floorY + sh * 0.5);
+      g.lineTo(x1 - 2, floorY + sh * 0.5);
+      g.lineTo((x0 + x1) / 2, floorY + sh * 0.92);
+      g.closePath();
+      g.fill();
+      g.fillStyle = 'rgba(255,255,255,0.25)';
+      g.beginPath();
+      g.moveTo(x0 + 2, floorY + sh * 0.5);
+      g.lineTo((x0 + x1) / 2, floorY + sh * 0.5);
+      g.lineTo((x0 + x1) / 2, floorY + sh * 0.92);
+      g.closePath();
+      g.fill();
+    }
+    return c;
+  });
 }
-`;
 
 const neonParty: SceneModule = hybridScene(
   'neonParty',
-  PARTY_FRAG,
-  (s) => ({ ...neonUniforms(s), uBeat: (num(s.params, 'bpm', 108) / 60) * speedOf(s) }),
+  SKY_FRAG,
+  (s) =>
+    skyUniforms(s, neonEnv(s), { moon: [0.85, 0.14], moonR: 0.07, horizonY: 0.4, clouds: 1 }, speedOf(s)),
   (g, s, f) => {
     const pal = palette(s.params);
+    const env = neonEnv(s);
     const t = f.time;
     const beat = (t * num(s.params, 'bpm', 108) * speedOf(s)) / 60;
     const { w, h } = s;
-    // string lights
+    const floorY = h * 0.84;
+    g.drawImage(backdrop(s, env, { manor: [0.18, 0.22], horizon: 0.62, ground: 0.8, trees: true }), 0, 0);
+    // string lights between the trees
     for (let row = 0; row < 2; row++) {
-      const y0 = h * (0.06 + row * 0.08);
-      const sag = h * (0.07 + row * 0.03);
-      g.strokeStyle = '#1a0a2a';
+      const y0 = h * (0.12 + row * 0.08);
+      const sag = h * (0.08 + row * 0.03);
+      g.strokeStyle = '#12051f';
       g.lineWidth = Math.max(1.5, h * 0.004);
       g.beginPath();
       for (let i = 0; i <= 40; i++) {
@@ -389,25 +213,43 @@ const neonParty: SceneModule = hybridScene(
         const y = y0 + Math.sin(u * Math.PI * 2) ** 2 * sag + h * 0.012;
         const col = pal.party[(i + row) % pal.party.length]!;
         const a = 0.75 + 0.25 * Math.sin(t * 1.5 + i * 0.9 + row);
-        glowAt(g, u * w, y, h * 0.035, col, a);
+        addGlow(g, u * w, y, h * 0.04, col, a * 0.8);
         g.fillStyle = col;
         g.beginPath();
         g.ellipse(u * w, y, h * 0.008, h * 0.013, 0, 0, TAU);
         g.fill();
+        g.fillStyle = 'rgba(255,255,255,0.7)';
+        g.beginPath();
+        g.ellipse(u * w - h * 0.002, y - h * 0.004, h * 0.003, h * 0.005, 0, 0, TAU);
+        g.fill();
       }
     }
-    // stage floor
-    const floorY = h * 0.9;
-    g.fillStyle = '#1a0830';
-    g.fillRect(0, floorY, w, h - floorY);
-    const tiles = 12;
-    for (let i = 0; i < tiles; i++) {
+    g.drawImage(partyStage(s, floorY, pal.party), 0, 0);
+    // colored spotlight pools on the stage, swaying slowly with the beat
+    for (let i = 0; i < 4; i++) {
+      const x = w * (0.15 + 0.7 * (0.5 + 0.5 * Math.sin(t * 0.35 + i * 1.7)));
       const col = pal.party[i % pal.party.length]!;
-      g.globalAlpha = 0.6 + 0.25 * Math.sin(beat * Math.PI + i);
+      lightPool(
+        g,
+        x,
+        floorY + (h - floorY) * 0.22,
+        h * 0.22,
+        h * 0.05,
+        col,
+        0.55 + 0.15 * Math.sin(beat * Math.PI + i),
+      );
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      g.globalAlpha = 0.07;
       g.fillStyle = col;
-      g.fillRect((i / tiles) * w + 2, floorY + 3, w / tiles - 4, h - floorY - 4);
+      g.beginPath();
+      g.moveTo(w * (0.2 + i * 0.2), 0);
+      g.lineTo(x - h * 0.2, floorY + (h - floorY) * 0.22);
+      g.lineTo(x + h * 0.2, floorY + (h - floorY) * 0.22);
+      g.closePath();
+      g.fill();
+      g.restore();
     }
-    g.globalAlpha = 1;
     // ghosts in the air
     const ng = countOf(s, 3, 2, 5);
     for (let i = 0; i < ng; i++) {
@@ -457,20 +299,32 @@ const neonParty: SceneModule = hybridScene(
 // ---------------------------------------------------------------------------
 const FOG_FRAG = /* glsl */ `
 ${HEADER}
+float fbm3(vec2 p) {
+  float v = 0.5 * vnoise(p); p = p * 2.03 + vec2(17.1, 9.2);
+  v += 0.25 * vnoise(p); p = p * 2.03 + vec2(17.1, 9.2);
+  v += 0.125 * vnoise(p);
+  return v / 0.875;
+}
 void main() {
   vec2 uv = vUv;
   float aspect = uRes.x / uRes.y;
   float t = uTime * uSpeed * 0.035;
   vec2 p = vec2(uv.x * aspect, uv.y) * 2.0;
-  vec2 q = vec2(fbm(p + t + uSeed), fbm(p + vec2(5.2, 1.3) - t));
-  vec2 r = vec2(fbm(p + 3.0 * q + vec2(1.7, 9.2) + t * 1.5), fbm(p + 3.0 * q + vec2(8.3, 2.8) - t));
-  float f = fbm(p + 3.0 * r);
   float dens = clamp(uDensity, 0.3, 1.6);
-  vec3 col = mix(uA * 0.5, uA * 1.05, smoothstep(0.2, 0.8, f));
-  col = mix(col, uC * 0.85, smoothstep(0.55, 0.95, r.x) * 0.5 * dens);
-  col = mix(col, uB, smoothstep(0.62, 1.0, r.y) * 0.45 * dens);
-  col += vec3(0.95, 0.75, 1.0) * pow(smoothstep(0.5, 0.9, f), 3.0) * 0.4;
-  col = max(col, uA * 0.32);
+  // domain-warped billows (4 x 3 octaves)
+  vec2 q = vec2(fbm3(p + t + uSeed), fbm3(p + vec2(5.2, 1.3) - t));
+  float f = fbm3(p + 2.4 * q + vec2(1.7, 9.2) + t * 1.5);
+  float f2 = fbm3(p * 2.1 - q * 1.3 + vec2(t * 2.0, 0.0) + 4.0);
+  vec3 col = mix(uA * 0.32, uA * 1.1, smoothstep(0.2, 0.85, f));
+  // billow tops catch light, valleys stay deep
+  col += vec3(0.95, 0.8, 1.0) * pow(smoothstep(0.55, 0.9, f), 2.0) * 0.5;
+  col = mix(col, uC * 0.9, smoothstep(0.6, 0.92, q.x) * 0.55 * dens);
+  col = mix(col, uB, smoothstep(0.66, 1.0, q.y) * 0.35 * dens);
+  // near layer: brighter wisps drifting faster
+  col += mix(uA, vec3(1.0), 0.45) * smoothstep(0.6, 0.92, f2) * 0.22 * dens;
+  vec2 v = uv - 0.5;
+  col *= 1.0 - dot(v, v) * 0.5;
+  col = max(col, uA * 0.3);
   gl_FragColor = vec4(min(col, vec3(1.0)), 1.0);
 }
 `;
@@ -598,27 +452,37 @@ const neonPumpkinPatch: SceneModule = hybridScene('neonPumpkinPatch', PATCH_FRAG
     }
     return out.sort((a, b) => a.y - b.y);
   });
-  // vines
-  g.strokeStyle = LIME;
-  g.lineWidth = Math.max(2, base * 0.06);
-  g.lineCap = 'round';
-  g.globalAlpha = 0.85;
-  for (let i = 0; i < layout.length - 1; i++) {
-    const a = layout[i]!;
-    const b = layout[i + 1]!;
-    if (Math.hypot(b.x - a.x, b.y - a.y) > base * 3) continue;
-    const mx = (a.x + b.x) / 2 + Math.sin(t * 0.5 + i) * base * 0.3;
-    const my = (a.y + b.y) / 2 - base * 0.5;
-    g.beginPath();
-    g.moveTo(a.x, a.y);
-    g.quadraticCurveTo(mx, my, b.x, b.y);
-    g.stroke();
-    // curl
-    g.beginPath();
-    g.arc(mx, my + base * 0.1, base * 0.12, 0, TAU * 0.75);
-    g.stroke();
-  }
-  g.globalAlpha = 1;
+  // vines and leaves (cached, filled ribbons)
+  g.drawImage(
+    memo(s, 'vines', () => {
+      const { c, g: vg } = offscreen(w, h);
+      vg.lineCap = 'round';
+      for (let i = 0; i < layout.length - 1; i++) {
+        const a = layout[i]!;
+        const b = layout[i + 1]!;
+        if (Math.hypot(b.x - a.x, b.y - a.y) > base * 3) continue;
+        const mx = (a.x + b.x) / 2 + Math.sin(i * 1.7) * base * 0.3;
+        const my = (a.y + b.y) / 2 - base * 0.5;
+        for (const [lw, col] of [
+          [base * 0.11, '#1d5a12'],
+          [base * 0.07, '#3fa52a'],
+          [base * 0.025, '#9dff6b'],
+        ] as const) {
+          vg.strokeStyle = col;
+          vg.lineWidth = Math.max(1.5, lw);
+          vg.beginPath();
+          vg.moveTo(a.x, a.y);
+          vg.quadraticCurveTo(mx, my, b.x, b.y);
+          vg.stroke();
+        }
+        paintLeaf(vg, mx, my, base * 0.28, i % 2 ? 0.6 : -0.6, '#3fbf2a', 0);
+        paintLeaf(vg, (a.x + mx) / 2, (a.y + my) / 2, base * 0.2, i, '#2f9a22', 0);
+      }
+      return c;
+    }),
+    0,
+    0,
+  );
   // pumpkins
   for (const p of layout) {
     const bob = Math.sin(t * 1.1 + p.ph) * p.s * 0.03;

@@ -300,6 +300,7 @@ export class StageRenderer {
   private state: SessionState | null = null;
   private outputId: string | null = null;
   private previewProfile: Profile | null = null;
+  private previewFocus: number | null = null;
   private previewViewport: Viewport | null = null;
   private runtimes = new Map<string, ThemeRuntime>();
   private loading = new Set<string>();
@@ -454,8 +455,10 @@ export class StageRenderer {
   }
 
   /** Live (unsaved) calibration from the controller editor. */
-  setPreviewProfile(profile: Profile | null): void {
+  setPreviewProfile(profile: Profile | null, focus?: number): void {
     this.previewProfile = profile;
+    // focus is set while the controller's calibration editor is open: grid on, corner highlighted.
+    this.previewFocus = profile && focus !== undefined ? focus : null;
   }
 
   /** Preview mode: which stage area to show (null = all surfaces). */
@@ -675,7 +678,9 @@ export class StageRenderer {
     const testMode =
       output && output.testPattern.mode !== 'off' && output.testPattern.until > now
         ? output.testPattern.mode
-        : 'off';
+        : this.previewFocus !== null
+          ? 'grid'
+          : 'off';
 
     const blackout =
       !state ||
@@ -743,7 +748,7 @@ export class StageRenderer {
     if (testMode === 'grid' || identify) {
       this.viewOverlay.clear();
       const g = this.viewOverlay.g;
-      if (testMode === 'grid') drawStageGrid(g, vw, vh, vp, state, output);
+      if (testMode === 'grid') drawStageGrid(g, vw, vh, vp, state, output, this.previewFocus, now);
       if (identify && this.identify) drawIdentify(g, vw, vh, this.identify.label);
       this.viewOverlay.upload();
       const prev = r.autoClear;
