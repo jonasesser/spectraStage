@@ -32,7 +32,7 @@ export function paintMask(
   g: CanvasRenderingContext2D,
   w: number,
   h: number,
-  profile: Pick<Profile, 'masks' | 'crop'>,
+  profile: Pick<Profile, 'masks' | 'crop' | 'blend'>,
 ): void {
   g.save();
   g.setTransform(1, 0, 0, 1, 0, 0);
@@ -47,6 +47,46 @@ export function paintMask(
     shapePath(g, m, w, h);
     g.fill('evenodd');
   }
+  // Dim regions: multiply brightness inside the shape by `level`.
+  for (const m of masks.filter((x) => x.mode === 'dim')) {
+    const v = Math.round(Math.max(0, Math.min(1, m.level ?? 0.5)) * 255);
+    g.globalCompositeOperation = 'multiply';
+    g.filter = m.feather > 0 ? `blur(${Math.round(m.feather * w)}px)` : 'none';
+    g.fillStyle = `rgb(${v},${v},${v})`;
+    shapePath(g, m, w, h);
+    g.fill('evenodd');
+    g.filter = 'none';
+    g.globalCompositeOperation = 'source-over';
+  }
+  // Edge blending for overlapping projectors: smooth (gamma-corrected) ramps at the edges.
+  const blend = profile.blend ?? [0, 0, 0, 0];
+  const ramp = (
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    rx: number,
+    ry: number,
+    rw: number,
+    rh: number,
+  ) => {
+    const grad = g.createLinearGradient(x0, y0, x1, y1);
+    for (let i = 0; i <= 8; i++) {
+      const t = i / 8;
+      const s = t * t * (3 - 2 * t);
+      const v = Math.round(Math.pow(s, 1 / 2.2) * 255);
+      grad.addColorStop(t, `rgb(${v},${v},${v})`);
+    }
+    g.globalCompositeOperation = 'multiply';
+    g.fillStyle = grad;
+    g.fillRect(rx, ry, rw, rh);
+    g.globalCompositeOperation = 'source-over';
+  };
+  const [bt, br, bb, bl] = blend.map((x) => Math.max(0, Math.min(0.5, x ?? 0)));
+  if (bt! > 0) ramp(0, 0, 0, bt! * h, 0, 0, w, bt! * h);
+  if (bb! > 0) ramp(0, h, 0, h - bb! * h, 0, h - bb! * h, w, bb! * h);
+  if (bl! > 0) ramp(0, 0, bl! * w, 0, 0, 0, bl! * w, h);
+  if (br! > 0) ramp(w, 0, w - br! * w, 0, w - br! * w, 0, br! * w, h);
   const excludes = masks.filter((m) => m.mode === 'exclude');
   g.fillStyle = '#000';
   g.strokeStyle = '#000';
@@ -90,7 +130,12 @@ export function paintMaskOverlay(
     shapePath(g, m, w, h);
     g.save();
     g.clip('evenodd');
-    g.strokeStyle = m.mode === 'include' ? 'rgba(80,255,140,0.55)' : 'rgba(255,60,60,0.6)';
+    g.strokeStyle =
+      m.mode === 'include'
+        ? 'rgba(80,255,140,0.55)'
+        : m.mode === 'dim'
+          ? 'rgba(120,170,255,0.6)'
+          : 'rgba(255,60,60,0.6)';
     g.lineWidth = Math.max(1, w / 400);
     const step = Math.max(8, w / 60);
     g.beginPath();
@@ -103,7 +148,7 @@ export function paintMaskOverlay(
     shapePath(g, m, w, h);
     g.setLineDash([Math.max(6, w / 120), Math.max(4, w / 200)]);
     g.lineWidth = Math.max(2, w / 300);
-    g.strokeStyle = m.mode === 'include' ? '#4dff8a' : '#ff3c3c';
+    g.strokeStyle = m.mode === 'include' ? '#4dff8a' : m.mode === 'dim' ? '#78aaff' : '#ff3c3c';
     g.stroke();
     g.setLineDash([]);
     const c = m.points[0];

@@ -116,6 +116,19 @@ export interface ScheduledEffect {
   key: string;
 }
 
+/** Timed effect cues of the active playlist item (absolute times). */
+export function itemCueSchedule(active: ActiveScene): ScheduledEffect[] {
+  const pos = active.position;
+  const cues = pos?.item.cues;
+  if (!pos || !cues) return [];
+  return cues.map((c, i) => ({
+    at: pos.itemStart + c.atSec * 1000,
+    effect: { themeId: c.themeId, effectId: c.effectId },
+    seed: hashInts(active.seed, 0xc0e + i),
+    key: `${active.key}:c${i}`,
+  }));
+}
+
 /** Deterministic ambient effect schedule for one playlist item activation. */
 export function ambientSchedule(active: ActiveScene): ScheduledEffect[] {
   const pos = active.position;

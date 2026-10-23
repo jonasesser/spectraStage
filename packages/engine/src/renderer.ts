@@ -14,6 +14,7 @@ import {
   activeScene,
   ambientActorCues,
   ambientSchedule,
+  itemCueSchedule,
   bboxIntersects,
   buildActorRoute,
   createRng,
@@ -773,7 +774,7 @@ export class StageRenderer {
   }
 
   private updateMask(profile: Profile): void {
-    const key = `${this.width}x${this.height}:${JSON.stringify(profile.masks)}:${profile.crop.join(',')}`;
+    const key = `${this.width}x${this.height}:${JSON.stringify(profile.masks)}:${profile.crop.join(',')}:${(profile.blend ?? []).join(',')}`;
     if (key === this.maskKey) return;
     this.maskKey = key;
     this.maskCanvas.width = this.width;
@@ -975,8 +976,8 @@ export class StageRenderer {
         params: c.params,
       });
     }
-    if (active?.position?.item.ambient) {
-      for (const sch of ambientSchedule(active)) {
+    if (active?.position) {
+      for (const sch of [...ambientSchedule(active), ...itemCueSchedule(active)]) {
         const eff = this.opts.catalog
           .get(sch.effect.themeId)
           ?.effects.find((e) => e.id === sch.effect.effectId);
@@ -1017,7 +1018,11 @@ export class StageRenderer {
         progress: Math.min(1, (now - it.startAt) / it.duration),
         duration: it.duration / 1000,
         seed: it.seed,
-        params: it.params,
+        // Effects follow the color mood of the scene they play over unless the cue says otherwise.
+        params: {
+          ...(active?.scene.params.mood !== undefined ? { mood: active.scene.params.mood } : {}),
+          ...it.params,
+        },
         rng: createRng(it.seed),
       });
       g.restore();

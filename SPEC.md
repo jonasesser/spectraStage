@@ -26,7 +26,7 @@ theme-specific content.
 | D10 | **Each device plays its own sound** (procedural Web Audio). Projection PCs are normally separate machines. |
 | D11 | Hosting on **Easypanel behind Cloudflare** (Easypanel's Traefik terminates TLS). App reads real client IP from `CF-Connecting-IP`; WS heartbeat < 100 s (Cloudflare idle timeout). Compose file provided for generic Docker hosts too. |
 | D12 | Co-controllers via single-use, time-limited **invite code** created by the owner. Owner can revoke. |
-| D13 | Playlist editor per surface (scene, duration, transition, loop, skip, ambient random effects). Time-coded effect cues are out of scope for now. |
+| D13 | Playlist editor per surface (scene, duration, transition, loop, skip, ambient random effects, timed effect cues). |
 | D14 | Git: commit locally, never push. |
 | D15 | **Virtual stage** = one schematic 2D plane in meters. Physical surfaces are polygons placed on it. Corners and floors are represented by *unfolding* (wall at 90° placed next to the garage, driveway below it). Gaps are simply empty stage space. |
 | D16 | **Outputs** (projector clients) are independent of surfaces: each output shows a resizable rectangle (viewport) of the stage. Any n:m coverage is possible (one projector over garage + wall, two projectors on one wall, 3–4+ projectors). |
@@ -36,7 +36,8 @@ theme-specific content.
 | D20 | Controller shows a **status light per output** (online, sync quality, FPS, calibration validity) with details on tap (RTT, jitter, clock offset, resolution, profile). |
 | D21 | **Masks per output** in output space: polygon / rectangle / ellipse, include or exclude, safety margin, hard edges for safety masks, optional feather for cosmetic masks. Applied as the very last pixel stage over all layers. |
 | D22 | Calibration per output: **profiles** (several, duplicate, export/import), 4-corner homography **plus optional mesh grid** (up to 5×5) for uneven surfaces, rotation/flip, crop margins, test pattern with timeout, undo/redo and explicit *Apply*. Missing/invalid profile or resolution mismatch → output stays black until fixed or deliberately accepted. |
-| D23 | No reference photo upload in this release (schematic layout instead). Edge blending of overlapping outputs: later; overlaps are shown in the editor and can be masked. |
+| D23 | No reference photo upload in this release (schematic layout instead). Overlaps are shown in the stage editor; each output has manual edge blending (gamma-corrected ramps per edge) and *dim* masks. |
+| D24 | Playlist items support effects at fixed times in addition to random ambient effects. Effects inherit the color mood of the scene they play over. |
 
 ## 3. Concepts
 - **Session (Show)**: isolated unit of state. Has a revision counter incremented on every change.

@@ -283,6 +283,14 @@ function validatePlaylist(playlist: Playlist, catalog: ThemeCatalog): Playlist {
         ...item,
         scene: { ...item.scene, params: sanitizeParams(scene.params, item.scene.params) },
         ambient,
+        ...(item.cues
+          ? {
+              cues: item.cues
+                .filter((c) => !!catalog.get(c.themeId)?.effects.some((x) => x.id === c.effectId))
+                .filter((c) => c.atSec < item.durationSec)
+                .sort((x, y) => x.atSec - y.atSec),
+            }
+          : {}),
       };
     }),
   };

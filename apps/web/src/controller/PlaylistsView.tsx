@@ -302,6 +302,7 @@ function PlaylistEditor({
                 />
               </label>
             </div>
+            <TimedCues item={it} kidsSafe={state.kidsSafe} L={L} onChange={(cues) => update(i, { cues })} />
             <label className="check">
               <input
                 type="checkbox"
@@ -407,6 +408,95 @@ function PlaylistEditor({
           {L('Delete playlist', 'Playlist löschen')}
         </button>
       )}
+    </div>
+  );
+}
+
+function fmtTime(sec: number): string {
+  return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
+}
+
+function parseTime(v: string): number {
+  const m = v.trim().match(/^(\d+)(?::(\d{1,2}))?$/);
+  if (!m) return NaN;
+  return m[2] !== undefined ? Number(m[1]) * 60 + Number(m[2]) : Number(m[1]);
+}
+
+/** Effects at fixed times inside one playlist item, e.g. "Boo! at 0:30". */
+function TimedCues({
+  item,
+  kidsSafe,
+  L,
+  onChange,
+}: {
+  item: PlaylistItem;
+  kidsSafe: boolean;
+  L: Tr;
+  onChange: (cues: NonNullable<PlaylistItem['cues']>) => void;
+}) {
+  const cues = item.cues ?? [];
+  const themeEffects = (catalog.get(item.scene.themeId)?.effects ?? []).filter(
+    (e) => !kidsSafe || e.childSafe,
+  );
+  const allEffects = catalog.themes.flatMap((t) =>
+    t.effects.filter((e) => !kidsSafe || e.childSafe).map((e) => ({ t, e })),
+  );
+  const set = (i: number, patch: Partial<NonNullable<PlaylistItem['cues']>[number]>) =>
+    onChange(cues.map((c, j) => (j === i ? { ...c, ...patch } : c)).sort((a, b) => a.atSec - b.atSec));
+  return (
+    <div className="stack">
+      <div className="muted small" style={{ fontWeight: 600 }}>
+        {L('Effects at fixed times', 'Effekte zu festen Zeiten')}
+      </div>
+      {cues.map((c, i) => (
+        <div key={i} className="row" style={{ flexWrap: 'nowrap' }}>
+          <input
+            aria-label={L('Time (m:ss)', 'Zeit (m:ss)')}
+            defaultValue={fmtTime(c.atSec)}
+            style={{ width: 80 }}
+            onBlur={(e) => {
+              const v = parseTime(e.target.value);
+              if (Number.isFinite(v)) set(i, { atSec: Math.min(item.durationSec - 1, Math.max(0, v)) });
+              else e.target.value = fmtTime(c.atSec);
+            }}
+          />
+          <select
+            className="grow"
+            value={`${c.themeId}/${c.effectId}`}
+            onChange={(e) => {
+              const [themeId, effectId] = e.target.value.split('/');
+              set(i, { themeId: themeId!, effectId: effectId! });
+            }}
+            aria-label={L('Effect', 'Effekt')}
+          >
+            {allEffects.map(({ t, e }) => (
+              <option key={`${t.id}/${e.id}`} value={`${t.id}/${e.id}`}>
+                {e.icon} {L.text(e.name)}
+              </option>
+            ))}
+          </select>
+          <button
+            className="btn icon small danger"
+            aria-label={L('Remove', 'Entfernen')}
+            onClick={() => onChange(cues.filter((_, j) => j !== i))}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      <div>
+        <button
+          className="btn small"
+          disabled={themeEffects.length === 0 || cues.length >= 50}
+          onClick={() => {
+            const last = cues[cues.length - 1]?.atSec ?? 0;
+            const at = Math.min(item.durationSec - 1, last + 30);
+            onChange([...cues, { atSec: at, themeId: item.scene.themeId, effectId: themeEffects[0]!.id }]);
+          }}
+        >
+          ＋ {L('Effect at a time', 'Effekt zu einer Zeit')}
+        </button>
+      </div>
     </div>
   );
 }

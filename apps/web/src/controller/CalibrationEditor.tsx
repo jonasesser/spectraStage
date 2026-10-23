@@ -706,9 +706,14 @@ function MaskShape({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const color = mask.mode === 'include' ? '#4dff8a' : '#ff3c3c';
+  const color = mask.mode === 'include' ? '#4dff8a' : mask.mode === 'dim' ? '#78aaff' : '#ff3c3c';
   const common = {
-    fill: mask.mode === 'include' ? 'rgba(77,255,138,0.15)' : 'rgba(255,60,60,0.35)',
+    fill:
+      mask.mode === 'include'
+        ? 'rgba(77,255,138,0.15)'
+        : mask.mode === 'dim'
+          ? 'rgba(120,170,255,0.3)'
+          : 'rgba(255,60,60,0.35)',
     stroke: color,
     strokeWidth: (selected ? 3 : 1.5) / z,
     strokeDasharray: mask.enabled ? undefined : `${6 / z} ${4 / z}`,
@@ -900,13 +905,20 @@ function MasksPanel({
                 style={{ background: 'none', border: 0, textAlign: 'left', cursor: 'pointer' }}
                 onClick={() => select(m.id)}
               >
-                <div className="title" style={{ color: m.mode === 'include' ? 'var(--ok)' : '#ff8a8a' }}>
+                <div
+                  className="title"
+                  style={{
+                    color: m.mode === 'include' ? 'var(--ok)' : m.mode === 'dim' ? '#9cc0ff' : '#ff8a8a',
+                  }}
+                >
                   {m.name}
                 </div>
                 <div className="muted small">
                   {m.mode === 'include'
                     ? L('only light here', 'nur hier Licht')
-                    : L('no light', 'kein Licht')}
+                    : m.mode === 'dim'
+                      ? `${L('dimmed to', 'gedimmt auf')} ${Math.round((m.level ?? 0.5) * 100)} %`
+                      : L('no light', 'kein Licht')}
                   {m.safety ? ` · ${L('safety', 'Sicherheit')}` : ''}
                   {!m.enabled ? ` · ${L('off', 'aus')}` : ''}
                 </div>
@@ -948,7 +960,35 @@ function MasksPanel({
             >
               {L('Only light here', 'Nur hier Licht')}
             </button>
+            <button
+              className={`chip${selected.mode === 'dim' ? ' on' : ''}`}
+              onClick={() => update({ mode: 'dim', safety: false, level: selected.level ?? 0.4 })}
+            >
+              {L('Dim', 'Abdunkeln')}
+            </button>
           </div>
+          {selected.mode === 'dim' && (
+            <>
+              <Slider
+                label={L('Brightness in this area', 'Helligkeit in diesem Bereich')}
+                value={Math.round((selected.level ?? 0.4) * 100)}
+                min={0}
+                max={100}
+                step={5}
+                format={(v) => `${v} %`}
+                onChange={(v) => update({ level: v / 100 })}
+              />
+              <Slider
+                label={L('Soft edge', 'Weiche Kante')}
+                value={Math.round(selected.feather * 1000) / 10}
+                min={0}
+                max={5}
+                step={0.5}
+                format={(v) => `${v.toFixed(1)} %`}
+                onChange={(v) => update({ feather: v / 100 })}
+              />
+            </>
+          )}
           {selected.mode === 'exclude' && (
             <>
               <label className="check">
@@ -1083,6 +1123,33 @@ function ImagePanel({
           step={1}
           format={(v) => `${v} %`}
           onChange={(v) => crop(i, v)}
+        />
+      ))}
+      <div className="muted small" style={{ fontWeight: 600 }}>
+        {L('Blend with neighbouring projector (overlap)', 'Überblenden zum Nachbar-Beamer (Überlappung)')}
+      </div>
+      <p className="muted small" style={{ margin: 0 }}>
+        {L(
+          'Where two projector images overlap, fade both edges over the overlap width so the area is not twice as bright.',
+          'Wo sich zwei Beamer-Bilder überlappen, blende beide Ränder über die Breite der Überlappung aus, damit die Stelle nicht doppelt hell ist.',
+        )}
+      </p>
+      {[L('Top', 'Oben'), L('Right', 'Rechts'), L('Bottom', 'Unten'), L('Left', 'Links')].map((label, i) => (
+        <Slider
+          key={`b${i}`}
+          label={label}
+          value={Math.round((draft.blend?.[i] ?? 0) * 100)}
+          min={0}
+          max={40}
+          step={1}
+          format={(v) => `${v} %`}
+          onChange={(v) =>
+            setDraft((p) => {
+              const b = [...(p.blend ?? [0, 0, 0, 0])] as NonNullable<Profile['blend']>;
+              b[i] = v / 100;
+              return { ...p, blend: b };
+            })
+          }
         />
       ))}
     </div>

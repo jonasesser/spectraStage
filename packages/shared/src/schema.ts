@@ -26,7 +26,9 @@ export const QuadSchema = z.tuple([PointSchema, PointSchema, PointSchema, PointS
 export const MaskSchema = z.object({
   id,
   name: z.string().max(40),
-  mode: z.enum(['exclude', 'include']),
+  mode: z.enum(['exclude', 'include', 'dim']),
+  /** Brightness kept inside a 'dim' mask (0 = black, 1 = unchanged). */
+  level: z.number().min(0).max(1).optional(),
   shape: z.enum(['polygon', 'rect', 'ellipse']),
   /** polygon: vertices; rect/ellipse: two opposite bbox corners. Output-normalized coordinates. */
   points: z.array(PointSchema).min(2).max(64),
@@ -71,6 +73,15 @@ export const ProfileSchema = z.object({
   flipY: z.boolean(),
   /** Crop margins in output-normalized units: top, right, bottom, left. */
   crop: z.tuple([unit, unit, unit, unit]),
+  /** Edge blend widths (top, right, bottom, left) for overlapping projectors, fraction of output. */
+  blend: z
+    .tuple([
+      z.number().min(0).max(0.5),
+      z.number().min(0).max(0.5),
+      z.number().min(0).max(0.5),
+      z.number().min(0).max(0.5),
+    ])
+    .optional(),
   masks: z.array(MaskSchema).max(24),
   updatedAt: z.number(),
 });
@@ -131,6 +142,11 @@ export const PlaylistItemSchema = z.object({
     .max(24 * 3600),
   transition: TransitionSchema,
   ambient: AmbientSchema.nullable(),
+  /** Effects at fixed times within this item (seconds from item start). */
+  cues: z
+    .array(z.object({ atSec: z.number().min(0).max(86400), themeId: id, effectId: id }))
+    .max(50)
+    .optional(),
 });
 export type PlaylistItem = z.infer<typeof PlaylistItemSchema>;
 

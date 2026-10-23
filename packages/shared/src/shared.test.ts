@@ -7,7 +7,7 @@ import {
   UNIT_QUAD,
   type Quad,
 } from './homography.ts';
-import { playlistPosition, activeScene, ambientSchedule } from './playback.ts';
+import { playlistPosition, activeScene, ambientSchedule, itemCueSchedule } from './playback.ts';
 import type { Playlist, SessionState, Surface } from './schema.ts';
 import { applyCommand, createInitialState, CommandError, type ReducerContext } from './reducer.ts';
 import { createCatalog, type ThemeManifest } from './theme.ts';
@@ -204,6 +204,19 @@ describe('playlist playback', () => {
     const end = playlistPosition({ ...pl, loop: false }, pb, 500_000)!;
     expect(end.ended).toBe(true);
     expect(end.index).toBe(2);
+  });
+  it('timed cues fire at fixed offsets inside the item', () => {
+    const withCues: Playlist = {
+      ...pl,
+      items: pl.items.map((it, i) =>
+        i === 1 ? { ...it, cues: [{ atSec: 5, themeId: 't', effectId: 'e' }] } : it,
+      ),
+    };
+    const a = activeScene(pb, [withCues], 12_000)!;
+    const sch = itemCueSchedule(a);
+    expect(sch).toHaveLength(1);
+    expect(sch[0]!.at).toBe(15_000);
+    expect(itemCueSchedule(activeScene(pb, [withCues], 2_000)!)).toHaveLength(0);
   });
   it('ambient schedule is deterministic', () => {
     const withAmb: Playlist = {

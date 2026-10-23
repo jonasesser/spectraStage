@@ -604,6 +604,15 @@ function OutputPlacement({ output, state, L }: { output: Output; state: SessionS
   const store = useStore();
   const vp = activeProfile(output).viewport;
   const [fitTo, setFitTo] = useState('');
+  const overlaps = state.outputs
+    .filter((o) => o.id !== output.id)
+    .map((o) => {
+      const b = activeProfile(o).viewport;
+      const w = Math.min(vp.x + vp.w, b.x + b.w) - Math.max(vp.x, b.x);
+      const h = Math.min(vp.y + vp.h, b.y + b.h) - Math.max(vp.y, b.y);
+      return { o, w, h };
+    })
+    .filter((x) => x.w > 0.02 && x.h > 0.02);
   return (
     <div className="panel">
       <h3>📽 {output.name}</h3>
@@ -617,6 +626,20 @@ function OutputPlacement({ output, state, L }: { output: Output; state: SessionS
           {vp.w.toFixed(2)} × {vp.h.toFixed(2)} m
         </dd>
       </dl>
+      {overlaps.length > 0 && (
+        <p className="safety-note" style={{ marginTop: '0.75rem' }}>
+          {overlaps.map(({ o, w, h }) => (
+            <span key={o.id} style={{ display: 'block' }}>
+              {L('Overlaps', 'Überlappt mit')} 📽 {o.name}: {w.toFixed(2)} × {h.toFixed(2)} m (
+              {Math.round((Math.min(w, vp.w) / vp.w) * 100)} % {L('of the width', 'der Breite')})
+            </span>
+          ))}
+          {L(
+            'Use “Blend with neighbouring projector” in its calibration, or a mask, so the overlap is not twice as bright.',
+            'Nutze „Überblenden zum Nachbar-Beamer“ in der Kalibrierung oder eine Maske, damit die Überlappung nicht doppelt hell ist.',
+          )}
+        </p>
+      )}
       <div className="stack" style={{ marginTop: '0.75rem' }}>
         <label>
           {L('Fit image to', 'Bild einpassen auf')}

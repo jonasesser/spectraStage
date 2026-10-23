@@ -16,11 +16,12 @@ from the phone. Halloween is the first theme; the core is theme-independent.
 | Sync | Deterministic rendering from a shared server clock (NTP-style sync with slewing), cues scheduled 150–400 ms ahead, actors computed identically on every client → seamless cross-projector handoff |
 | Offline | Displays keep animating (scenes, playlists, roaming creatures) without the server; service worker caches the app; per-output failover: continue / freeze / blackout |
 | Calibration | Per-output profiles, 4-corner homography + 3×3…5×5 mesh warp, rotation/flip, crop, undo/redo, live preview on the projector before *Apply*, export/import, resolution-mismatch guard (black until resolved), test pattern with timeout |
-| Masks | Polygon / rectangle / ellipse, include / exclude, safety masks with hard edges + margin, cosmetic feather, applied as the very last pixel stage |
+| Masks | Polygon / rectangle / ellipse, include / exclude / dim, safety masks with hard edges + margin, cosmetic feather, edge blending for overlapping projectors, applied as the very last pixel stage |
 | Halloween theme | 13 real-time scenes (2 GLSL shaders + shader fog), 12 effects, 4 actors (spider, bat, ghost, black cat), 6 presets, auto-playing wall/ground show templates with random effects |
 | Basic theme | Aurora (shader), starfield, color waves, solid color, 2 effects, firefly actor |
 | Safety | Child-safe mode (default on): brightness-rise limiter on every frame (< 3 flashes/s), no shock effects. Global / per-output / local (key `B`) blackout, clearly labelled as *not* a power switch |
 | Sound | Procedural Web Audio on each projector PC (no audio files), master + per-output volume |
+| Playlists | Scenes with durations, transitions, loop, random effects and effects at fixed times |
 | Controller | Mobile-first React UI (DE/EN): live stage map with moving creatures, effects, presets, scene parameters, playlist editor, stage editor, calibration & mask editor, device management, backup |
 
 ## Architecture
