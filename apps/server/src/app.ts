@@ -343,6 +343,8 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
     await app.register(fastifyStatic, {
       root: webRoot,
       wildcard: false,
+      // We set Cache-Control ourselves (immutable hashed assets, no-cache for HTML/SW).
+      cacheControl: false,
       setHeaders(res, path) {
         if (path.includes(`${join(webRoot, 'assets')}`))
           res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');

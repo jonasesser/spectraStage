@@ -170,7 +170,15 @@ export function defaultPlayback(state: SessionState, kind: SurfaceKind, ctx: Red
   const theme = ctx.catalog.get(state.defaultThemeId) ?? ctx.catalog.themes[0];
   if (!theme) fail('no_theme', 'No themes installed');
   const tplId = theme.autoPlaylists?.[kind];
-  if (tplId) return playlistPlayback(ensureTemplatePlaylist(state, theme, tplId, ctx), ctx);
+  if (tplId) {
+    const id = ensureTemplatePlaylist(state, theme, tplId, ctx);
+    // Stagger surfaces that run the same playlist so they don't all show the same scene.
+    const sameKind = state.surfaces.filter(
+      (x) => x.playback.mode === 'playlist' && x.playback.playlistId === id,
+    ).length;
+    const len = state.playlists.find((p) => p.id === id)?.items.length ?? 1;
+    return playlistPlayback(id, ctx, sameKind % Math.max(1, len));
+  }
   const sceneId = theme.defaults[kind];
   return scenePlayback(theme.id, sceneId, sanitizeParams(sceneOf(theme, sceneId).params, undefined), ctx);
 }
@@ -552,11 +560,16 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
         theme.presets.find((p) => p.id === cmd.presetId) ?? fail('unknown_preset', 'Unknown preset');
       const targets = cmd.surfaceIds ? surfaces(cmd.surfaceIds) : state.surfaces;
       const at = { ...ctx, now: ctx.now + lead };
+      const stagger = new Map<string, number>();
       for (const s of targets) {
         const a = preset.assignments[s.kind] ?? preset.assignments.other ?? preset.assignments.wall;
         if (!a) continue;
         if (a.playlistTemplateId) {
-          s.playback = playlistPlayback(ensureTemplatePlaylist(state, theme, a.playlistTemplateId, ctx), at);
+          const id = ensureTemplatePlaylist(state, theme, a.playlistTemplateId, ctx);
+          const n = stagger.get(id) ?? 0;
+          stagger.set(id, n + 1);
+          const len = state.playlists.find((p) => p.id === id)?.items.length ?? 1;
+          s.playback = playlistPlayback(id, at, n % Math.max(1, len));
         } else if (a.sceneId) {
           const scene = sceneOf(theme, a.sceneId);
           s.playback = scenePlayback(theme.id, scene.id, sanitizeParams(scene.params, a.params), at, {

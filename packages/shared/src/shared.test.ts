@@ -258,6 +258,14 @@ describe('reducer', () => {
     expect(r.approvedDevice).toBe('d1');
     expect(s.surfaces).toHaveLength(0); // input untouched
   });
+  it('staggers surfaces that run the same template playlist', () => {
+    let s = base();
+    s = applyCommand(s, { t: 'surface.create', name: 'F1', kind: 'floor' }, ctx()).state;
+    s = applyCommand(s, { t: 'surface.create', name: 'F2', kind: 'floor' }, ctx()).state;
+    const r = applyCommand(s, { t: 'preset.apply', themeId: 't', presetId: 'p' }, ctx(2000));
+    const idx = r.state.surfaces.map((x) => (x.playback.mode === 'playlist' ? x.playback.anchorIndex : -1));
+    expect(idx).toEqual([0, 0]); // template has a single item → both at 0, no crash
+  });
   it('enforces owner-only commands', () => {
     const s = base();
     s.devices.push({ id: 'd1', name: 'X', status: 'pending', outputId: null, joinedAt: 0 });
