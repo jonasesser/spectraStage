@@ -57,6 +57,53 @@ function neonScene(
   return sc;
 }
 
+const EVENT_OPTIONS = [
+  { value: 'mix', label: L('Mixed surprises', 'Gemischte Überraschungen') },
+  { value: 'creatures', label: L('Creatures only', 'Nur Tiere & Geister') },
+  { value: 'spider', label: L('Spider', 'Spinne') },
+  { value: 'eyes', label: L('Eyes in the dark', 'Augen im Dunkeln') },
+  { value: 'ghost', label: L('Ghost peeks in', 'Geist guckt herein') },
+  { value: 'cat', label: L('Black cat', 'Schwarze Katze') },
+  { value: 'pumpkin', label: L('Pumpkin lights up', 'Kürbis leuchtet auf') },
+  { value: 'bat', label: L('Bat', 'Fledermaus') },
+  { value: 'steps', label: L('Footsteps (ground)', 'Fußspuren (Boden)') },
+];
+
+function darkScene(
+  id: string,
+  name: [string, string],
+  description: [string, string],
+  icon: string,
+  events: string,
+): SceneManifest {
+  return scene(
+    id,
+    name,
+    description,
+    ['wall', 'floor', 'other'],
+    icon,
+    ['#000000', '#ffe14d'],
+    [
+      {
+        key: 'events',
+        label: L('What happens', 'Was passiert'),
+        type: 'select',
+        options: EVENT_OPTIONS,
+        default: events,
+      },
+      {
+        key: 'pause',
+        label: L('Dark pause (s)', 'Dunkle Pause (s)'),
+        type: 'number',
+        min: 2,
+        max: 40,
+        step: 1,
+        default: 8,
+      },
+    ],
+  );
+}
+
 const scenes: SceneManifest[] = [
   scene(
     'hauntedHouse',
@@ -248,6 +295,33 @@ const scenes: SceneManifest[] = [
     '🎃',
     ['#ff7a1a', '#8a2be2'],
   ),
+  darkScene(
+    'darkSurprises',
+    ['Dark Surprises', 'Dunkel & Überraschung'],
+    [
+      'Almost black – your house is the set. Now and then a spider drops, eyes open, a ghost peeks in or a pumpkin lights up.',
+      'Fast schwarz – dein Haus ist die Kulisse. Ab und zu seilt sich eine Spinne ab, Augen leuchten, ein Geist guckt herein oder ein Kürbis glimmt auf.',
+    ],
+    '🕯️',
+    'mix',
+  ),
+  darkScene(
+    'darkSpider',
+    ['Lone Spider', 'Einsame Spinne'],
+    [
+      'Black wall, only a spider dropping on its thread in a small pool of light.',
+      'Schwarze Wand, nur eine Spinne seilt sich im kleinen Lichtkegel ab.',
+    ],
+    '🕸️',
+    'spider',
+  ),
+  darkScene(
+    'darkEyes',
+    ['Eyes in the Dark', 'Augen im Dunkeln'],
+    ['Glowing eyes open, blink and vanish.', 'Leuchtende Augen öffnen sich, blinzeln und verschwinden.'],
+    '👀',
+    'eyes',
+  ),
 ];
 
 function effect(
@@ -406,6 +480,21 @@ export const halloweenManifest: ThemeManifest = {
       ambientActors: ['ghost', 'blackCat'],
     },
     {
+      id: 'darkSurprise',
+      name: L('Dark & Surprises', 'Dunkel & Überraschung'),
+      description: L(
+        'Everything dark, the house itself is the set – only small surprises appear now and then.',
+        'Alles dunkel, das Haus selbst ist die Kulisse – nur ab und zu passiert etwas.',
+      ),
+      icon: '🕯️',
+      assignments: {
+        wall: { sceneId: 'darkSurprises' },
+        floor: { sceneId: 'darkSurprises', params: { pause: 10 } },
+        other: { sceneId: 'darkSurprises' },
+      },
+      ambientActors: [],
+    },
+    {
       id: 'quietAtmosphere',
       name: L('Quiet Atmosphere', 'Ruhige Atmosphäre'),
       description: L(
@@ -512,6 +601,11 @@ export const halloweenManifest: ThemeManifest = {
           ambient: { effectIds: ['ghostWave', 'sparkles', 'boo'], minGapSec: 20, maxGapSec: 40 },
         },
         {
+          sceneId: 'darkSurprises',
+          durationSec: 90,
+          transition: { type: 'crossfade', durationMs: 4000 },
+        },
+        {
           sceneId: 'skeletonDisco',
           durationSec: 120,
           transition: { type: 'fadeBlack', durationMs: 2500 },
@@ -560,6 +654,11 @@ export const halloweenManifest: ThemeManifest = {
           durationSec: 120,
           transition: { type: 'crossfade', durationMs: 3000 },
           ambient: { effectIds: ['sparkles', 'magicCircle'], minGapSec: 20, maxGapSec: 45 },
+        },
+        {
+          sceneId: 'darkSurprises',
+          durationSec: 90,
+          transition: { type: 'crossfade', durationMs: 4000 },
         },
         {
           sceneId: 'ghostFootprints',
