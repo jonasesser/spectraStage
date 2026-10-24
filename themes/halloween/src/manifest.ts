@@ -680,7 +680,7 @@ export const halloweenManifest: ThemeManifest = {
         },
         {
           sceneId: 'swirlingMist',
-          durationSec: 120,
+          durationSec: 90,
           transition: { type: 'crossfade', durationMs: 3500 },
           ambient: { effectIds: ['magicCircle', 'spiderRush'], minGapSec: 25, maxGapSec: 50 },
         },
