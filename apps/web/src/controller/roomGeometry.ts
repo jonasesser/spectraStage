@@ -57,8 +57,8 @@ export function roomGeometry(surfaces: readonly Surface[], room: boolean): RoomG
     const overlap = (w: WallPlace) => s.rect.x < w.rect.x + w.rect.w && s.rect.x + s.rect.w > w.rect.x;
     const wall =
       s.role === 'ground'
-        ? places.find((w) => overlap(w) && Math.abs(s.rect.y - (w.rect.y + w.rect.h)) < 0.6)
-        : places.find((w) => overlap(w) && Math.abs(s.rect.y + s.rect.h - w.rect.y) < 0.6);
+        ? places.find((w) => overlap(w) && s.rect.y >= w.rect.y + w.rect.h - 0.6)
+        : places.find((w) => overlap(w) && s.rect.y + s.rect.h <= w.rect.y + 0.6);
     if (wall) parent.set(s.id, { wall, kind: s.role });
   }
 

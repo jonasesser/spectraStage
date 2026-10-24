@@ -20,6 +20,9 @@ import {
   fitViewport,
   worldLayout,
   wallRing,
+  completeRoom,
+  placeNewSurface,
+  tidyRoom,
 } from './stage.ts';
 import { normalizeCode, isValidCode, formatCode } from './codes.ts';
 
@@ -427,5 +430,47 @@ describe('world layout', () => {
     expect(w.find((x) => x.id === 'a')!.roleIndex).toBe(1);
     expect(w.find((x) => x.id === 'd')!.role).toBe('ceiling');
     expect(wallRing(w)).toEqual({ x: 0, w: 12 });
+  });
+});
+
+describe('complete room', () => {
+  const s = (id: string, kind: Surface['kind'], x: number, y: number, w: number, h: number) =>
+    ({
+      id,
+      name: id,
+      kind,
+      intensity: 1,
+      polygon: rectPolygon(x, y, w, h),
+      playback: { mode: 'off' },
+    }) as unknown as Surface;
+  it('adds the missing walls, floor and ceiling at the size of the main wall', () => {
+    const all = completeRoom([s('g', 'wall', 0, 0, 4, 2.25), s('f', 'floor', 0, 2.25, 4, 2.25)]);
+    const v = all.filter((x) => x.id.startsWith('virtual:'));
+    expect(v.map((x) => x.id).sort()).toEqual([
+      'virtual:ceiling',
+      'virtual:floorRest',
+      'virtual:wall2',
+      'virtual:wall3',
+      'virtual:wall4',
+    ]);
+    const ring = wallRing(worldLayout(all))!;
+    expect(ring).toEqual({ x: 0, w: 16 });
+  });
+  it('tidy room gives every surface the main wall size', () => {
+    const t = tidyRoom([
+      s('g', 'wall', 0, 0, 4.5, 2.6),
+      s('f', 'floor', 0, 2.6, 4, 5),
+      s('w', 'wall', 6, 0, 3, 2),
+    ]);
+    expect(t.f![2]).toEqual({ x: 4.5, y: 5.2 });
+    expect(t.w![0]).toEqual({ x: 4.5, y: 0 });
+  });
+  it('new surfaces get the main wall size: walls to the right, floor below, other above', () => {
+    const base = [s('g', 'wall', 0, 0, 4.5, 2.5)];
+    expect(placeNewSurface(base, 'wall')[0]).toEqual({ x: 4.5, y: 0 });
+    const f = placeNewSurface(base, 'floor');
+    expect(f[0]).toEqual({ x: 0, y: 2.5 });
+    expect(f[2]).toEqual({ x: 4.5, y: 5 });
+    expect(placeNewSurface(base, 'other')[0]).toEqual({ x: 0, y: -2.5 });
   });
 });

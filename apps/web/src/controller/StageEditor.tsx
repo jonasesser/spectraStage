@@ -5,6 +5,7 @@ import {
   polygonBBox,
   stageBounds,
   worldLayout,
+  tidyRoom,
   type Output,
   type SessionState,
   type Surface,
@@ -489,22 +490,23 @@ function roleLabel(r: 'main' | 'side' | 'ground' | 'ceiling', L: Tr): string {
 /** Room mode: walls all the way around – the world wraps from the last wall to the first. */
 function RoomPanel({ state, L }: { state: SessionState; L: Tr }) {
   const store = useStore();
+  const tidy = async () => {
+    const polys = tidyRoom(state.surfaces);
+    for (const [id, polygon] of Object.entries(polys))
+      await store.send({ t: 'surface.update', surfaceId: id, polygon });
+  };
   return (
     <div className="panel stack">
-      <label className="row" style={{ alignItems: 'center', gap: '0.6rem' }}>
-        <input
-          type="checkbox"
-          checked={!!state.room}
-          onChange={(e) => store.send({ t: 'session.setRoom', room: e.target.checked })}
-        />
-        <strong>{L('Room all around', 'Raum rundum')}</strong>
-      </label>
+      <strong>{L('One world, all around', 'Eine Welt, rundherum')}</strong>
       <p className="muted small" style={{ margin: 0 }}>
         {L(
-          'One world on all surfaces: the main wall gets the centerpiece (e.g. the house), the walls next to it continue the scene. With “Room all around”, the last wall connects back to the first – lay out the walls side by side in the order they go around, floor below, ceiling above.',
-          'Eine Welt auf allen Flächen: Die Hauptwand bekommt den Mittelpunkt (z. B. das Haus), die Wände daneben führen die Szene weiter. Mit „Raum rundum“ schließt die letzte Wand wieder an die erste an – Wände in der Reihenfolge nebeneinander legen, wie sie herum gehen, Boden darunter, Decke darüber.',
+          'The world is always a complete room: main wall, three more walls, floor and ceiling. Your surfaces are the parts a projector shows; sides without a projector are filled in virtually (visible in the 3D room). New surfaces get the size of the main wall – walls go to the right in the order they go around, the floor below the main wall, the ceiling above it.',
+          'Die Welt ist immer ein kompletter Raum: Hauptwand, drei weitere Wände, Boden und Decke. Deine Flächen sind die Teile, die ein Beamer zeigt; Seiten ohne Beamer werden virtuell ergänzt (sichtbar im 3D-Raum). Neue Flächen bekommen die Größe der Hauptwand – Wände rechts daneben in der Reihenfolge rundherum, Boden unter der Hauptwand, Decke darüber.',
         )}
       </p>
+      <button className="btn small" onClick={tidy}>
+        📐 {L('Same size as the main wall & tidy up', 'Alle gleich groß wie die Hauptwand & ordnen')}
+      </button>
     </div>
   );
 }

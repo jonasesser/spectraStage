@@ -57,20 +57,104 @@ export function activeProfile(output: Output): Profile {
   return output.profiles.find((p) => p.id === output.activeProfileId) ?? (output.profiles[0] as Profile);
 }
 
-/** Default size for a new surface of a kind (meters). */
-export function defaultSurfaceSize(kind: SurfaceKind): { w: number; h: number } {
-  if (kind === 'floor') return { w: 4, h: 5 };
-  if (kind === 'wall') return { w: 4.5, h: 2.6 };
-  return { w: 3, h: 2 };
+/**
+ * Default size for a new surface (meters). Every face gets the projector format (16:9) and the
+ * same size – a projector shows the same picture shape on a wall, the floor or the ceiling.
+ */
+export function defaultSurfaceSize(_kind: SurfaceKind): { w: number; h: number } {
+  return { w: 4, h: 2.25 };
 }
 
-/** Finds a free spot for a new surface: floors below the walls, walls to the right. */
+/**
+ * Finds a spot for a new surface in the unfolded room, at the size of the main wall: walls to
+ * the right of the wall row, a floor below the main wall (else below the next free wall), other
+ * surfaces (e.g. a ceiling) above the main wall.
+ */
 export function placeNewSurface(surfaces: readonly Surface[], kind: SurfaceKind): V2[] {
-  const size = defaultSurfaceSize(kind);
-  if (surfaces.length === 0) return rectPolygon(0, 0, size.w, size.h);
+  if (surfaces.length === 0) {
+    const d = defaultSurfaceSize(kind);
+    return rectPolygon(0, 0, d.w, d.h);
+  }
+  const lay = worldLayout(surfaces);
+  const main = lay.find((x) => x.role === 'main')?.rect;
+  const walls = lay.filter((x) => x.role === 'main' || x.role === 'side').map((x) => x.rect);
+  const size = main ? { w: main.w, h: main.h } : defaultSurfaceSize(kind);
+  const free = (r: BBox) =>
+    !surfaces.some((s) =>
+      bboxIntersects(polygonBBox(s.polygon), { x: r.x + 0.01, y: r.y + 0.01, w: r.w - 0.02, h: r.h - 0.02 }),
+    );
+  if (main && kind === 'floor') {
+    for (const w of [main, ...walls]) {
+      const r = { x: w.x, y: w.y + w.h, w: w.w, h: size.h };
+      if (free(r)) return rectPolygon(r.x, r.y, r.w, r.h);
+    }
+  }
+  if (main && kind === 'other') {
+    const r = { x: main.x, y: main.y - size.h, w: size.w, h: size.h };
+    if (free(r)) return rectPolygon(r.x, r.y, r.w, r.h);
+  }
+  if (main && walls.length) {
+    const right = Math.max(...walls.map((w) => w.x + w.w));
+    return rectPolygon(right, main.y, size.w, size.h);
+  }
   const b = stageBounds(surfaces);
-  if (kind === 'floor') return rectPolygon(b.x, b.y + b.h, size.w, size.h);
   return rectPolygon(b.x + b.w, b.y, size.w, size.h);
+}
+
+/**
+ * The full room around the viewer: the real surfaces plus virtual ones for the sides that have
+ * no projector yet (walls up to four, the floor in front of the main wall, the ceiling above it),
+ * all at the size of the main wall. Worlds are computed over this complete room, so every real
+ * surface shows its part of the same closed world, and the 3D view is never missing a side.
+ * Virtual surfaces have ids starting with "virtual:" and play the main wall's playback.
+ */
+export function completeRoom(surfaces: readonly Surface[]): Surface[] {
+  const lay = worldLayout(surfaces);
+  const mainW = lay.find((x) => x.role === 'main');
+  if (!mainW) return [...surfaces];
+  const mainS = surfaces.find((s) => s.id === mainW.id)!;
+  const m = mainW.rect;
+  const out: Surface[] = [...surfaces];
+  const add = (id: string, kind: SurfaceKind, role: Surface['role'], r: BBox) =>
+    out.push({
+      id: `virtual:${id}`,
+      name: id,
+      kind,
+      role,
+      intensity: 1,
+      polygon: rectPolygon(r.x, r.y, r.w, r.h),
+      playback: structuredClone(mainS.playback),
+    } as Surface);
+  const walls = lay.filter((x) => x.role === 'main' || x.role === 'side');
+  let right = Math.max(...walls.map((w) => w.rect.x + w.rect.w));
+  for (let i = walls.length; i < 4; i++) {
+    add(`wall${i + 1}`, 'wall', 'side', { x: right, y: m.y, w: m.w, h: m.h });
+    right += m.w;
+  }
+  const bottom = m.y + m.h;
+  const hasFloor = lay.some(
+    (x) =>
+      x.role === 'ground' &&
+      x.rect.x < m.x + m.w &&
+      x.rect.x + x.rect.w > m.x &&
+      Math.abs(x.rect.y - bottom) < 0.6,
+  );
+  // room depth = width of the walls next to the main wall
+  const depth = walls.find((w) => w.role === 'side')?.rect.w ?? m.w;
+  if (!hasFloor) add('floor', 'floor', 'ground', { x: m.x, y: bottom, w: m.w, h: depth });
+  else {
+    // the projected floor is shallower than the room: fill the rest of the floor virtually
+    const reach = Math.max(
+      ...lay
+        .filter((x) => x.role === 'ground' && x.rect.x < m.x + m.w && x.rect.x + x.rect.w > m.x)
+        .map((x) => x.rect.y + x.rect.h),
+    );
+    if (reach < bottom + depth - 0.05)
+      add('floorRest', 'floor', 'ground', { x: m.x, y: reach, w: m.w, h: bottom + depth - reach });
+  }
+  const hasCeiling = lay.some((x) => x.role === 'ceiling');
+  if (!hasCeiling) add('ceiling', 'other', 'ceiling', { x: m.x, y: m.y - depth, w: m.w, h: depth });
+  return out;
 }
 
 /** Viewport covering a bbox with the given aspect ratio (w/h), centered, with a small margin. */
@@ -436,4 +520,27 @@ export function wallRing(world: readonly WorldSurface[]): { x: number; w: number
   const x0 = Math.min(...walls.map((w) => w.rect.x));
   const x1 = Math.max(...walls.map((w) => w.rect.x + w.rect.w));
   return { x: x0, w: x1 - x0 };
+}
+
+/**
+ * Tidy room layout: every surface gets the size of the main wall; walls in a row to the right of
+ * the main wall (in their current order), floors below the main wall (one after another),
+ * ceilings above it. Returns the new polygon per surface id.
+ */
+export function tidyRoom(surfaces: readonly Surface[]): Record<string, V2[]> {
+  const lay = worldLayout(surfaces);
+  const main = lay.find((x) => x.role === 'main');
+  if (!main) return {};
+  const { x: mx, y: my, w: W, h: H } = main.rect;
+  const out: Record<string, V2[]> = {};
+  const walls = lay.filter((x) => x.role === 'main' || x.role === 'side').sort((a, b) => a.rect.x - b.rect.x);
+  const mi = walls.findIndex((w) => w.id === main.id);
+  walls.forEach((w, i) => (out[w.id] = rectPolygon(mx + (i - mi) * W, my, W, H)));
+  lay
+    .filter((x) => x.role === 'ground')
+    .forEach((g, i) => (out[g.id] = rectPolygon(mx, my + H * (1 + i), W, H)));
+  lay
+    .filter((x) => x.role === 'ceiling')
+    .forEach((c, i) => (out[c.id] = rectPolygon(mx, my - H * (1 + i), W, H)));
+  return out;
 }

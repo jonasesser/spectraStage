@@ -5,6 +5,7 @@ import { loadThemeRuntime } from '@spectrastage/catalog/runtime';
 import { StageRenderer } from '@spectrastage/engine';
 import {
   activeProfile,
+  completeRoom,
   stageBounds,
   type Output,
   type SessionState,
@@ -51,7 +52,10 @@ export function Room3D({
     if (!host) return;
     const st = stateRef.current;
     if (!st.surfaces.length) return;
-    const b = stageBounds(st.surfaces);
+    // the complete room: real surfaces + virtual faces for the sides without a projector
+    const all = completeRoom(st.surfaces);
+    const withRoom = (x: SessionState): SessionState => ({ ...x, surfaces: completeRoom(x.surfaces) });
+    const b = stageBounds(all);
     // --- live stage picture (same engine as the projectors), rendered off-screen
     const TW = 1536;
     const TH = Math.max(64, Math.min(1536, Math.round((TW * b.h) / b.w)));
@@ -74,7 +78,7 @@ export function Room3D({
       readable: true,
     });
     stage.setPreviewViewport({ x: b.x, y: b.y, w: b.w, h: b.h });
-    stage.setState(st, null);
+    stage.setState(withRoom(st), null);
     stage.start();
     const comp = document.createElement('canvas');
     comp.width = TW;
@@ -96,12 +100,12 @@ export function Room3D({
     const scene = new THREE.Scene();
     scene.background = new THREE.Color('#05040c');
     const cam = new THREE.PerspectiveCamera(75, 1, 0.05, 200);
-    const geo = roomGeometry(st.surfaces, !!st.room);
+    const geo = roomGeometry(all, true);
     cam.position.set(...geo.camera);
     const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
     const meshes: THREE.Mesh[] = [];
     const N = 12;
-    for (const s of st.surfaces) {
+    for (const s of all) {
       if (!geo.placed.has(s.id)) continue;
       const sb = stageBounds([s]);
       const pos: number[] = [];
@@ -314,7 +318,7 @@ export function Room3D({
       r3.render(scene, cam);
     };
     loop();
-    const updateState = setInterval(() => stage.setState(stateRef.current, null), 250);
+    const updateState = setInterval(() => stage.setState(withRoom(stateRef.current), null), 250);
 
     return () => {
       cancelAnimationFrame(raf);

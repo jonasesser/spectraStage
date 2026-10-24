@@ -124,7 +124,7 @@ function frame(s: DrawState, o: PanoOpts): Frame {
       houseW: o.house || o.portal ? Math.min(main.w * 0.56, U * 0.66) : 0,
       seed: (w?.seed ?? s.seed) & 0xffff,
       mainBottom: main.y + main.h,
-      frontGround: below(w?.surfaces ?? [], main),
+      frontGround: frontYard(w?.surfaces ?? [], main),
       groundBelowSelf: !!below(w?.surfaces ?? [], r),
       pieces: [
         ...(o.mainPiece ? [{ id: o.mainPiece, X: main.x + main.w / 2 }] : []),
@@ -136,6 +136,25 @@ function frame(s: DrawState, o: PanoOpts): Frame {
       ],
     };
   });
+}
+
+/** All floor pieces in front of the main wall (stacked below it), as one rectangle. */
+function frontYard(surfaces: readonly { role: string; rect: Rect }[], wall: Rect): Rect | null {
+  const first = below(surfaces, wall);
+  if (!first) return null;
+  let y1 = first.y + first.h;
+  for (;;) {
+    const next = surfaces.find(
+      (x) =>
+        x.role === 'ground' &&
+        Math.abs(x.rect.y - y1) < 0.05 &&
+        x.rect.x < wall.x + wall.w &&
+        x.rect.x + x.rect.w > wall.x,
+    );
+    if (!next) break;
+    y1 = next.rect.y + next.rect.h;
+  }
+  return { x: first.x, y: first.y, w: first.w, h: y1 - first.y };
 }
 
 /** The floor laid out directly below a wall in the unfolded stage (= the ground in front of it). */
@@ -1276,8 +1295,8 @@ export function groundScene(id: string, o: PanoOpts): SceneModule {
     const t = f.time * speedOf(s);
     const d = densityOf(s);
     const { r, U } = F;
-    const front =
-      F.frontGround && Math.abs(F.frontGround.x - r.x) < 1e-6 && Math.abs(F.frontGround.y - r.y) < 1e-6;
+    // this floor lies in front of the main wall (the path continues on it)
+    const front = !!F.frontGround && r.y >= F.mainBottom - 0.05 && r.x < F.houseX && r.x + r.w > F.houseX;
     const st = memo(s, 'groundStatic', () => {
       const { c, g: q } = offscreen(s.w, s.h);
       // dark lawn continuing the wall's bottom color, fading into the night

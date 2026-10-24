@@ -21,6 +21,7 @@ import {
   hashString,
   polygonBBox,
   worldLayout,
+  completeRoom,
   wallRing,
   hashInts,
   type WorldSurface,
@@ -919,7 +920,8 @@ export class StageRenderer {
       state.surfaces.map((s) => [s.id, s.kind, s.role ?? 'auto', s.polygon]),
     ]);
     if (this.worldCache?.key !== key) {
-      const surfaces = worldLayout(state.surfaces);
+      // The world always spans the complete room (virtual faces fill sides without a projector).
+      const surfaces = worldLayout(completeRoom(state.surfaces));
       let x0 = Infinity;
       let y0 = Infinity;
       let x1 = -Infinity;
@@ -931,7 +933,7 @@ export class StageRenderer {
         y1 = Math.max(y1, w.rect.y + w.rect.h);
       }
       const bounds = surfaces.length ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : { x: 0, y: 0, w: 1, h: 1 };
-      this.worldCache = { key, surfaces, bounds, wrap: state.room ? wallRing(surfaces) : null };
+      this.worldCache = { key, surfaces, bounds, wrap: wallRing(surfaces) };
     }
     return this.worldCache;
   }
