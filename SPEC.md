@@ -42,3 +42,53 @@ theme-specific content.
 | D27 | **Room mode**: walls laid out side by side in the order they go around; the world wraps from the last wall to the first (tileable sky/clouds at the seam). Floor below, ceiling above – up to all six sides of a room. |
 | D28 | **Room corner per projector**: one projector may cover two surfaces at an angle (wall\|wall or wall/floor). Calibration marks the crease (points 5/6) and its position in the stage image; each side gets its own homography, the warp mesh has an exact vertex line on the crease. |
 | D29 | **Worlds are continuous and understand the stage geometry**: wall parts are one panorama in stage meters (shared ground line, hills, fence, fog, trees; creatures fly in world coordinates across seams). The unfolded stage is the 3D model: below a wall's bottom edge is the ground in front of it, so world events cross planes (a cat jumps out of a window, falls down the facade and lands on the driveway; a ghost dives out of the house onto the ground). Restraint: thin haze, one web, few spiders. |
+| D24 | Playlist items support effects at fixed times in addition to random ambient effects. Effects inherit the color mood of the scene they play over. |
+| D30 | **3D room view** in the stage editor: the unfolded stage is folded back into a room (corners 90° or 360°/n in room mode, floor in front of its wall, ceiling above); the live world is shown on it, the viewer looks around by dragging or moving the phone and places projector frames directly on the walls (also across corners). |
+| D31 | Runtime: **Node.js 24 LTS** (Docker `node:24-bookworm-slim`, rebuilt images pick up the latest 24.x security release). |
+
+## 3. Concepts
+- **Session (Show)**: isolated unit of state. Has a revision counter incremented on every change.
+- **Stage**: 2D plane in meters containing surfaces and output viewports.
+- **Surface**: physical region (`wall` / `floor` / `other`), polygon in stage space. Owns theme, scene, parameters, playlist playback. Scenes render in surface-local coordinates.
+- **Output**: what one projector shows: a stage viewport + calibration profiles + masks + blackout/intensity/volume/failover.
+- **Device**: one browser window on a projection PC. Paired by code, approved by a controller, bound to one output (swappable without losing calibration).
+- **Cue**: timed instance in the shared show timeline (effect on surfaces, or actor run across the stage) with start time, duration and seed. Active cues are part of the state, so reconnecting clients join them mid-flight; ended cues are pruned and never replayed.
+- **Controller**: phone/browser with role `owner` or `controller`.
+- **Theme package**: bundle of scenes, effects, presets, template playlists and sounds; registered at build time (no runtime upload).
+
+## 4. Security model (no accounts)
+- Owner token = 32 random bytes (base64url) = **recovery key**. Stored in browser `localStorage`, exportable/copyable, rotatable ("revoke owner" issues a new key and invalidates the old one).
+- All tokens stored as SHA‑256 hashes only. Tokens never appear in URLs or logs; WS authenticates in the first message.
+- Device pairing code: 8 chars from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (≈40 bit), shown as `XXXX-XXXX`, valid 15 min, regenerable. It only creates a **pending** join request; a controller must approve. Grants nothing else.
+- Controller invite code: same format, separate namespace, single use, 15 min.
+- Every REST/WS operation is scoped by the session bound to the token; cross-session tests are mandatory.
+- Rate limits (per client IP): session creation 10/h, pairing attempts 20/10 min, invite redemption 20/10 min, WS messages 60/s burst; global `MAX_SESSIONS`, `MAX_DEVICES_PER_SESSION`, max pending joins.
+- WS `Origin` must match `PUBLIC_URL` (when set). Body limit 256 KB, WS frame limit 256 KB.
+
+## 5. Realtime protocol
+- Single endpoint `GET /ws` (same origin, `wss://` behind TLS). First client message `hello {token, clientId, lastRevision}`.
+- Server sends full `snapshot` (state is small) after hello and after every change. Clients ignore snapshots with lower revision.
+- Commands: `{type:"cmd", id:uuid, cmd}` → `ack {id, revision}` / `nack {id, code}`. Server deduplicates the last 500 command ids per session (resend returns the original result).
+- Effects and actor runs are **cues** `{startAt, endAt, seed, …}` held in state while active; clients render them as a pure function of `showTime - startAt`, so all outputs agree and a reconnecting client resumes mid-flight. Ended cues are pruned and never replayed.
+- Liveness: app-level `ping/pong` every 15 s (also used for clock sync, min-RTT filter); server terminates silent sockets after 45 s. Reconnect with exponential backoff 0.5–30 s + jitter.
+- Controllers disable all actions while disconnected (no offline queue).
+
+## 6. Playback model (deterministic, offline-capable)
+- Manual scene: `{themeId, sceneId, params, seed, startedAt}`.
+- Playlist playback: `{playlistId, anchorIndex, anchorTime, pausedAt?}`; clients compute the current item from the synchronized server clock. Skip/pause move the anchor. Works while offline.
+- Ambient effects inside a playlist item are generated deterministically from `(seed, time slot)` so all clients agree without messages.
+
+## 7. Rendering pipeline (per output, one WebGL2 canvas, Three.js)
+1. For every surface intersecting the viewport: render its scene (with crossfade) + surface effects in surface-local coordinates.
+2. Compose the **view** (viewport of stage space): surface polygons textured with their layers; actors (stage-space) clipped to the surfaces; optional test pattern (stage grid, surface outlines, labels).
+3. **Warp** the view into output pixels: homography from 4 corners + bilinear mesh offsets, applied on a finely subdivided mesh; rotation/flip; crop margins.
+4. **Final pass**: output masks (include/exclude, safety margin), intensity, safety limiter gain, blackout/failover fade. Nothing is drawn after this.
+- Scenes and actors must be deterministic functions of time + seed (so overlapping outputs agree).
+- **Safety limiter** (when child-safe on): measures mean luminance of each frame on a tiny downsampled target and caps the rate of brightness increase (≈ < 3 flashes/s, WCAG 2.3.1 orientation).
+- Adaptive quality: render scale 1.0 → 0.75 → 0.5 when FPS < 50 sustained.
+
+## 8. Operational safety
+Software blackout (per output, global, local hotkey) is a convenience, **not** an optical safety control: a projector may still emit light, and a remote blackout cannot reach an offline PC. Docs + UI state this and include the site checklist (lens access, viewing into beam esp. floor projector from above, road glare, cables, weather, ventilation).
+
+## 9. Stack
+Node 24 LTS, pnpm workspaces, TypeScript strict, Fastify 5 + `@fastify/websocket`, better-sqlite3 (WAL, transactional), Zod, React 18 + Vite, Three.js, Vitest, Playwright, ESLint, Prettier, Docker multi-stage, Compose.

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # ---------- build stage ----------
-FROM node:22-bookworm-slim AS build
+FROM node:24-bookworm-slim AS build
 WORKDIR /app
 # Toolchain for better-sqlite3 in case no prebuilt binary can be downloaded.
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
@@ -22,7 +22,7 @@ RUN pnpm build \
   && cp -r apps/web/dist /out/web
 
 # ---------- runtime stage ----------
-FROM node:22-bookworm-slim AS runtime
+FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production \
     PORT=3000 \
     HOST=0.0.0.0 \

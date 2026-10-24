@@ -109,8 +109,13 @@ function scarecrow(g: CanvasRenderingContext2D, c: PieceCtx) {
   g.moveTo(x - h * 0.42, y - h * 0.68);
   g.lineTo(x + h * 0.42, y - h * 0.68);
   g.stroke();
-  // coat
-  g.fillStyle = '#3b2a4a';
+  // coat (neon: purple with a lime glow)
+  if (env.neon) {
+    g.save();
+    g.shadowColor = '#7dff4d';
+    g.shadowBlur = u * 0.04;
+  }
+  g.fillStyle = env.neon ? '#6a2ab8' : '#3b2a4a';
   g.beginPath();
   g.moveTo(x - h * 0.16, y - h * 0.74);
   g.lineTo(x + h * 0.16, y - h * 0.74);
@@ -131,11 +136,25 @@ function scarecrow(g: CanvasRenderingContext2D, c: PieceCtx) {
       g.lineTo(x + sd * h * (0.47 + k * 0.01), y - h * (0.62 + k * 0.03));
       g.stroke();
     }
+  if (env.neon) g.restore();
   // sack head + hat
-  g.fillStyle = '#b89a6a';
+  g.fillStyle = env.neon ? '#ff9a3a' : '#b89a6a';
   g.beginPath();
   g.ellipse(x, y - h * 0.86, h * 0.11, h * 0.13, 0, 0, TAU);
   g.fill();
+  if (env.neon) {
+    // carved glowing face
+    g.fillStyle = '#fff2a0';
+    for (const sd of [-1, 1]) {
+      g.beginPath();
+      g.moveTo(x + sd * h * 0.06, y - h * 0.9);
+      g.lineTo(x + sd * h * 0.02, y - h * 0.86);
+      g.lineTo(x + sd * h * 0.09, y - h * 0.86);
+      g.fill();
+    }
+    g.fillRect(x - h * 0.05, y - h * 0.81, h * 0.1, h * 0.02);
+    addGlow(g, x, y - h * 0.86, h * 0.3, '#ff8a2e', 0.4);
+  }
   g.fillStyle = '#1a1220';
   g.fillRect(x - h * 0.2, y - h * 0.97, h * 0.4, h * 0.035);
   g.beginPath();

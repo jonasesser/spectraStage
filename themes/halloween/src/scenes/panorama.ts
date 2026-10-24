@@ -305,6 +305,143 @@ function neonGhost(
   });
 }
 
+/** Big cartoon eyes (white with dark pupils) – bats and spiders in the neon look. */
+function cuteEyes(g: CanvasRenderingContext2D, x: number, y: number, r: number, look: number) {
+  for (const sd of [-1, 1]) {
+    const ex = x + sd * r * 1.25;
+    g.fillStyle = '#ffffff';
+    g.beginPath();
+    g.arc(ex, y, r, 0, TAU);
+    g.fill();
+    g.fillStyle = '#1a0a2a';
+    g.beginPath();
+    g.arc(ex + look * r * 0.3, y + r * 0.15, r * 0.55, 0, TAU);
+    g.fill();
+    g.fillStyle = '#ffffff';
+    g.beginPath();
+    g.arc(ex + look * r * 0.1, y - r * 0.15, r * 0.18, 0, TAU);
+    g.fill();
+  }
+}
+
+/** A witch on her broom crossing the whole sky (world coordinates), backlit when passing the moon. */
+function drawWitch(
+  g: CanvasRenderingContext2D,
+  F: Frame,
+  t: number,
+  visible: (X: number, Y: number, r: number) => boolean,
+) {
+  const { U } = F;
+  const period = 30;
+  const u = mod(t / period, 1);
+  const X = travel(F, u);
+  const Y = F.r.y - F.r.y + (F.groundY - U * 0.62) + Math.sin(u * TAU * 2) * U * 0.05;
+  const s = U * 0.16;
+  if (!visible(X, Y, s * 2)) return;
+  const x = px(F, X);
+  const y = py(F, Y);
+  const S = s * F.ppm;
+  g.save();
+  g.translate(x, y);
+  g.rotate(-0.08 + Math.sin(t * 3) * 0.04);
+  glowAt(g, 0, 0, S * 1.6, '#ff8a2e', 0.35);
+  g.fillStyle = '#12051f';
+  g.strokeStyle = '#12051f';
+  // broom
+  g.lineWidth = Math.max(1, S * 0.06);
+  g.beginPath();
+  g.moveTo(-S * 0.9, S * 0.2);
+  g.lineTo(S * 0.8, S * 0.05);
+  g.stroke();
+  g.beginPath();
+  g.moveTo(-S * 0.85, S * 0.2);
+  g.lineTo(-S * 1.3, S * 0.02);
+  g.lineTo(-S * 1.35, S * 0.4);
+  g.closePath();
+  g.fill();
+  // robe + cape fluttering
+  g.beginPath();
+  g.moveTo(-S * 0.2, S * 0.15);
+  g.lineTo(S * 0.15, -S * 0.45);
+  g.lineTo(S * 0.35, S * 0.12);
+  g.closePath();
+  g.fill();
+  g.beginPath();
+  g.moveTo(S * 0.1, -S * 0.35);
+  g.quadraticCurveTo(-S * 0.5, -S * 0.3 + Math.sin(t * 8) * S * 0.08, -S * 0.75, -S * 0.05);
+  g.lineTo(-S * 0.1, S * 0.05);
+  g.closePath();
+  g.fill();
+  // head + hat
+  g.beginPath();
+  g.arc(S * 0.2, -S * 0.52, S * 0.1, 0, TAU);
+  g.fill();
+  g.beginPath();
+  g.moveTo(S * 0.02, -S * 0.58);
+  g.lineTo(S * 0.4, -S * 0.6);
+  g.lineTo(S * 0.12, -S * 1.0);
+  g.closePath();
+  g.fill();
+  g.restore();
+}
+
+/** Glowing lanterns on posts along the fence – orange light, flickering. */
+function drawLanterns(
+  g: CanvasRenderingContext2D,
+  F: Frame,
+  t: number,
+  visible: (X: number, Y: number, r: number) => boolean,
+) {
+  const { U, r } = F;
+  cells(F, U * 0.9, r.x - U, r.x + r.w + U, (idx, X) => {
+    if (F.houseW && Math.abs(X - F.houseX) < pathHalf(F, F.fenceY) + U * 0.1) return;
+    const Y = F.fenceY - U * 0.16;
+    if (!visible(X, Y, U * 0.2)) return;
+    const x = px(F, X);
+    const y = py(F, Y);
+    const s = U * 0.05 * F.ppm;
+    g.fillStyle = '#12051f';
+    g.fillRect(x - s * 0.08, y, s * 0.16, py(F, F.fenceY) - y);
+    const fl = 0.8 + 0.2 * noise1(t * 4 + idx, F.seed);
+    addGlow(g, x, y - s * 0.5, s * 4, '#ff8a2e', 0.45 * fl);
+    g.fillStyle = '#ffd36a';
+    g.fillRect(x - s * 0.35, y - s * 1.0, s * 0.7, s * 0.9);
+    g.fillStyle = '#12051f';
+    g.fillRect(x - s * 0.45, y - s * 1.12, s * 0.9, s * 0.14);
+    g.fillRect(x - s * 0.04, y - s * 1.0, s * 0.08, s * 0.9);
+    g.beginPath();
+    g.moveTo(x - s * 0.4, y - s * 1.12);
+    g.lineTo(x, y - s * 1.45);
+    g.lineTo(x + s * 0.4, y - s * 1.12);
+    g.fill();
+  });
+}
+
+/** Neon fireflies / sparks drifting everywhere in front of the scene. */
+function drawFireflies(
+  g: CanvasRenderingContext2D,
+  F: Frame,
+  t: number,
+  visible: (X: number, Y: number, r: number) => boolean,
+  copies: (X: number) => number[],
+) {
+  const { U } = F;
+  const n = Math.round((F.P / U) * 6);
+  const cols = ['#7dff4d', '#ff8a2e', '#ff4dd2', '#4de8ff', '#ffe14d'];
+  for (let i = 0; i < n; i++) {
+    const X0 = travel(F, hash01(i * 7 + F.seed) + t * 0.004 * (hash01(i) - 0.5));
+    const Y =
+      F.groundY -
+      U * (0.05 + 0.6 * hash01(i * 13 + F.seed)) +
+      Math.sin(t * (0.5 + hash01(i * 3)) + i) * U * 0.04;
+    const a = 0.5 + 0.5 * Math.sin(t * (1 + hash01(i * 5) * 2) + i);
+    for (const X of copies(X0)) {
+      if (!visible(X, Y, U * 0.05)) continue;
+      addGlow(g, px(F, X), py(F, Y), U * 0.025 * F.ppm, cols[i % cols.length]!, 0.7 * a);
+    }
+  }
+}
+
 /** Neon: purple glow at the bottom of the walls = where the glowing floor begins. */
 const NEON_SEAM = '#3a1468';
 
@@ -752,9 +889,13 @@ function panoDraw(o: PanoOpts) {
       const X0 = travel(F, hash01(i * 11 + F.seed) + (t * v * (U * 4)) / F.P);
       const Y = r.y + U * (0.1 + 0.3 * hash01(i * 7 + 3)) + Math.sin(t * 2 + i) * U * 0.03;
       for (const X of copies(X0))
-        if (visible(X, Y, U * 0.1))
-          bat(g, px(F, X), py(F, Y), U * 0.05 * F.ppm * (i % 3 === 0 ? 0.6 : 1), Math.sin(t * 14 + i), pal);
+        if (visible(X, Y, U * 0.1)) {
+          const bs = U * (env.neon ? 0.08 : 0.05) * F.ppm * (i % 3 === 0 ? 0.6 : 1);
+          bat(g, px(F, X), py(F, Y), bs, Math.sin(t * 14 + i), pal);
+          if (env.neon) cuteEyes(g, px(F, X), py(F, Y) - bs * 0.05, bs * 0.075, v > 0 ? 1 : -1);
+        }
     }
+    if (env.neon) drawWitch(g, F, t, visible);
 
     const st = paintStatic(s, F, env, o);
     g.drawImage(st.layer, 0, 0);
@@ -769,6 +910,7 @@ function panoDraw(o: PanoOpts) {
       );
     }
     if (o.big && F.houseW) drawBigCast(g, F, pal, t, visible);
+    if (env.neon) drawLanterns(g, F, t, visible);
 
     if (o.portal) {
       const R = portalR(F);
@@ -1036,6 +1178,7 @@ function panoDraw(o: PanoOpts) {
           });
       }
     }
+    if (env.neon) drawFireflies(g, F, t, visible, copies);
   };
 }
 
@@ -1286,7 +1429,7 @@ export const neonGround: SceneModule = hybridScene(
         r.w * 0.22 * F.ppm,
         r.h * 0.12 * F.ppm,
         i % 2 ? '#ff8a2e' : '#5dff6a',
-        0.22,
+        0.45,
       );
     }
     // paw-print trails from the door across the floor (world meters)
@@ -1339,6 +1482,8 @@ export const neonGround: SceneModule = hybridScene(
       g.translate(px(F, sx), py(F, sy));
       g.rotate(Math.atan2(sy2 - sy, sx2 - sx));
       fuzzySpider(g, 0.5 * F.ppm, t * 5 + i * 3, 0.25, pal.rim, '#ffe14d', i);
+      g.rotate(Math.PI / 2);
+      cuteEyes(g, 0, -0.5 * F.ppm * 0.32, 0.5 * F.ppm * 0.09, 0);
       g.restore();
     }
   },
