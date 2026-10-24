@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { warpPoint } from '@spectrastage/engine';
+import { baseWarp, warpPoint } from '@spectrastage/engine';
 import {
   activeProfile,
-  applyHomography,
-  computeHomography,
   isConvexQuad,
   ProfileSchema,
   UNIT_QUAD,
@@ -25,7 +23,12 @@ type Handle =
   | { kind: 'mask'; maskId: string; i: number }
   | null;
 
-const CORNER_COLORS = ['#ff4d4d', '#4dff88', '#4da6ff', '#ffe14d'];
+/** 1–4 image corners, 5/6 the two ends of a room-corner crease. */
+const CORNER_COLORS = ['#ff4d4d', '#4dff88', '#4da6ff', '#ffe14d', '#ff8a1f', '#c39bff'];
+
+function cornerAt(p: Profile, i: number): Pt | undefined {
+  return i < 4 ? p.corners[i] : i === 4 ? p.fold?.a : p.fold?.b;
+}
 
 export function CalibrationEditor({ output, onClose }: { output: Output; onClose: () => void }) {
   const L = useT();
@@ -118,12 +121,14 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
     return { x: p.x / W, y: p.y / H };
   };
 
-  const homography = useMemo(() => computeHomography(UNIT_QUAD, draft.corners), [draft.corners]);
+  const warp = useMemo(() => baseWarp(draft), [draft]);
+  const cornerIds = draft.fold ? [0, 1, 2, 3, 4, 5] : [0, 1, 2, 3];
+  const handlePts = cornerIds.map((i) => ({ i, c: cornerAt(draft, i)! }));
   const meshPos = (i: number): Pt => {
     const m = draft.mesh!;
     const u = (i % m.cols) / (m.cols - 1);
     const v = Math.floor(i / m.cols) / (m.rows - 1);
-    const base = homography ? applyHomography(homography, { x: u, y: v }) : { x: u, y: v };
+    const base = warp ? warp(u, v) : { x: u, y: v };
     const o = m.offsets[i] ?? { x: 0, y: 0 };
     return { x: base.x + o.x, y: base.y + o.y };
   };
@@ -134,15 +139,17 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
       x: Math.max(-0.5, Math.min(1.5, q.x)),
       y: Math.max(-0.5, Math.min(1.5, q.y)),
     });
-    if (h.kind === 'corner') {
+    if (h.kind === 'corner' && h.i >= 4) {
+      if (next.fold) next.fold = { ...next.fold, [h.i === 4 ? 'a' : 'b']: clampP(p) };
+    } else if (h.kind === 'corner') {
       const c = [...next.corners] as Profile['corners'];
       c[h.i] = clampP(p);
       if (isConvexQuad(c)) next.corners = c;
-    } else if (h.kind === 'mesh' && next.mesh && homography) {
+    } else if (h.kind === 'mesh' && next.mesh && warp) {
       const m = next.mesh;
       const u = (h.i % m.cols) / (m.cols - 1);
       const v = Math.floor(h.i / m.cols) / (m.rows - 1);
-      const b = applyHomography(homography, { x: u, y: v });
+      const b = warp(u, v);
       m.offsets[h.i] = {
         x: Math.max(-0.2, Math.min(0.2, p.x - b.x)),
         y: Math.max(-0.2, Math.min(0.2, p.y - b.y)),
@@ -162,7 +169,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
   };
   const handlePos = (h: NonNullable<Handle>, p: Profile): Pt | undefined =>
     h.kind === 'corner'
-      ? p.corners[h.i]
+      ? cornerAt(p, h.i)
       : h.kind === 'mesh'
         ? meshPos(h.i)
         : p.masks.find((m) => m.id === h.maskId)?.points[h.i];
@@ -231,7 +238,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
     const step = fine ? 0.0005 : 0.004;
     const cur =
       handle.kind === 'corner'
-        ? draft.corners[handle.i]!
+        ? cornerAt(draft, handle.i)!
         : handle.kind === 'mesh'
           ? meshPos(handle.i)
           : draft.masks.find((m) => m.id === handle.maskId)?.points[handle.i];
@@ -256,6 +263,37 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   });
+
+  /** Crease where two surfaces meet inside this projector's stage area (closest to the middle). */
+  const autoFoldAt = (axis: 'x' | 'y'): number => {
+    const vp = draft.viewport;
+    const lo = axis === 'x' ? vp.x : vp.y;
+    const len = axis === 'x' ? vp.w : vp.h;
+    let best = 0.5;
+    for (const s of state.surfaces) {
+      const xs = s.polygon.map((q) => (axis === 'x' ? q.x : q.y));
+      for (const e of [Math.min(...xs), Math.max(...xs)]) {
+        const f = (e - lo) / len;
+        if (f > 0.05 && f < 0.95 && Math.abs(f - 0.5) < Math.abs(best - 0.5) + (best === 0.5 ? 1 : 0))
+          best = f;
+      }
+    }
+    return best;
+  };
+  const setFold = (axis: 'x' | 'y' | null) => {
+    if (!axis) {
+      commit({ ...draft, fold: null }, draft);
+      setHandle({ kind: 'corner', i: 0 });
+      return;
+    }
+    const at = autoFoldAt(axis);
+    const w0 = baseWarp({ ...draft, fold: null });
+    if (!w0) return;
+    const a = axis === 'x' ? w0(at, 0) : w0(0, at);
+    const b = axis === 'x' ? w0(at, 1) : w0(1, at);
+    commit({ ...draft, fold: { axis, at, a, b } }, draft);
+    setHandle({ kind: 'corner', i: 4 });
+  };
 
   const apply = async () => {
     if (!isConvexQuad(draft.corners)) return;
@@ -363,7 +401,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
   const stepHandle = (d: number) => {
     if (mode === 'corners') {
       const i = handle?.kind === 'corner' ? handle.i : 0;
-      setHandle({ kind: 'corner', i: (i + d + 4) % 4 });
+      setHandle({ kind: 'corner', i: (i + d + cornerIds.length) % cornerIds.length });
     } else if (mode === 'mesh' && meshCount) {
       const i = handle?.kind === 'mesh' ? handle.i : 0;
       setHandle({ kind: 'mesh', i: (i + d + meshCount) % meshCount });
@@ -403,7 +441,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
         </div>
         {mode === 'corners' ? (
           <div className="justify-pick" role="group" aria-label={L('Select corner', 'Ecke wählen')}>
-            {[0, 1, 2, 3].map((i) => (
+            {cornerIds.map((i) => (
               <button
                 key={i}
                 className={`btn corner-pick${handle?.kind === 'corner' && handle.i === i ? ' on' : ''}`}
@@ -446,7 +484,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
               stroke="#fff"
               strokeWidth={5}
             />
-            {draft.corners.map((c, i) => (
+            {handlePts.map(({ c, i }) => (
               <circle
                 key={i}
                 cx={c.x * W}
@@ -623,6 +661,18 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
                 strokeWidth={(2.5 * vbW) / Math.max(200, svgW)}
                 pointerEvents="none"
               />
+              {draft.fold && (
+                <line
+                  x1={draft.fold.a.x * W}
+                  y1={draft.fold.a.y * H}
+                  x2={draft.fold.b.x * W}
+                  y2={draft.fold.b.y * H}
+                  stroke="#ff8a1f"
+                  strokeDasharray={`${(8 * vbW) / Math.max(200, svgW)} ${(6 * vbW) / Math.max(200, svgW)}`}
+                  strokeWidth={(2.5 * vbW) / Math.max(200, svgW)}
+                  pointerEvents="none"
+                />
+              )}
               {/* crop */}
               <g fill="rgba(255,60,60,0.25)" pointerEvents="none">
                 <rect x={0} y={0} width={W} height={draft.crop[0] * H} />
@@ -650,7 +700,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
                 />
               )}
               {mode === 'corners' &&
-                draft.corners.map((c, i) => (
+                handlePts.map(({ c, i }) => (
                   <g key={i} onPointerDown={(e) => onHandleDown(e, { kind: 'corner', i })} className="handle">
                     <circle cx={c.x * W} cy={c.y * H} r={hs * 1.6} fill="transparent" />
                     <circle
@@ -716,7 +766,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
               role="group"
               aria-label={L('Select corner', 'Ecke wählen')}
             >
-              {[0, 1, 2, 3].map((i) => (
+              {cornerIds.map((i) => (
                 <button
                   key={i}
                   className={`btn corner-pick${handle?.kind === 'corner' && handle.i === i ? ' on' : ''}`}
@@ -758,7 +808,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
                 onClick={() => {
                   const p =
                     handle.kind === 'corner'
-                      ? draft.corners[handle.i]!
+                      ? cornerAt(draft, handle.i)!
                       : handle.kind === 'mesh'
                         ? meshPos(handle.i)
                         : selMask?.points[handle.i];
@@ -831,18 +881,18 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
                     ▼
                   </button>
                 </div>
-                {handle.kind === 'corner' && (
+                {handle.kind === 'corner' && cornerAt(draft, handle.i) && (
                   <div className="stack grow">
                     <label>
                       X (px)
                       <input
                         type="number"
-                        value={Math.round(draft.corners[handle.i]!.x * res.w)}
+                        value={Math.round(cornerAt(draft, handle.i)!.x * res.w)}
                         onChange={(e) =>
                           commit(
                             moveHandle(
                               handle,
-                              { x: Number(e.target.value) / res.w, y: draft.corners[handle.i]!.y },
+                              { x: Number(e.target.value) / res.w, y: cornerAt(draft, handle.i)!.y },
                               draft,
                             ),
                             draft,
@@ -854,12 +904,12 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
                       Y (px)
                       <input
                         type="number"
-                        value={Math.round(draft.corners[handle.i]!.y * res.h)}
+                        value={Math.round(cornerAt(draft, handle.i)!.y * res.h)}
                         onChange={(e) =>
                           commit(
                             moveHandle(
                               handle,
-                              { x: draft.corners[handle.i]!.x, y: Number(e.target.value) / res.h },
+                              { x: cornerAt(draft, handle.i)!.x, y: Number(e.target.value) / res.h },
                               draft,
                             ),
                             draft,
@@ -889,6 +939,51 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
               >
                 {L('Reset corners', 'Ecken zurücksetzen')}
               </button>
+            </div>
+          )}
+
+          {mode === 'corners' && (
+            <div className="panel stack">
+              <h3 style={{ margin: 0 }}>{L('Room corner', 'Raumecke')}</h3>
+              <p className="muted small" style={{ margin: 0 }}>
+                {L(
+                  'Does this projector hit two surfaces at an angle (wall + wall around the corner, or wall + floor)? Mark the crease: points 5 and 6 go onto the real corner line, each side gets its own perspective.',
+                  'Trifft dieser Beamer zwei Flächen im Winkel (Wand + Wand ums Eck oder Wand + Boden)? Markiere den Knick: Punkte 5 und 6 kommen auf die echte Eckkante, jede Seite bekommt ihre eigene Perspektive.',
+                )}
+              </p>
+              <div className="row">
+                {(
+                  [
+                    [null, L('None', 'Keine')],
+                    ['x', L('Vertical (wall | wall)', 'Senkrecht (Wand | Wand)')],
+                    ['y', L('Horizontal (wall / floor)', 'Waagerecht (Wand / Boden)')],
+                  ] as const
+                ).map(([axis, label]) => (
+                  <button
+                    key={String(axis)}
+                    className={`chip${(draft.fold?.axis ?? null) === axis ? ' on' : ''}`}
+                    onClick={() => setFold(axis)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {draft.fold && (
+                <label>
+                  {L('Crease position in the stage image', 'Lage des Knicks im Bühnenbild')}:{' '}
+                  {Math.round(draft.fold.at * 100)} %
+                  <input
+                    type="range"
+                    min={0.05}
+                    max={0.95}
+                    step={0.005}
+                    value={draft.fold.at}
+                    onChange={(e) =>
+                      setDraftRaw({ ...draft, fold: { ...draft.fold!, at: Number(e.target.value) } })
+                    }
+                  />
+                </label>
+              )}
             </div>
           )}
 

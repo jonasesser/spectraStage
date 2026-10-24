@@ -18,6 +18,8 @@ import {
   ambientActorCues,
   rectPolygon,
   fitViewport,
+  worldLayout,
+  wallRing,
 } from './stage.ts';
 import { normalizeCode, isValidCode, formatCode } from './codes.ts';
 
@@ -395,5 +397,35 @@ describe('stage actors', () => {
   it('fitViewport keeps aspect', () => {
     const vp = fitViewport({ x: 0, y: 0, w: 4, h: 4 }, 16 / 9);
     expect(vp.w / vp.h).toBeCloseTo(16 / 9);
+  });
+});
+
+describe('world layout', () => {
+  const surf = (id: string, kind: Surface['kind'], x: number, y: number, role?: Surface['role']) =>
+    ({
+      id,
+      name: id,
+      kind,
+      role,
+      intensity: 1,
+      polygon: rectPolygon(x, y, 4, 2.5),
+      playback: { mode: 'off' },
+    }) as unknown as Surface;
+  it('first wall is the main part, other walls are sides, floors are ground', () => {
+    const w = worldLayout([surf('g', 'wall', 0, 0), surf('s', 'wall', 4, 0), surf('f', 'floor', 0, 2.5)]);
+    expect(w.map((x) => x.role)).toEqual(['main', 'side', 'ground']);
+  });
+  it('an explicit main wall wins; sides are numbered left to right; room ring spans the walls', () => {
+    const w = worldLayout([
+      surf('a', 'wall', 8, 0),
+      surf('b', 'wall', 0, 0),
+      surf('c', 'wall', 4, 0, 'main'),
+      surf('d', 'other', 0, -4, 'ceiling'),
+    ]);
+    expect(w.find((x) => x.id === 'c')!.role).toBe('main');
+    expect(w.find((x) => x.id === 'b')!.roleIndex).toBe(0);
+    expect(w.find((x) => x.id === 'a')!.roleIndex).toBe(1);
+    expect(w.find((x) => x.id === 'd')!.role).toBe('ceiling');
+    expect(wallRing(w)).toEqual({ x: 0, w: 12 });
   });
 });

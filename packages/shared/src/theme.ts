@@ -38,6 +38,11 @@ export interface SceneManifest {
   /** Two CSS colors used for the controller card gradient. */
   colors: [string, string];
   params: ParamDef[];
+  /**
+   * World scene: spread over the whole stage – every surface shows its own part (main wall,
+   * side walls, ground, ceiling). Shown first in the controller.
+   */
+  world?: boolean;
 }
 
 export interface EffectManifest {

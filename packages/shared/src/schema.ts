@@ -68,6 +68,20 @@ export const ProfileSchema = z.object({
   /** Where the viewport corners (TL, TR, BR, BL) land in output-normalized space. */
   corners: QuadSchema,
   mesh: MeshSchema.nullable(),
+  /**
+   * Room corner: one projector covering two surfaces at an angle (wall|wall or wall|floor).
+   * The crease sits at `at` (fraction of the viewport along `axis`); a/b are its two ends in
+   * output space (x: top, bottom – y: left, right). Each side gets its own perspective.
+   */
+  fold: z
+    .object({
+      axis: z.enum(['x', 'y']),
+      at: z.number().min(0.02).max(0.98),
+      a: PointSchema,
+      b: PointSchema,
+    })
+    .nullable()
+    .optional(),
   rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]),
   flipX: z.boolean(),
   flipY: z.boolean(),
@@ -188,6 +202,8 @@ export const SurfaceSchema = z.object({
   polygon: z.array(StagePointSchema).min(3).max(32),
   playback: PlaybackSchema,
   intensity: unit,
+  /** Which part of a world scene this surface shows (auto = by stage position). */
+  role: z.enum(['auto', 'main', 'side', 'ground', 'ceiling']).optional(),
 });
 export type Surface = z.infer<typeof SurfaceSchema>;
 
@@ -311,6 +327,8 @@ export const SessionStateSchema = z.object({
   ambient: StageAmbientSchema,
   /** Dusk visibility boost 0..1 (brightness + saturation lift on all outputs; black stays black). */
   boost: unit.optional(),
+  /** Room mode: the walls go all the way around – the world wraps from the last wall to the first. */
+  room: z.boolean().optional(),
   schedule: ScheduleSchema.optional(),
   devices: z.array(DeviceSchema),
   controllers: z.array(ControllerSchema),
@@ -336,6 +354,7 @@ export const CommandSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('session.setDefaultTheme'), themeId: id }),
   z.object({ t: z.literal('session.setAmbient'), ambient: StageAmbientSchema.omit({ seed: true }) }),
   z.object({ t: z.literal('session.setBoost'), boost: unit }),
+  z.object({ t: z.literal('session.setRoom'), room: z.boolean() }),
   z.object({ t: z.literal('session.setSchedule'), schedule: ScheduleSchema.omit({ lastApplied: true }) }),
 
   z.object({
@@ -351,6 +370,7 @@ export const CommandSchema = z.discriminatedUnion('t', [
     kind: kind.optional(),
     intensity: unit.optional(),
     polygon: z.array(StagePointSchema).min(3).max(32).optional(),
+    role: z.enum(['auto', 'main', 'side', 'ground', 'ceiling']).optional(),
   }),
   z.object({ t: z.literal('surface.delete'), surfaceId: id }),
   z.object({

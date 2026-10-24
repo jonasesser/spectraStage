@@ -381,3 +381,59 @@ export function surfacesInViewport(state: Pick<SessionState, 'surfaces'>, vp: Vi
   const b = viewportBBox(vp);
   return state.surfaces.filter((s) => bboxIntersects(polygonBBox(s.polygon), b));
 }
+
+// ---------------------------------------------------------------------------
+// World layout: one scene is a world spread over all surfaces; each surface shows its part.
+// ---------------------------------------------------------------------------
+export type WorldRole = 'main' | 'side' | 'ground' | 'ceiling';
+
+export interface WorldSurface {
+  id: string;
+  kind: SurfaceKind;
+  role: WorldRole;
+  /** 0, 1, 2 … among surfaces with the same role (left to right). */
+  roleIndex: number;
+  rect: BBox;
+}
+
+/**
+ * Deterministic role assignment: floors are ground; an explicit "main" wins; otherwise the first
+ * wall (in stage order) is the main surface – it gets the centerpiece (the house) – and every
+ * other wall is a side part. Same result on every client.
+ */
+export function worldLayout(surfaces: readonly Surface[]): WorldSurface[] {
+  const explicitMain = surfaces.find((s) => s.role === 'main');
+  let mainId = explicitMain?.id;
+  if (!mainId) {
+    const auto = surfaces.find((s) => (s.role ?? 'auto') === 'auto' && s.kind !== 'floor');
+    mainId = auto?.id;
+  }
+  const out: WorldSurface[] = surfaces.map((s) => {
+    const r = s.role ?? 'auto';
+    const role: WorldRole =
+      s.id === mainId
+        ? 'main'
+        : r === 'ceiling'
+          ? 'ceiling'
+          : r === 'ground' || (r === 'auto' && s.kind === 'floor')
+            ? 'ground'
+            : 'side';
+    return { id: s.id, kind: s.kind, role, roleIndex: 0, rect: polygonBBox(s.polygon) };
+  });
+  for (const role of ['side', 'ground', 'ceiling'] as const) {
+    out
+      .filter((w) => w.role === role)
+      .sort((a, b) => a.rect.x - b.rect.x || a.rect.y - b.rect.y)
+      .forEach((w, i) => (w.roleIndex = i));
+  }
+  return out;
+}
+
+/** Horizontal extent of the wall ring (main + side) – the wrap period in room mode. */
+export function wallRing(world: readonly WorldSurface[]): { x: number; w: number } | null {
+  const walls = world.filter((w) => w.role === 'main' || w.role === 'side');
+  if (!walls.length) return null;
+  const x0 = Math.min(...walls.map((w) => w.rect.x));
+  const x1 = Math.max(...walls.map((w) => w.rect.x + w.rect.w));
+  return { x: x0, w: x1 - x0 };
+}

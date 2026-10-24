@@ -3,7 +3,7 @@ import { UNIT_QUAD, type Profile } from '@spectrastage/shared';
 import { buildWarpMesh, meshOffset, orientUv, warpPoint } from './warp.ts';
 import { ServerClock } from './clock.ts';
 
-const base: Pick<Profile, 'corners' | 'mesh' | 'rotation' | 'flipX' | 'flipY'> = {
+const base: Pick<Profile, 'corners' | 'mesh' | 'fold' | 'rotation' | 'flipX' | 'flipY'> = {
   corners: structuredClone(UNIT_QUAD) as Profile['corners'],
   mesh: null,
   rotation: 0,
@@ -67,5 +67,28 @@ describe('clock sync', () => {
     const s = c.stats();
     expect(Math.abs(s.offsetMs - 5000)).toBeLessThan(5);
     expect(s.rttMs).toBeLessThanOrEqual(20);
+  });
+});
+
+describe('room corner (fold)', () => {
+  const fold: Pick<Profile, 'corners' | 'mesh' | 'fold' | 'rotation' | 'flipX' | 'flipY'> = {
+    ...base,
+    fold: { axis: 'x', at: 0.4, a: { x: 0.5, y: 0.1 }, b: { x: 0.5, y: 0.9 } },
+  };
+  it('maps the crease of the stage image onto the marked corner line', () => {
+    expect(warpPoint(fold, 0.4, 0)!.x).toBeCloseTo(0.5);
+    expect(warpPoint(fold, 0.4, 0)!.y).toBeCloseTo(0.1);
+    expect(warpPoint(fold, 0.4, 1)!.y).toBeCloseTo(0.9);
+    expect(warpPoint(fold, 0, 0)!.x).toBeCloseTo(0);
+    expect(warpPoint(fold, 1, 1)!.x).toBeCloseTo(1);
+  });
+  it('is continuous across the crease and the mesh has a vertex column on it', () => {
+    const l = warpPoint(fold, 0.4 - 1e-6, 0.5)!;
+    const r = warpPoint(fold, 0.4 + 1e-6, 0.5)!;
+    expect(Math.abs(l.x - r.x)).toBeLessThan(1e-4);
+    const m = buildWarpMesh(fold, 32)!;
+    const us = new Set<number>();
+    for (let i = 0; i < m.uvs.length; i += 2) us.add(Math.round(m.uvs[i]! * 1e6));
+    expect(us.has(400000)).toBe(true);
   });
 });

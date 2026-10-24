@@ -28,7 +28,8 @@ export function ScenesView() {
     }),
   );
   const kinds = new Set(targets.map((s) => s.kind));
-  const scenes = [...theme.scenes].sort((a, b) => {
+  const worlds = theme.scenes.filter((sc) => sc.world);
+  const scenes = [...theme.scenes.filter((sc) => !sc.world)].sort((a, b) => {
     const sa = a.kinds.some((k) => kinds.has(k)) ? 0 : 1;
     const sb = b.kinds.some((k) => kinds.has(k)) ? 0 : 1;
     return sa - sb;
@@ -48,9 +49,46 @@ export function ScenesView() {
           </button>
         ))}
       </div>
+      {worlds.length > 0 && (
+        <section className="panel">
+          <div className="section-title">
+            <h2>{L('Worlds', 'Welten')}</h2>
+            <span className="muted small">
+              {L(
+                'One scene over the whole stage – every projector shows its part',
+                'Eine Szene über die ganze Bühne – jeder Beamer zeigt seinen Teil',
+              )}
+            </span>
+          </div>
+          <div className="tiles">
+            {worlds.map((sc) => (
+              <button
+                key={sc.id}
+                className={`tile scene-tile${activeIds.has(`${theme.id}/${sc.id}`) ? ' active' : ''}`}
+                style={{ background: `linear-gradient(135deg, ${sc.colors[0]}, ${sc.colors[1]})` }}
+                onClick={() =>
+                  state.surfaces.length &&
+                  store.send({
+                    t: 'surface.setScene',
+                    surfaceIds: state.surfaces.map((s) => s.id),
+                    themeId: theme.id,
+                    sceneId: sc.id,
+                  })
+                }
+                title={L.text(sc.description)}
+              >
+                <span className="ti" aria-hidden="true">
+                  {sc.icon}
+                </span>
+                {L.text(sc.name)}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
       <section className="panel">
         <div className="section-title">
-          <h2>{L('Scenes', 'Szenen')}</h2>
+          <h2>{L('Single scenes', 'Einzelne Szenen')}</h2>
           <span className="muted small">
             {L('Tap to play on the selected surfaces', 'Antippen = auf gewählten Flächen abspielen')}
           </span>

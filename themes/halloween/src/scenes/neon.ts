@@ -20,7 +20,7 @@ import {
   star,
   type GhostFace,
 } from '../shapes.ts';
-import { countOf, densityOf, mod, speedOf } from './common.ts';
+import { countOf, densityOf, isSidePart, mod, speedOf } from './common.ts';
 import { FBM_GLSL } from './glsl.ts';
 import { addGlow, envPalette, lightPool, offscreen, paintLeaf, SKY_FRAG, skyUniforms } from './env.ts';
 import { backdrop, drawManor, MOON_POS } from './manor.ts';
@@ -192,7 +192,16 @@ const neonParty: SceneModule = hybridScene(
     const beat = (t * num(s.params, 'bpm', 108) * speedOf(s)) / 60;
     const { w, h } = s;
     const floorY = h * 0.84;
-    g.drawImage(backdrop(s, env, { manor: [0.18, 0.22], horizon: 0.62, ground: 0.8, trees: true }), 0, 0);
+    g.drawImage(
+      backdrop(s, env, {
+        manor: isSidePart(s) ? undefined : [0.18, 0.22],
+        horizon: 0.62,
+        ground: 0.8,
+        trees: true,
+      }),
+      0,
+      0,
+    );
     // string lights between the trees
     for (let row = 0; row < 2; row++) {
       const y0 = h * (0.12 + row * 0.08);

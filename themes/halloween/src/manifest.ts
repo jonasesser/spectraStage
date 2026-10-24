@@ -76,7 +76,7 @@ function darkScene(
   icon: string,
   events: string,
 ): SceneManifest {
-  return scene(
+  const sc = scene(
     id,
     name,
     description,
@@ -102,9 +102,100 @@ function darkScene(
       },
     ],
   );
+  return { ...sc, world: true };
 }
 
+function world(
+  id: string,
+  name: [string, string],
+  description: [string, string],
+  icon: string,
+  colors: [string, string],
+): SceneManifest {
+  const sc = scene(id, name, description, ['wall', 'floor', 'other'], icon, colors);
+  if (id === 'neonWorld')
+    sc.params = sc.params.map((p) =>
+      p.key === 'mood' && p.type === 'select' ? { ...p, default: 'neon' } : p,
+    );
+  return { ...sc, world: true };
+}
+
+const worldManifests: SceneManifest[] = [
+  world(
+    'spookWorld',
+    ['Haunted World', 'Spukwelt'],
+    [
+      'The haunted house on the main wall, graveyard and ghosts on the other walls, spiders in the fog on the ground – one continuous night with a single moon.',
+      'Das Spukhaus auf der Hauptwand, Friedhof und Geister auf den anderen Wänden, Spinnen im Nebel am Boden – eine durchgehende Nacht mit einem Mond.',
+    ],
+    '🏚️',
+    ['#2b1a4a', '#ff8a1f'],
+  ),
+  world(
+    'partyWorld',
+    ['Party World', 'Partywelt'],
+    [
+      'Skeleton disco on the main wall, ghosts and pumpkins around it, a pumpkin trail on the ground.',
+      'Skelett-Disco auf der Hauptwand, Geister und Kürbisse rundherum, Kürbispfad am Boden.',
+    ],
+    '🪩',
+    ['#1a0f3a', '#d24dff'],
+  ),
+  world(
+    'magicWorld',
+    ['Magic World', 'Zauberwelt'],
+    [
+      'A spirit portal on the main wall, pumpkin magic and ghosts around it, a magic path on the ground.',
+      'Geisterportal auf der Hauptwand, Kürbiszauber und Geister rundherum, Zauberweg am Boden.',
+    ],
+    '🔮',
+    ['#14062e', '#7dffd8'],
+  ),
+  world(
+    'monsterWorld',
+    ['Monster House', 'Monsterhaus'],
+    [
+      'Monsters peek out of the windows on the main wall, graveyard around it, tiny ghosts on the ground.',
+      'Monster gucken aus den Fenstern der Hauptwand, Friedhof rundherum, Mini-Geister am Boden.',
+    ],
+    '👹',
+    ['#1a1030', '#ffb347'],
+  ),
+  world(
+    'neonWorld',
+    ['Neon World (dusk)', 'Neonwelt (Dämmerung)'],
+    [
+      'Bright blacklight world: neon manor, pumpkin patch and party around it, neon fog on the ground – visible at dusk.',
+      'Knallbunte Welt: Neon-Villa, Kürbisfeld und Party rundherum, Neon-Nebel am Boden – sichtbar schon in der Dämmerung.',
+    ],
+    '🌆',
+    ['#5b1fa8', '#ff7a1a'],
+  ),
+  world(
+    'quietWorld',
+    ['Quiet Night', 'Stille Nacht'],
+    [
+      'Moonlit graveyard, a few calm ghosts, slow mist. Very calm.',
+      'Friedhof im Mondlicht, ein paar ruhige Geister, langsamer Nebel. Sehr ruhig.',
+    ],
+    '🌙',
+    ['#10213f', '#b8e4ff'],
+  ),
+  scene(
+    'nightSky',
+    ['Night Sky (ceiling)', 'Nachthimmel (Decke)'],
+    [
+      'Stars, drifting clouds and bats – for a ceiling.',
+      'Sterne, ziehende Wolken und Fledermäuse – für eine Decke.',
+    ],
+    ['other'],
+    '🌌',
+    ['#05061a', '#c8d8ff'],
+  ),
+];
+
 const scenes: SceneManifest[] = [
+  ...worldManifests,
   scene(
     'hauntedHouse',
     ['Haunted House', 'Spukhaus'],
@@ -417,9 +508,9 @@ export const halloweenManifest: ThemeManifest = {
       ),
       icon: '🎬',
       assignments: {
-        wall: { playlistTemplateId: 'wallShow' },
-        floor: { playlistTemplateId: 'floorShow' },
-        other: { playlistTemplateId: 'wallShow' },
+        wall: { playlistTemplateId: 'worldShow' },
+        floor: { playlistTemplateId: 'worldShow' },
+        other: { playlistTemplateId: 'worldShow' },
       },
       ambientActors: ['spider', 'bat', 'ghost', 'blackCat'],
     },
@@ -432,9 +523,9 @@ export const halloweenManifest: ThemeManifest = {
       ),
       icon: '🌆',
       assignments: {
-        wall: { playlistTemplateId: 'neonWallShow' },
-        floor: { playlistTemplateId: 'neonFloorShow' },
-        other: { playlistTemplateId: 'neonWallShow' },
+        wall: { playlistTemplateId: 'neonWorldShow' },
+        floor: { playlistTemplateId: 'neonWorldShow' },
+        other: { playlistTemplateId: 'neonWorldShow' },
       },
       ambientActors: ['spider', 'bat', 'ghost'],
     },
@@ -457,7 +548,11 @@ export const halloweenManifest: ThemeManifest = {
       name: L('Classic Haunted', 'Klassischer Spuk'),
       description: L('Haunted house with spiders in the fog.', 'Spukhaus mit Spinnen im Nebel.'),
       icon: '🏚️',
-      assignments: { wall: { sceneId: 'hauntedHouse' }, floor: { sceneId: 'spidersAndFog' } },
+      assignments: {
+        wall: { sceneId: 'spookWorld' },
+        floor: { sceneId: 'spookWorld' },
+        other: { sceneId: 'spookWorld' },
+      },
       ambientActors: ['spider', 'bat'],
     },
     {
@@ -466,8 +561,9 @@ export const halloweenManifest: ThemeManifest = {
       description: L('Disco skeletons and a pumpkin trail.', 'Disco-Skelette und ein Kürbispfad.'),
       icon: '🪩',
       assignments: {
-        wall: { sceneId: 'skeletonDisco' },
-        floor: { sceneId: 'pumpkinTrail', params: { speed: 1.3 } },
+        wall: { sceneId: 'partyWorld' },
+        floor: { sceneId: 'partyWorld' },
+        other: { sceneId: 'partyWorld' },
       },
       ambientActors: ['bat'],
     },
@@ -476,7 +572,11 @@ export const halloweenManifest: ThemeManifest = {
       name: L('Magic Parade', 'Zauberparade'),
       description: L('Pumpkin magic and a tiny ghost parade.', 'Kürbiszauber und eine Mini-Geisterparade.'),
       icon: '🪄',
-      assignments: { wall: { sceneId: 'pumpkinMagic' }, floor: { sceneId: 'tinyGhostParade' } },
+      assignments: {
+        wall: { sceneId: 'magicWorld' },
+        floor: { sceneId: 'magicWorld' },
+        other: { sceneId: 'magicWorld' },
+      },
       ambientActors: ['ghost', 'blackCat'],
     },
     {
@@ -503,13 +603,82 @@ export const halloweenManifest: ThemeManifest = {
       ),
       icon: '🌙',
       assignments: {
-        wall: { sceneId: 'moonlitGraveyard', params: { speed: 0.6 } },
-        floor: { sceneId: 'swirlingMist', params: { speed: 0.5, mood: 'blue' } },
+        wall: { sceneId: 'quietWorld', params: { speed: 0.6, mood: 'blue' } },
+        floor: { sceneId: 'quietWorld', params: { speed: 0.6, mood: 'blue' } },
+        other: { sceneId: 'quietWorld', params: { speed: 0.6, mood: 'blue' } },
       },
       ambientActors: [],
     },
   ],
   playlistTemplates: [
+    {
+      id: 'worldShow',
+      name: L('Halloween world show', 'Halloween Welt-Show'),
+      kind: 'wall',
+      loop: true,
+      items: [
+        {
+          sceneId: 'spookWorld',
+          durationSec: 180,
+          transition: { type: 'crossfade', durationMs: 3500 },
+          ambient: {
+            effectIds: ['boo', 'batSwarm', 'windowKnock', 'gentleLightning', 'spiderRush'],
+            minGapSec: 20,
+            maxGapSec: 45,
+          },
+        },
+        {
+          sceneId: 'partyWorld',
+          durationSec: 150,
+          transition: { type: 'crossfade', durationMs: 3500 },
+          ambient: {
+            effectIds: ['skeletonDanceBreak', 'sparkles', 'pumpkinBurst'],
+            minGapSec: 20,
+            maxGapSec: 40,
+          },
+        },
+        {
+          sceneId: 'darkSurprises',
+          durationSec: 90,
+          transition: { type: 'fadeBlack', durationMs: 3000 },
+        },
+        {
+          sceneId: 'magicWorld',
+          durationSec: 150,
+          transition: { type: 'crossfade', durationMs: 3500 },
+          ambient: { effectIds: ['magicCircle', 'sparkles', 'ghostWave'], minGapSec: 20, maxGapSec: 40 },
+        },
+        {
+          sceneId: 'monsterWorld',
+          durationSec: 150,
+          transition: { type: 'crossfade', durationMs: 3500 },
+          ambient: { effectIds: ['windowKnock', 'boo', 'footprintChase'], minGapSec: 20, maxGapSec: 40 },
+        },
+        {
+          sceneId: 'quietWorld',
+          durationSec: 120,
+          transition: { type: 'crossfade', durationMs: 5000 },
+        },
+      ],
+    },
+    {
+      id: 'neonWorldShow',
+      name: L('Neon world show', 'Neon Welt-Show'),
+      kind: 'wall',
+      loop: true,
+      items: [
+        {
+          sceneId: 'neonWorld',
+          durationSec: 600,
+          transition: { type: 'crossfade', durationMs: 3500 },
+          ambient: {
+            effectIds: ['sparkles', 'magicCircle', 'pumpkinBurst', 'boo'],
+            minGapSec: 20,
+            maxGapSec: 45,
+          },
+        },
+      ],
+    },
     {
       id: 'neonWallShow',
       name: L('Neon wall show (dusk)', 'Neon Wand-Show (Dämmerung)'),
@@ -731,5 +900,5 @@ export const halloweenManifest: ThemeManifest = {
     { name: L('Garage', 'Garage'), kind: 'wall' },
     { name: L('Driveway', 'Einfahrt'), kind: 'floor' },
   ],
-  autoPlaylists: { wall: 'wallShow', floor: 'floorShow', other: 'wallShow' },
+  autoPlaylists: { wall: 'worldShow', floor: 'worldShow', other: 'worldShow' },
 };

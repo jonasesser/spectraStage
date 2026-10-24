@@ -6,7 +6,7 @@
  *  - Free every GPU resource in dispose().
  */
 import type * as THREE from 'three';
-import type { ActorPose, ParamValues, Rng, SurfaceKind } from '@spectrastage/shared';
+import type { ActorPose, BBox, ParamValues, Rng, SurfaceKind, WorldSurface } from '@spectrastage/shared';
 import type { SoundApi } from './sound.ts';
 
 export interface FrameInfo {
@@ -29,6 +29,27 @@ export interface SceneContext {
   kind: SurfaceKind;
   /** 0.35..1 – lower values ask scenes to reduce particle counts. */
   quality: number;
+  /** Where this surface sits in the shared stage world (all surfaces). */
+  world?: WorldContext;
+}
+
+/**
+ * A scene is a world spread over the whole stage; every surface renders only its part.
+ * Coordinates are stage meters (y down). Use `seed` (identical on every surface) for anything
+ * that has to continue across surfaces, e.g. clouds, the moon, scheduled events.
+ */
+export interface WorldContext {
+  self: WorldSurface;
+  surfaces: WorldSurface[];
+  /** Bounding box of all surfaces. */
+  bounds: BBox;
+  /** Shared seed for this scene run (same on every surface and PC). */
+  seed: number;
+  /**
+   * Room mode: walls go all the way around. `wrap.w` meters after `wrap.x` the world repeats,
+   * so anything placed by world x must be periodic (use wrapX / tileable noise).
+   */
+  wrap: { x: number; w: number } | null;
 }
 
 export interface SceneInstance {

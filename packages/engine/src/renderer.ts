@@ -20,6 +20,10 @@ import {
   createRng,
   hashString,
   polygonBBox,
+  worldLayout,
+  wallRing,
+  hashInts,
+  type WorldSurface,
   polygonCentroid,
   primaryOutputAt,
   routePose,
@@ -206,6 +210,13 @@ class Overlay2D {
   }
 }
 
+interface WorldInfo {
+  key: string;
+  wrap: { x: number; w: number } | null;
+  surfaces: WorldSurface[];
+  bounds: { x: number; y: number; w: number; h: number };
+}
+
 interface SceneSlot {
   key: string;
   inst: SceneInstance;
@@ -213,6 +224,7 @@ interface SceneSlot {
   active: ActiveScene;
   paramsJson: string;
   stopAmbient: (() => void) | null;
+  worldKey: string;
 }
 
 /** Per-surface renderer: scene (with transitions) + effect overlay. */
@@ -726,7 +738,8 @@ export class StageRenderer {
     // 1) Surface layers
     const visible = state.surfaces.filter((s) => bboxIntersects(polygonBBox(s.polygon), vp));
     const outputs = state.outputs;
-    for (const s of visible) this.renderSurface(s, state, now, ppmView, dtMs, output, outputs);
+    const world = this.worldFor(state);
+    for (const s of visible) this.renderSurface(s, state, now, ppmView, dtMs, output, outputs, world);
     this.gcLayers(visible, wall);
 
     // 2) Actors (stage space)
@@ -854,6 +867,7 @@ export class StageRenderer {
     const key = JSON.stringify([
       profile.corners,
       profile.mesh,
+      profile.fold ?? null,
       profile.rotation,
       profile.flipX,
       profile.flipY,
@@ -895,6 +909,31 @@ export class StageRenderer {
     return primaryOutputAt(outputs, p)?.id === output.id;
   }
 
+  private worldCache: WorldInfo | null = null;
+  /** Shared world layout (roles + rects of all surfaces), cached while the stage is unchanged. */
+  private worldFor(state: SessionState): WorldInfo {
+    const key = JSON.stringify([
+      state.room ?? false,
+      state.surfaces.map((s) => [s.id, s.kind, s.role ?? 'auto', s.polygon]),
+    ]);
+    if (this.worldCache?.key !== key) {
+      const surfaces = worldLayout(state.surfaces);
+      let x0 = Infinity;
+      let y0 = Infinity;
+      let x1 = -Infinity;
+      let y1 = -Infinity;
+      for (const w of surfaces) {
+        x0 = Math.min(x0, w.rect.x);
+        y0 = Math.min(y0, w.rect.y);
+        x1 = Math.max(x1, w.rect.x + w.rect.w);
+        y1 = Math.max(y1, w.rect.y + w.rect.h);
+      }
+      const bounds = surfaces.length ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : { x: 0, y: 0, w: 1, h: 1 };
+      this.worldCache = { key, surfaces, bounds, wrap: state.room ? wallRing(surfaces) : null };
+    }
+    return this.worldCache;
+  }
+
   private renderSurface(
     s: Surface,
     state: SessionState,
@@ -903,6 +942,7 @@ export class StageRenderer {
     dtMs: number,
     output: Output | null,
     outputs: readonly Output[],
+    world: WorldInfo,
   ): void {
     let layer = this.layers.get(s.id);
     if (!layer) {
@@ -927,9 +967,22 @@ export class StageRenderer {
     if (active && now >= active.startedAt - 50) {
       const runtime = this.runtimes.get(active.scene.themeId);
       const mod = runtime?.scenes[active.scene.sceneId];
-      if (mod && (!layer.current || layer.current.key !== active.key)) {
+      const self = world.surfaces.find((w) => w.id === s.id);
+      if (
+        mod &&
+        (!layer.current || layer.current.key !== active.key || layer.current.worldKey !== world.key)
+      ) {
         const rt = makeRT(lw, lh);
         const inst = mod.create({
+          world: self
+            ? {
+                self,
+                surfaces: world.surfaces,
+                bounds: world.bounds,
+                wrap: world.wrap,
+                seed: hashInts(Math.floor(active.startedAt / 1000) % 2147483647, 0x3077),
+              }
+            : undefined,
           renderer: r,
           width: lw,
           height: lh,
@@ -958,6 +1011,7 @@ export class StageRenderer {
           active,
           paramsJson: JSON.stringify(active.scene.params),
           stopAmbient,
+          worldKey: world.key,
         };
       } else if (layer.current && layer.current.key === active.key) {
         const pj = JSON.stringify(active.scene.params);

@@ -244,6 +244,7 @@ uniform vec3 uTop; uniform vec3 uMid; uniform vec3 uHor;
 uniform vec3 uCloudD; uniform vec3 uCloudL; uniform vec3 uMoonCol; uniform vec3 uGlow; uniform vec3 uFogCol;
 uniform vec2 uMoon; uniform float uMoonR; uniform float uClouds; uniform float uStars; uniform float uFog;
 uniform float uHorizonY; uniform float uSpeed; uniform float uCloudBand; uniform float uNeon;
+uniform float uWorldOn; uniform vec4 uWR; uniform vec2 uMoonW; uniform float uWrapX; uniform float uWrapW;
 varying vec2 vUv;
 ${FBM_GLSL}
 float fbm3(vec2 p) {
@@ -261,13 +262,24 @@ void main() {
   vec2 uv = vUv;
   float aspect = uRes.x / uRes.y;
   vec2 p = vec2(uv.x * aspect, uv.y);
+  // World mode: sky, clouds, stars and the single moon continue across all surfaces.
+  if (uWorldOn > 0.5) p = vec2(uWR.x + uv.x * uWR.z, -(uWR.y + (1.0 - uv.y) * uWR.w));
+  // Room mode: the world wraps around; near the seam blend with the copy one period earlier.
+  float seam = 0.0;
+  if (uWorldOn > 0.5 && uWrapW > 0.0) {
+    p.x = uWrapX + mod(p.x - uWrapX, uWrapW);
+    float z = min(1.5, uWrapW * 0.2);
+    seam = smoothstep(uWrapW - z, uWrapW, p.x - uWrapX);
+  }
+  vec2 wrapD = vec2(uWrapW, 0.0);
   float t = uTime * uSpeed;
   // --- sky gradient
   vec3 col = mix(uHor, uMid, smoothstep(uHorizonY - 0.05, uHorizonY + 0.4, uv.y));
   col = mix(col, uTop, smoothstep(uHorizonY + 0.35, 1.0, uv.y));
   // --- moon geometry
-  vec2 mc = vec2(uMoon.x * aspect, uMoon.y);
+  vec2 mc = uWorldOn > 0.5 ? uMoonW : vec2(uMoon.x * aspect, uMoon.y);
   vec2 mp = p - mc;
+  if (uWrapW > 0.0) mp.x = mod(mp.x + 0.5 * uWrapW, uWrapW) - 0.5 * uWrapW;
   float md = length(mp) / max(uMoonR, 1e-3);
   // halo (behind clouds)
   col += uGlow * (0.42 * exp(-md * 0.9) + 0.22 * exp(-md * 0.28)) * (0.75 + 0.25 * uNeon);
@@ -304,6 +316,7 @@ void main() {
     vec2 sc = vec2(1.1 + fk * 0.9, 2.6 + fk * 1.6);
     vec2 q = p * sc + vec2(t * (0.018 + fk * 0.012), fk * 3.7) + uSeed * (1.0 + fk);
     float d = fbm4(q);
+    if (seam > 0.0) d = mix(d, fbm4(q - wrapD * sc), seam);
     float band = smoothstep(uHorizonY + 0.05, uHorizonY + 0.3, uv.y) * (1.0 - smoothstep(uCloudBand, uCloudBand + 0.45, uv.y) * 0.65);
     float c = smoothstep(0.58 - uClouds * 0.2, 0.8 - uClouds * 0.12, d) * band;
     if (c > 0.002) {
@@ -320,6 +333,7 @@ void main() {
   if (uFog > 0.0) {
     vec2 fq = vec2(p.x * 1.6 + t * 0.03, uv.y * 7.0 - t * 0.01) + uSeed;
     float fd = fbm3(fq);
+    if (seam > 0.0) fd = mix(fd, fbm3(fq - vec2(uWrapW * 1.6, 0.0)), seam);
     float fb = smoothstep(uHorizonY + 0.12, uHorizonY - 0.08, uv.y);
     col = mix(col, uFogCol, smoothstep(0.35, 0.8, fd) * fb * uFog);
   }
@@ -339,6 +353,37 @@ export interface SkyOpts {
 }
 
 export function skyUniforms(s: DrawState, env: EnvPalette, o: SkyOpts, speed = 1) {
+  return { ...skyBase(s, env, o, speed), ...worldSky(s, o) };
+}
+
+/**
+ * World mode: express this surface in shared world units (meters / main wall height) and put the
+ * moon over the main surface, so it appears exactly once on the whole stage.
+ */
+function worldSky(s: DrawState, o: SkyOpts): Record<string, number | THREE.Vector2 | THREE.Vector4> {
+  const w = s.world;
+  if (!w)
+    return {
+      uWorldOn: 0,
+      uWR: new THREE.Vector4(0, 0, 1, 1),
+      uMoonW: new THREE.Vector2(0, 0),
+      uWrapX: 0,
+      uWrapW: 0,
+    };
+  const main = w.surfaces.find((x) => x.role === 'main')?.rect ?? w.self.rect;
+  const ref = Math.max(0.1, main.h);
+  const r = w.self.rect;
+  return {
+    uWorldOn: 1,
+    uWR: new THREE.Vector4(r.x / ref, r.y / ref, r.w / ref, r.h / ref),
+    uMoonW: new THREE.Vector2((main.x + o.moon[0] * main.w) / ref, -(main.y + o.moon[1] * main.h) / ref),
+    uSeed: (w.seed % 1000) / 10,
+    uWrapX: w.wrap ? w.wrap.x / ref : 0,
+    uWrapW: w.wrap ? w.wrap.w / ref : 0,
+  };
+}
+
+function skyBase(s: DrawState, env: EnvPalette, o: SkyOpts, speed = 1) {
   return {
     uTop: v3(env.skyTop),
     uMid: v3(env.skyMid),

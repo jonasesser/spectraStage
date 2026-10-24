@@ -247,16 +247,24 @@ function darkScene(id: string, def: string): SceneModule {
     const t = f.time * speedOf(s);
     const pause = Math.max(1, Number(s.params.pause ?? 8));
     const evs = allowed(s, def);
-    const longest = Math.max(...evs.map((e) => DURATION[e]));
+    // World mode: one event at a time somewhere on the stage – every surface computes the same
+    // schedule from the shared seed and draws only the events that land on itself.
+    const world = s.world && s.world.surfaces.length > 1 ? s.world : null;
+    const seed = world ? world.seed : s.seed;
+    const longest = world ? 11 : Math.max(...evs.map((e) => DURATION[e]));
     const period = longest + pause;
     const slot = Math.floor(t / period);
     // check this slot and the previous one (an event can never be longer than one period)
     for (const k of [slot - 1, slot]) {
       if (k < 0) continue;
-      const h = (n: number) => hash01(s.seed * 0.0001 + k * 97.13 + n * 13.7);
+      const h = (n: number) => hash01(seed * 0.0001 + k * 97.13 + n * 13.7);
+      if (world) {
+        const target = world.surfaces[Math.floor(h(9) * world.surfaces.length)]!;
+        if (target.id !== world.self.id) continue;
+      }
       let idx = Math.floor(h(0) * evs.length);
       // avoid the same event twice in a row
-      const prevIdx = Math.floor(hash01(s.seed * 0.0001 + (k - 1) * 97.13) * evs.length);
+      const prevIdx = Math.floor(hash01(seed * 0.0001 + (k - 1) * 97.13) * evs.length);
       if (evs.length > 1 && k > 0 && idx === prevIdx) idx = (idx + 1) % evs.length;
       const ev = evs[idx]!;
       const dur = DURATION[ev];

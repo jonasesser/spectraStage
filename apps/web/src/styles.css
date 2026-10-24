@@ -1054,6 +1054,11 @@ body,
   }
 }
 @media (orientation: landscape) and (max-height: 500px) {
-  .justify-hint span { display: none; }
-  .justify-hint { top: 0.6rem; bottom: auto; }
+  .justify-hint span {
+    display: none;
+  }
+  .justify-hint {
+    top: 0.6rem;
+    bottom: auto;
+  }
 }

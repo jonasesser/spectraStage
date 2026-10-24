@@ -16,6 +16,7 @@ export interface DrawState {
   params: ParamValues;
   quality: number;
   kind: SceneContext['kind'];
+  world?: SceneContext['world'];
   /** Free per-instance cache for precomputed (seeded) data. Reset on resize. */
   cache: Record<string, unknown>;
 }
@@ -25,7 +26,7 @@ export type DrawFn = (g: CanvasRenderingContext2D, s: DrawState, f: FrameInfo) =
 export type UniformFn = (
   s: DrawState,
   f: FrameInfo,
-) => Record<string, number | number[] | THREE.Color | THREE.Vector2 | THREE.Vector3>;
+) => Record<string, number | number[] | THREE.Color | THREE.Vector2 | THREE.Vector3 | THREE.Vector4>;
 
 const VERT = /* glsl */ `
 varying vec2 vUv;
@@ -164,6 +165,7 @@ class KitScene implements SceneInstance {
       params: ctx.params,
       quality: ctx.quality,
       kind: ctx.kind,
+      world: ctx.world,
       cache: {},
     };
     if (opts.fragment) this.shader = new ShaderLayer(opts.fragment);

@@ -13,7 +13,7 @@ import {
 import type { DrawState, SceneModule } from '@spectrastage/engine';
 import { num, palette } from '../palette.ts';
 import { bat, dancePose, ghost, glowAt, pumpkin, px, skeleton, star, type GhostFace } from '../shapes.ts';
-import { countOf, densityOf, mod, speedOf } from './common.ts';
+import { isSidePart, countOf, densityOf, mod, speedOf } from './common.ts';
 import { FBM_GLSL } from './glsl.ts';
 import {
   addGlow,
@@ -353,7 +353,11 @@ const ghostParty: SceneModule = hybridScene(
     const t = f.time * speedOf(s);
     const { w, h } = s;
     const m = Math.min(w, h);
-    g.drawImage(backdrop(s, env, { manor: [0.7, 0.26], horizon: 0.7, ground: 0.88 }), 0, 0);
+    g.drawImage(
+      backdrop(s, env, { manor: isSidePart(s) ? undefined : [0.7, 0.26], horizon: 0.7, ground: 0.88 }),
+      0,
+      0,
+    );
     drawFogBand(g, w, h * 0.86, h * 0.14, env.fog, t, 0.35, s.seed + 2, 0.6);
     // string lights
     for (const k of [0, 1]) {

@@ -47,6 +47,18 @@ never covers the point; *Fine* slows it down.
 3. Dashed frames are the projector images. Move them over the surfaces they hit, drag the white
    corner to match the image size (a projector further away covers more meters).
 
+### Worlds – one scene for the whole house
+
+A *world* (Szenen → Welten, also every show preset) covers all surfaces at once; each projector
+shows its part. The main wall gets the centerpiece (the haunted house exists only once), the walls
+next to it continue the world (graveyard, ghosts, pumpkins), the ground and the ceiling get their own
+parts. Sky, clouds and the moon continue across the seams.
+
+- *Bühne → surface → Part of the world*: automatic (first wall = main wall) or main / side / ground /
+  ceiling.
+- **Room all around** (Bühne): lay the walls side by side in the order they go around the room; the
+  last wall then connects back to the first. Floor below, ceiling above – all six sides work.
+
 ## 3. Calibrating
 
 *Projectors* → *Calibrate*:
@@ -57,10 +69,14 @@ never covers the point; *Fine* slows it down.
 4. **Masks**: rectangle/ellipse/polygon over windows, the door, the street. Leave *Safety mask*
    on for anything that must stay dark – hard edge plus safety margin. *Only light here* (green)
    limits light to a region. *Show masked areas on the projector* helps while setting up.
-5. **Image**: rotation, mirroring (rear projection / ceiling mount), safe edges.
-6. Everything previews live on the projector; nothing is saved until **Apply calibration**.
+5. **Room corner** (optional, *Corners* tab): if one projector hits two surfaces at an angle
+   (two walls around a corner, or wall and floor), choose *vertical* or *horizontal* and put points
+   5 and 6 onto the real corner line. Each side then gets its own perspective. The crease position
+   snaps to the border between the two surfaces on the stage and can be fine-tuned with the slider.
+6. **Image**: rotation, mirroring (rear projection / ceiling mount), safe edges.
+7. Everything previews live on the projector; nothing is saved until **Apply calibration**.
    Undo/redo with ↶ ↷ (Ctrl+Z on desktop).
-7. Save variations as profiles (e.g. *ladder*, *rain cover*) and export them as files.
+8. Save variations as profiles (e.g. *ladder*, *rain cover*) and export them as files.
 
 If the projector later reports a different resolution, that output turns **black** until you
 either keep the calibration or recalibrate – it never silently projects outside the calibrated

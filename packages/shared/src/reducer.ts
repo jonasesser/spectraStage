@@ -172,12 +172,12 @@ export function defaultPlayback(state: SessionState, kind: SurfaceKind, ctx: Red
   const tplId = theme.autoPlaylists?.[kind];
   if (tplId) {
     const id = ensureTemplatePlaylist(state, theme, tplId, ctx);
-    // Stagger surfaces that run the same playlist so they don't all show the same scene.
-    const sameKind = state.surfaces.filter(
+    // Join the running playlist in lockstep so the whole stage stays one world.
+    const running = state.surfaces.find(
       (x) => x.playback.mode === 'playlist' && x.playback.playlistId === id,
-    ).length;
-    const len = state.playlists.find((p) => p.id === id)?.items.length ?? 1;
-    return playlistPlayback(id, ctx, sameKind % Math.max(1, len));
+    );
+    if (running) return structuredClone(running.playback);
+    return playlistPlayback(id, ctx, 0);
   }
   const sceneId = theme.defaults[kind];
   return scenePlayback(theme.id, sceneId, sanitizeParams(sceneOf(theme, sceneId).params, undefined), ctx);
@@ -363,6 +363,9 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       requireTheme(ctx.catalog, cmd.themeId);
       state.defaultThemeId = cmd.themeId;
       return res('default theme');
+    case 'session.setRoom':
+      state.room = cmd.room;
+      return res(cmd.room ? 'room mode on' : 'room mode off');
     case 'session.setBoost':
       state.boost = cmd.boost;
       return res(`dusk boost ${Math.round(cmd.boost * 100)}%`);
@@ -397,6 +400,7 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       if (cmd.kind !== undefined) s.kind = cmd.kind;
       if (cmd.intensity !== undefined) s.intensity = cmd.intensity;
       if (cmd.polygon !== undefined) s.polygon = cmd.polygon;
+      if (cmd.role !== undefined) s.role = cmd.role;
       return res(`${s.name} updated`);
     }
     case 'surface.delete': {

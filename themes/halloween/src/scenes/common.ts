@@ -110,3 +110,8 @@ export function drawTree(
 export function mod(a: number, n: number): number {
   return ((a % n) + n) % n;
 }
+
+/** True when this surface shows a side/ground/ceiling part of a world – no second house there. */
+export function isSidePart(s: DrawState): boolean {
+  return !!s.world && s.world.self.role !== 'main';
+}

@@ -4,6 +4,7 @@ import {
   fitViewport,
   polygonBBox,
   stageBounds,
+  worldLayout,
   type Output,
   type SessionState,
   type Surface,
@@ -426,12 +427,14 @@ export function StageEditor() {
         </p>
       </div>
       <div className="stack">
+        <RoomPanel state={state} L={L} />
         <AddSurface L={L} />
         {selSurface && (
           <SurfacePanel
             key={selSurface.id}
             surface={selSurface}
             vertex={sel?.type === 'surface' ? sel.vertex : null}
+            state={state}
             L={L}
             onDeleted={() => setSel(null)}
           />
@@ -448,6 +451,38 @@ export function StageEditor() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function roleLabel(r: 'main' | 'side' | 'ground' | 'ceiling', L: Tr): string {
+  return {
+    main: L('Main wall – centerpiece, e.g. the house', 'Hauptwand – Mittelpunkt, z. B. das Haus'),
+    side: L('Side wall – the world continues', 'Seitenwand – die Welt geht weiter'),
+    ground: L('Ground', 'Boden'),
+    ceiling: L('Ceiling – night sky', 'Decke – Nachthimmel'),
+  }[r];
+}
+
+/** Room mode: walls all the way around – the world wraps from the last wall to the first. */
+function RoomPanel({ state, L }: { state: SessionState; L: Tr }) {
+  const store = useStore();
+  return (
+    <div className="panel stack">
+      <label className="row" style={{ alignItems: 'center', gap: '0.6rem' }}>
+        <input
+          type="checkbox"
+          checked={!!state.room}
+          onChange={(e) => store.send({ t: 'session.setRoom', room: e.target.checked })}
+        />
+        <strong>{L('Room all around', 'Raum rundum')}</strong>
+      </label>
+      <p className="muted small" style={{ margin: 0 }}>
+        {L(
+          'One world on all surfaces: the main wall gets the centerpiece (e.g. the house), the walls next to it continue the scene. With “Room all around”, the last wall connects back to the first – lay out the walls side by side in the order they go around, floor below, ceiling above.',
+          'Eine Welt auf allen Flächen: Die Hauptwand bekommt den Mittelpunkt (z. B. das Haus), die Wände daneben führen die Szene weiter. Mit „Raum rundum“ schließt die letzte Wand wieder an die erste an – Wände in der Reihenfolge nebeneinander legen, wie sie herum gehen, Boden darunter, Decke darüber.',
+        )}
+      </p>
     </div>
   );
 }
@@ -491,11 +526,13 @@ function AddSurface({ L }: { L: Tr }) {
 function SurfacePanel({
   surface,
   vertex,
+  state,
   L,
   onDeleted,
 }: {
   surface: Surface;
   vertex: number | null;
+  state: SessionState;
   L: Tr;
   onDeleted: () => void;
 }) {
@@ -546,6 +583,29 @@ function SurfacePanel({
             </button>
           ))}
         </div>
+        <label>
+          {L('Part of the world', 'Teil der Welt')}
+          <select
+            value={surface.role ?? 'auto'}
+            onChange={(e) =>
+              store.send({
+                t: 'surface.update',
+                surfaceId: surface.id,
+                role: e.target.value as NonNullable<Surface['role']>,
+              })
+            }
+          >
+            <option value="auto">
+              {L('Automatic', 'Automatisch')} (
+              {roleLabel(worldLayout(state.surfaces).find((x) => x.id === surface.id)?.role ?? 'side', L)})
+            </option>
+            {(['main', 'side', 'ground', 'ceiling'] as const).map((r) => (
+              <option key={r} value={r}>
+                {roleLabel(r, L)}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="row">
           <label className="grow">
             {L('Width (m)', 'Breite (m)')}
