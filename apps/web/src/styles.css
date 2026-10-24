@@ -1090,3 +1090,16 @@ body,
   font-size: clamp(14px, 1.4vw, 28px);
   pointer-events: none;
 }
+.corner-pad {
+  height: 180px;
+  border-radius: 14px;
+  border: 1px dashed rgba(255, 179, 71, 0.6);
+  background: rgba(255, 179, 71, 0.06);
+  display: grid;
+  place-items: center;
+  color: var(--muted, #9d93d9);
+  font-size: 0.85rem;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}

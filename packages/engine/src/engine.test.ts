@@ -92,3 +92,31 @@ describe('room corner (fold)', () => {
     expect(us.has(400000)).toBe(true);
   });
 });
+
+describe('projector camera matches the shared projector model', () => {
+  it('three.js pose camera (with lens shift) projects like projectPose', async () => {
+    const THREE = await import('three');
+    const { applyLensShift } = await import('./renderer.ts');
+    const { aimPose, projectPose } = await import('@spectrastage/shared');
+    const pose = { ...aimPose([1, 1.7, 3], [2.5, 0.8, 0], 80, 0.2), shiftX: 0.15, shiftY: 0.7 };
+    const aspect = 16 / 10;
+    const cam = new THREE.PerspectiveCamera(50, aspect, 0.05, 100);
+    cam.fov = (2 * Math.atan(Math.tan((pose.fov * Math.PI) / 360) / aspect) * 180) / Math.PI;
+    cam.position.set(...pose.pos);
+    cam.rotation.set(pose.pitch, -pose.yaw, pose.roll, 'YXZ');
+    cam.updateProjectionMatrix();
+    applyLensShift(cam, pose);
+    cam.updateMatrixWorld();
+    cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
+    for (const P of [
+      [0.3, 0.2, 0],
+      [3.7, 2.0, 0],
+      [4, 0.5, 1.2],
+    ] as [number, number, number][]) {
+      const v = new THREE.Vector3(...P).project(cam);
+      const q = projectPose(pose, aspect, P)!;
+      expect(v.x).toBeCloseTo(q[0], 6);
+      expect(v.y).toBeCloseTo(q[1], 6);
+    }
+  });
+});

@@ -1,4 +1,16 @@
-import { polygonBBox, type Output, type SessionState, type Viewport } from '@spectrastage/shared';
+import {
+  facePoint,
+  polygonBBox,
+  projectPose,
+  roomCorners,
+  type Anchor,
+  type Output,
+  type Pose,
+  type RoomFold,
+  type SessionState,
+  type V3,
+  type Viewport,
+} from '@spectrastage/shared';
 
 const KIND_COLOR: Record<string, string> = { wall: '#ffb347', floor: '#5ad1ff', other: '#c39bff' };
 
@@ -190,5 +202,108 @@ export function drawCornerMarkers(
     g.textBaseline = 'middle';
     g.fillText(String(i + 1), x, y + 1);
   });
+  g.restore();
+}
+
+/**
+ * Corner measuring on the projector: the room edges and numbered room corners as the app
+ * currently thinks they lie (from the projector pose), plus the measured markers. When the
+ * glowing lines lie on the real room edges, the projector is aligned.
+ */
+export function drawAlignOverlay(
+  g: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  pose: Pose,
+  fold: RoomFold,
+  anchors: readonly Anchor[],
+  sel: string | null,
+  now: number,
+): void {
+  const aspect = w / h;
+  const toPx = (P: V3): [number, number] | null => {
+    const q = projectPose(pose, aspect, P);
+    return q ? [((q[0] + 1) / 2) * w, ((1 - q[1]) / 2) * h] : null;
+  };
+  g.save();
+  g.fillStyle = 'rgba(0,0,0,0.55)';
+  g.fillRect(0, 0, w, h);
+  const lw = Math.max(2, w / 640);
+  // room edges
+  g.strokeStyle = '#3ff2ff';
+  g.lineWidth = lw;
+  g.shadowColor = '#3ff2ff';
+  g.shadowBlur = lw * 3;
+  for (const f of fold.faces) {
+    const r = f.rect;
+    const edges: [number, number, number, number][] = [
+      [r.x, r.y, r.x + r.w, r.y],
+      [r.x + r.w, r.y, r.x + r.w, r.y + r.h],
+      [r.x + r.w, r.y + r.h, r.x, r.y + r.h],
+      [r.x, r.y + r.h, r.x, r.y],
+    ];
+    for (const [x0, y0, x1, y1] of edges) {
+      g.beginPath();
+      let pen = false;
+      for (let i = 0; i <= 48; i++) {
+        const t = i / 48;
+        const q = toPx(facePoint(f, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t));
+        if (!q || q[0] < -w || q[0] > 2 * w || q[1] < -h || q[1] > 2 * h) {
+          pen = false;
+          continue;
+        }
+        if (pen) g.lineTo(q[0], q[1]);
+        else g.moveTo(q[0], q[1]);
+        pen = true;
+      }
+      g.stroke();
+    }
+  }
+  g.shadowBlur = 0;
+  // numbered room corners (where the app thinks they are)
+  const fs = Math.max(14, h / 28);
+  g.font = `700 ${fs}px system-ui, sans-serif`;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  const corners = roomCorners(fold);
+  for (const c of corners) {
+    const q = toPx(c.p);
+    if (!q || q[0] < 0 || q[0] > w || q[1] < 0 || q[1] > h) continue;
+    const isSel = c.id === sel;
+    g.fillStyle = isSel ? '#ffb347' : '#3ff2ff';
+    g.beginPath();
+    g.arc(q[0], q[1], fs * 0.25, 0, Math.PI * 2);
+    g.fill();
+    const lx = Math.min(w - fs, Math.max(fs, q[0] + (q[0] < w / 2 ? fs : -fs)));
+    const ly = Math.min(h - fs, Math.max(fs, q[1] + (q[1] < h / 2 ? fs : -fs)));
+    g.fillText(String(c.n), lx, ly);
+  }
+  // measured markers: big crosshairs (the selected one pulses)
+  for (const a of anchors) {
+    const x = a.u * w;
+    const y = a.v * h;
+    const isSel = a.c === sel;
+    const s = fs * (isSel ? 1.6 + 0.2 * Math.sin(now / 150) : 1.1);
+    g.strokeStyle = isSel ? '#ffb347' : '#7dff8a';
+    g.lineWidth = lw * (isSel ? 1.6 : 1.2);
+    g.beginPath();
+    g.moveTo(x - s, y);
+    g.lineTo(x - s * 0.25, y);
+    g.moveTo(x + s * 0.25, y);
+    g.lineTo(x + s, y);
+    g.moveTo(x, y - s);
+    g.lineTo(x, y - s * 0.25);
+    g.moveTo(x, y + s * 0.25);
+    g.lineTo(x, y + s);
+    g.stroke();
+    g.beginPath();
+    g.arc(x, y, s * 0.6, 0, Math.PI * 2);
+    g.stroke();
+    const c = corners.find((k) => k.id === a.c);
+    if (c) {
+      g.fillStyle = g.strokeStyle;
+      g.fillText(String(c.n), x + s * 1.2, y - s * 1.0);
+    }
+  }
   g.restore();
 }

@@ -331,3 +331,299 @@ export function arrangementPoses(
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Projector model: pinhole camera at pose.pos, rotation (pitch, -yaw, roll) in Euler order YXZ
+// (same as the renderer's three.js camera), horizontal opening pose.fov, optional lens shift.
+// ---------------------------------------------------------------------------
+
+/** Rotation matrix (row-major 3×3) of a pose: camera space (x right, y up, -z forward) → room. */
+function poseRot(p: Pose): number[] {
+  const [a, b, c] = [p.pitch, -p.yaw, p.roll];
+  const ca = Math.cos(a);
+  const sa = Math.sin(a);
+  const cb = Math.cos(b);
+  const sb = Math.sin(b);
+  const cc = Math.cos(c);
+  const sc = Math.sin(c);
+  // R = Ry(b) · Rx(a) · Rz(c)
+  return [
+    cb * cc + sb * sa * sc,
+    -cb * sc + sb * sa * cc,
+    sb * ca,
+    ca * sc,
+    ca * cc,
+    -sa,
+    -sb * cc + cb * sa * sc,
+    sb * sc + cb * sa * cc,
+    cb * ca,
+  ];
+}
+
+/**
+ * Where a room point lands in the projector picture, in normalized device coordinates
+ * (x right, y up, −1..1 across the picture), or null if it is behind the projector.
+ */
+export function projectPose(p: Pose, aspect: number, P: V3): [number, number] | null {
+  const R = poseRot(p);
+  const d: V3 = [P[0] - p.pos[0], P[1] - p.pos[1], P[2] - p.pos[2]];
+  // camera = Rᵀ · d
+  const x = R[0]! * d[0] + R[3]! * d[1] + R[6]! * d[2];
+  const y = R[1]! * d[0] + R[4]! * d[1] + R[7]! * d[2];
+  const z = R[2]! * d[0] + R[5]! * d[1] + R[8]! * d[2];
+  if (z > -1e-3) return null;
+  const tx = Math.tan((p.fov * Math.PI) / 360);
+  const ty = tx / aspect;
+  return [x / -z / tx + (p.shiftX ?? 0), y / -z / ty + (p.shiftY ?? 0)];
+}
+
+/** Room direction through a picture point (NDC, x right, y up). */
+export function poseRay(p: Pose, aspect: number, nx: number, ny: number): V3 {
+  const R = poseRot(p);
+  const tx = Math.tan((p.fov * Math.PI) / 360);
+  const ty = tx / aspect;
+  const c: V3 = [(nx - (p.shiftX ?? 0)) * tx, (ny - (p.shiftY ?? 0)) * ty, -1];
+  const d: V3 = [
+    R[0]! * c[0] + R[1]! * c[1] + R[2]! * c[2],
+    R[3]! * c[0] + R[4]! * c[1] + R[5]! * c[2],
+    R[6]! * c[0] + R[7]! * c[1] + R[8]! * c[2],
+  ];
+  const l = Math.hypot(...d);
+  return [d[0] / l, d[1] / l, d[2] / l];
+}
+
+export interface RoomCorner {
+  id: string;
+  /** 1-based number shown on the phone and on the projector. */
+  n: number;
+  p: V3;
+  /** e.g. "Hauptwand / Wand rechts – unten". */
+  label: string;
+}
+
+/**
+ * The real corners of the room (where three sides meet): fixed points everybody can see, used
+ * to measure where a projector really stands. Sorted: main wall first, bottom before top.
+ */
+export function roomCorners(fold: RoomFold): RoomCorner[] {
+  const sideNames = ['Wand rechts', 'Rückwand', 'Wand links', 'Wand 5', 'Wand 6'];
+  let side = 0;
+  const names = new Map<string, string>();
+  for (const f of fold.faces) {
+    names.set(
+      f.id,
+      f.role === 'main'
+        ? 'Hauptwand'
+        : f.role === 'side'
+          ? (sideNames[side++] ?? 'Wand')
+          : f.role === 'ground'
+            ? 'Boden'
+            : 'Decke',
+    );
+  }
+  const pts: { p: V3; faces: Set<RoomFace> }[] = [];
+  for (const f of fold.faces) {
+    for (const [x, y] of [
+      [f.rect.x, f.rect.y],
+      [f.rect.x + f.rect.w, f.rect.y],
+      [f.rect.x, f.rect.y + f.rect.h],
+      [f.rect.x + f.rect.w, f.rect.y + f.rect.h],
+    ] as const) {
+      const p = facePoint(f, x, y);
+      let e = pts.find((q) => Math.hypot(...sub(q.p, p)) < 0.05);
+      if (!e) pts.push((e = { p, faces: new Set() }));
+    }
+  }
+  // which faces touch each point
+  for (const e of pts)
+    for (const f of fold.faces) {
+      const r = sub(e.p, f.o);
+      if (Math.abs(dot(r, f.n)) > 0.03) continue;
+      const lx = dot(r, f.ax);
+      const ly = dot(r, f.ay);
+      if (lx > -0.03 && ly > -0.03 && lx < f.rect.w + 0.03 && ly < f.rect.h + 0.03) e.faces.add(f);
+    }
+  const main = fold.faces.find((f) => f.role === 'main');
+  const ang = (p: V3) => {
+    const m = sub(p, fold.center);
+    return Math.atan2(m[0], -m[2]);
+  };
+  // clockwise around the room, starting at the left edge of the main wall
+  const start = main ? ang(main.o) - 1e-3 : 0;
+  const az = (p: V3) => (((ang(p) - start) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  const corners = pts
+    .filter((e) => {
+      const normals: V3[] = [];
+      for (const f of e.faces) if (!normals.some((n) => dot(n, f.n) > 0.99)) normals.push(f.n);
+      return normals.length >= 3;
+    })
+    .map((e) => {
+      const walls = [...e.faces]
+        .filter((f) => f.role === 'main' || f.role === 'side')
+        .map((f) => names.get(f.id)!);
+      const low = e.p[1] < fold.unit / 2;
+      return { p: e.p, walls, low };
+    })
+    .sort((a, b) => az(a.p) - az(b.p) || Number(b.low) - Number(a.low));
+  return corners.map((c, i) => ({
+    id: c.p.map((v) => v.toFixed(2)).join(','),
+    n: i + 1,
+    p: c.p,
+    label: `${c.walls.join(' / ')} – ${c.low ? 'unten' : 'oben'}`,
+  }));
+}
+
+/**
+ * Projector pose from measured points (room point ↔ where it lands in the picture), by
+ * Levenberg–Marquardt over position, yaw, pitch, roll, opening and lens shift (shift is kept
+ * small unless the points demand it). Several start poses guard against local minima.
+ * Returns the pose and the remaining error in pixels of a 1920 px wide picture.
+ */
+export function solvePose(
+  start: Pose,
+  aspect: number,
+  pts: readonly { p: V3; u: number; v: number }[],
+  fold?: RoomFold,
+): { pose: Pose; errPx: number } | null {
+  if (pts.length < 4) return null;
+  const obs = pts.map((q) => [q.u * 2 - 1, 1 - q.v * 2] as const);
+  const toPose = (x: number[]): Pose => ({
+    pos: [x[0]!, x[1]!, x[2]!],
+    yaw: x[3]!,
+    pitch: Math.max(-1.55, Math.min(1.55, x[4]!)),
+    roll: Math.atan2(Math.sin(x[5]!), Math.cos(x[5]!)),
+    fov: Math.max(6, Math.min(149, (Math.atan(Math.exp(x[6]!)) * 360) / Math.PI)),
+    shiftX: Math.max(-2.9, Math.min(2.9, x[7]!)),
+    shiftY: Math.max(-2.9, Math.min(2.9, x[8]!)),
+  });
+  const fromPose = (p: Pose): number[] => [
+    ...p.pos,
+    p.yaw,
+    p.pitch,
+    p.roll,
+    Math.log(Math.tan((p.fov * Math.PI) / 360)),
+    p.shiftX ?? 0,
+    p.shiftY ?? 0,
+  ];
+  const SHIFT_PRIOR = 0.03;
+  const resid = (x: number[]): number[] => {
+    const p = toPose(x);
+    const r: number[] = [];
+    obs.forEach(([ox, oy], i) => {
+      const q = projectPose(p, aspect, pts[i]!.p);
+      if (!q) r.push(10, 10);
+      else r.push(q[0] - ox, q[1] - oy);
+    });
+    r.push(SHIFT_PRIOR * x[7]!, SHIFT_PRIOR * x[8]!);
+    return r;
+  };
+  const cost = (r: number[]) => r.reduce((a, b) => a + b * b, 0);
+  const lm = (x0: number[]): { x: number[]; c: number } => {
+    let x = [...x0];
+    let r = resid(x);
+    let c = cost(r);
+    let lambda = 1e-3;
+    const n = x.length;
+    for (let it = 0; it < 200 && c > 1e-14; it++) {
+      const J: number[][] = [];
+      for (let k = 0; k < n; k++) {
+        const h = 1e-6 * Math.max(1, Math.abs(x[k]!));
+        const xp = [...x];
+        xp[k]! += h;
+        const rp = resid(xp);
+        J.push(rp.map((v, i) => (v - r[i]!) / h));
+      }
+      // normal equations (JᵀJ + λ diag) δ = −Jᵀr
+      const A: number[][] = [];
+      const g: number[] = [];
+      for (let a = 0; a < n; a++) {
+        A.push([]);
+        let s = 0;
+        for (let i = 0; i < r.length; i++) s += J[a]![i]! * r[i]!;
+        g.push(-s);
+        for (let b = 0; b < n; b++) {
+          let t = 0;
+          for (let i = 0; i < r.length; i++) t += J[a]![i]! * J[b]![i]!;
+          A[a]!.push(t);
+        }
+      }
+      let improved = false;
+      for (let tries = 0; tries < 8; tries++) {
+        const M = A.map((row, a) => row.map((v, b) => (a === b ? v * (1 + lambda) + 1e-12 : v)));
+        const d = solveLinear(M, [...g]);
+        if (!d) {
+          lambda *= 10;
+          continue;
+        }
+        const xn = x.map((v, k) => v + d[k]!);
+        const rn = resid(xn);
+        const cn = cost(rn);
+        if (cn < c) {
+          x = xn;
+          r = rn;
+          const rel = (c - cn) / Math.max(c, 1e-18);
+          c = cn;
+          lambda = Math.max(1e-9, lambda / 5);
+          improved = true;
+          if (rel < 1e-10) it = 1e9;
+          break;
+        }
+        lambda *= 10;
+      }
+      if (!improved) break;
+    }
+    return { x, c };
+  };
+  // start poses: the current one, plus a few standing points aimed at the measured points
+  const starts: Pose[] = [start];
+  const cen: V3 = [0, 0, 0];
+  for (const q of pts) for (let k = 0; k < 3; k++) cen[k]! += q.p[k]! / pts.length;
+  if (fold) {
+    const c = fold.center;
+    const dirs: V3[] = [sub(c, cen), [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]];
+    for (const d of dirs) {
+      const l = Math.hypot(d[0], d[2]) || 1;
+      for (const dist of [1.5, 3, 4.5]) {
+        const from: V3 = [cen[0] + (d[0] / l) * dist, c[1], cen[2] + (d[2] / l) * dist];
+        starts.push(aimPose(from, cen, start.fov, 0));
+      }
+    }
+  }
+  let best: { x: number[]; c: number } | null = null;
+  for (const s of starts) {
+    const res = lm(fromPose(s));
+    if (!best || res.c < best.c) best = res;
+  }
+  if (!best) return null;
+  const pose = toPose(best.x);
+  let e = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const q = projectPose(pose, aspect, pts[i]!.p);
+    if (!q) return null;
+    e += ((q[0] - obs[i]![0]) * 960) ** 2 + ((q[1] - obs[i]![1]) * (960 / aspect)) ** 2;
+  }
+  return { pose, errPx: Math.sqrt(e / pts.length) };
+}
+
+function solveLinear(A: number[][], b: number[]): number[] | null {
+  const n = b.length;
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(A[r]![c]!) > Math.abs(A[piv]![c]!)) piv = r;
+    if (Math.abs(A[piv]![c]!) < 1e-18) return null;
+    [A[c], A[piv]] = [A[piv]!, A[c]!];
+    [b[c], b[piv]] = [b[piv]!, b[c]!];
+    for (let r = c + 1; r < n; r++) {
+      const k = A[r]![c]! / A[c]![c]!;
+      for (let j = c; j < n; j++) A[r]![j]! -= k * A[c]![j]!;
+      b[r]! -= k * b[c]!;
+    }
+  }
+  const x = new Array<number>(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) {
+    let s = b[r]!;
+    for (let j = r + 1; j < n; j++) s -= A[r]![j]! * x[j]!;
+    x[r] = s / A[r]![r]!;
+  }
+  return x;
+}

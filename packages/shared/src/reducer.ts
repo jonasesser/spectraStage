@@ -17,7 +17,7 @@ import { sanitizeParams } from './theme.ts';
 import { isConvexQuad, UNIT_QUAD } from './homography.ts';
 import { playlistPosition } from './playback.ts';
 import { activeProfile, actorCueDuration, fitViewport, placeNewSurface, polygonBBox } from './stage.ts';
-import { arrangementPoses, poseForSurface, poseTarget, roomFold } from './room.ts';
+import { arrangementPoses, poseForSurface, poseTarget, roomFold, solvePose } from './room.ts';
 
 export class CommandError extends Error {
   constructor(
@@ -614,6 +614,25 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       const o = requireOutput(state, cmd.outputId);
       activeProfile(o).pose = cmd.pose;
       return res(`${o.name} aimed`);
+    }
+    case 'output.setAnchors': {
+      const o = requireOutput(state, cmd.outputId);
+      const prof = activeProfile(o);
+      prof.anchors = cmd.anchors;
+      if (cmd.anchors.length >= 4) {
+        const ref = prof.referenceResolution;
+        const aspect = ref ? ref.w / ref.h : 16 / 9;
+        const fold = roomFold(state.surfaces);
+        const start = prof.pose ?? poseForSurface(state.surfaces, null, new Set());
+        const r = start ? solvePose(start, aspect, cmd.anchors, fold) : null;
+        if (r) prof.pose = r.pose;
+      }
+      return res(`${o.name}: ${cmd.anchors.length} corners measured`);
+    }
+    case 'output.align': {
+      const o = requireOutput(state, cmd.outputId);
+      o.align = cmd.on ? { until: ctx.now + 30 * 60_000, sel: cmd.sel } : undefined;
+      return res(`${o.name} ${cmd.on ? 'measuring corners' : 'measuring done'}`);
     }
     case 'output.create': {
       // aim at the first room side that no projector covers yet (main wall, floor, sides, ceiling)

@@ -12,7 +12,13 @@ import type { Playlist, SessionState, Surface } from './schema.ts';
 import { applyCommand, createInitialState, CommandError, type ReducerContext } from './reducer.ts';
 import { createCatalog, type ThemeManifest } from './theme.ts';
 import {
+  aimPose,
   arrangementPoses,
+  poseRay,
+  projectPose,
+  roomCorners,
+  solvePose,
+  type V3,
   dirFromAngles,
   faceLocal,
   facePoint,
@@ -282,6 +288,26 @@ describe('reducer', () => {
     const idx = r.state.surfaces.map((x) => (x.playback.mode === 'playlist' ? x.playback.anchorIndex : -1));
     expect(idx).toEqual([0, 0]); // template has a single item → both at 0, no crash
   });
+  it('measured corners move the projector to where it really stands', () => {
+    let s = base();
+    s = applyCommand(s, { t: 'surface.create', name: 'Wall', kind: 'wall' }, ctx()).state;
+    s = applyCommand(s, { t: 'output.create', name: 'B' }, ctx()).state;
+    const o = s.outputs[0]!;
+    const fold = roomFold(s.surfaces);
+    const truth = { ...aimPose([2, 0.6, 3.4], [2, 1.0, 0], 82, 0.03), shiftY: 0.15 };
+    const anchors = roomCorners(fold)
+      .map((c) => ({ c, q: projectPose(truth, 16 / 9, c.p) }))
+      .filter((x) => x.q && Math.abs(x.q[0]) < 1.05 && Math.abs(x.q[1]) < 1.05)
+      .map(({ c, q }) => ({ c: c.id, p: c.p, u: (q![0] + 1) / 2, v: (1 - q![1]) / 2 }));
+    expect(anchors.length).toBe(4);
+    const r = applyCommand(s, { t: 'output.setAnchors', outputId: o.id, anchors }, ctx()).state;
+    const pose = r.outputs[0]!.profiles[0]!.pose!;
+    for (const a of anchors) {
+      const q = projectPose(pose, 16 / 9, a.p)!;
+      expect((q[0] + 1) / 2).toBeCloseTo(a.u, 3);
+      expect((1 - q[1]) / 2).toBeCloseTo(a.v, 3);
+    }
+  });
   it('enforces owner-only commands', () => {
     const s = base();
     s.devices.push({ id: 'd1', name: 'X', status: 'pending', outputId: null, joinedAt: 0 });
@@ -545,5 +571,55 @@ describe('projector setups', () => {
   });
   it('per side setup gives 6 projectors', () => {
     expect(arrangementPoses([wall], 'sides')).toHaveLength(6);
+  });
+});
+
+describe('corner measuring (projector pose from room corners)', () => {
+  const wall = {
+    id: 'g',
+    name: 'g',
+    kind: 'wall',
+    intensity: 1,
+    polygon: rectPolygon(0, 0, 4, 2.25),
+    playback: { mode: 'off' },
+  } as unknown as Surface;
+  const fold = roomFold([wall]);
+  const corners = roomCorners(fold);
+  it('finds the 8 corners of the room', () => {
+    expect(corners).toHaveLength(8);
+    expect(corners[0]!.label).toContain('Hauptwand');
+  });
+  it('projectPose and poseRay are inverse', () => {
+    const p = { ...aimPose([2, 1.5, 3], [2, 1, 0], 70, 0.1), shiftX: 0.1, shiftY: -0.4 };
+    const P: V3 = [1.2, 0.4, 0];
+    const q = projectPose(p, 16 / 9, P)!;
+    const d = poseRay(p, 16 / 9, q[0], q[1]);
+    const t = (P[0] - p.pos[0]) / d[0];
+    expect(p.pos[1] + d[1] * t).toBeCloseTo(P[1], 6);
+    expect(p.pos[2] + d[2] * t).toBeCloseTo(P[2], 6);
+  });
+  it('recovers a tilted, shifted projector covering three walls from the corners it sees', () => {
+    const truth = { ...aimPose([0.5, 1.8, 0.5], [4, 0.8, 4], 110, 0.04), shiftY: 0.3 };
+    const pts = corners
+      .map((c) => ({ c, q: projectPose(truth, 16 / 9, c.p) }))
+      .filter((x) => x.q && Math.abs(x.q[0]) < 1 && Math.abs(x.q[1]) < 1)
+      .map(({ c, q }) => ({ p: c.p, u: (q![0] + 1) / 2, v: (1 - q![1]) / 2 }));
+    expect(pts.length).toBeGreaterThanOrEqual(5);
+    const start = aimPose([2, 1.4, 2.5], [2, 1.1, 0], 80, 0);
+    const r = solvePose(start, 16 / 9, pts, fold)!;
+    expect(r.errPx).toBeLessThan(0.5);
+    expect(Math.hypot(...truth.pos.map((v, i) => v - r.pose.pos[i]!))).toBeLessThan(0.05);
+  });
+  it('a single wall (4 coplanar corners) still lines up exactly', () => {
+    const truth = aimPose([1.5, 1.0, 3.0], [2.1, 1.2, 0], 60, -0.05);
+    const pts = corners
+      .filter((c) => Math.abs(c.p[2]) < 0.01)
+      .map((c) => {
+        const q = projectPose(truth, 16 / 9, c.p)!;
+        return { p: c.p, u: (q[0] + 1) / 2, v: (1 - q[1]) / 2 };
+      });
+    expect(pts).toHaveLength(4);
+    const r = solvePose(aimPose([2, 1.4, 2.5], [2, 1.1, 0], 50, 0), 16 / 9, pts, fold)!;
+    expect(r.errPx).toBeLessThan(1);
   });
 });

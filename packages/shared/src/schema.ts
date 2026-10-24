@@ -70,8 +70,25 @@ export const PoseSchema = z.object({
   pitch: z.number().min(-1.6).max(1.6),
   roll: z.number().min(-3.2).max(3.2),
   fov: z.number().min(5).max(150),
+  /** Lens shift (image center off the optical axis), in half image widths / heights. */
+  shiftX: z.number().min(-3).max(3).optional(),
+  shiftY: z.number().min(-3).max(3).optional(),
 });
 export type Pose = z.infer<typeof PoseSchema>;
+
+/**
+ * A measured point: a known room point (corner of the room or of an object) and where it
+ * really lands in the projector picture (u, v ∈ 0..1, top left), set by moving a marker from
+ * the phone until it sits on the real corner.
+ */
+export const AnchorSchema = z.object({
+  /** Corner id (see roomCorners). */
+  c: z.string().max(80),
+  p: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]),
+  u: z.number().min(-0.5).max(1.5),
+  v: z.number().min(-0.5).max(1.5),
+});
+export type Anchor = z.infer<typeof AnchorSchema>;
 
 export const ProfileSchema = z.object({
   id,
@@ -113,6 +130,8 @@ export const ProfileSchema = z.object({
     .optional(),
   masks: z.array(MaskSchema).max(24),
   pose: PoseSchema.nullable().optional(),
+  /** Measured room corners → the pose is computed from them (≥ 4). */
+  anchors: z.array(AnchorSchema).max(24).optional(),
   updatedAt: z.number(),
 });
 export type Profile = z.infer<typeof ProfileSchema>;
@@ -141,6 +160,8 @@ export const OutputSchema = z.object({
   renderMode: z.enum(['standard', 'compat', 'fullhd', 'lowpower']).optional(),
   /** Until when the projector sends a live picture to the admin (ms epoch). */
   diagUntil: z.number().optional(),
+  /** Corner measuring in progress: the projector shows room edges, corners and markers. */
+  align: z.object({ until: z.number(), sel: z.string().max(80).nullable() }).optional(),
   /** Set when the client reported a resolution different from the active profile. */
   resolutionMismatch: z.object({ w: z.number().int(), h: z.number().int() }).nullable(),
 });
@@ -463,6 +484,15 @@ export const CommandSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('output.acceptResolution'), outputId: id }),
   z.object({ t: z.literal('output.setViewport'), outputId: id, viewport: ViewportSchema }),
   z.object({ t: z.literal('output.setPose'), outputId: id, pose: PoseSchema.nullable() }),
+  /** Measured corners; with ≥ 4 the pose is solved from them. */
+  z.object({ t: z.literal('output.setAnchors'), outputId: id, anchors: z.array(AnchorSchema).max(24) }),
+  /** Start/stop corner measuring on the projector (sel = highlighted corner). */
+  z.object({
+    t: z.literal('output.align'),
+    outputId: id,
+    on: z.boolean(),
+    sel: z.string().max(80).nullable(),
+  }),
   /** Plan a projector before any PC is connected (a device can be approved onto it later). */
   z.object({ t: z.literal('output.create'), name }),
   /** Plan one projector per room side (main wall, 3 walls, floor, ceiling) for sides without one. */

@@ -52,7 +52,13 @@ import { canvasTexture } from './sceneKit.ts';
 import { buildWarpMesh } from './warp.ts';
 import { paintMask, paintMaskOverlay } from './masks.ts';
 import type { SoundEngine } from './sound.ts';
-import { drawCornerMarkers, drawRawPattern, drawStageGrid, drawIdentify } from './testPattern.ts';
+import {
+  drawAlignOverlay,
+  drawCornerMarkers,
+  drawRawPattern,
+  drawStageGrid,
+  drawIdentify,
+} from './testPattern.ts';
 
 export type RuntimeLoader = (themeId: string) => Promise<ThemeRuntime>;
 
@@ -190,6 +196,16 @@ const MAX_RENDER_PIXELS = 3840 * 2400;
 const OVERLAY_MAX_PIXELS = 4_200_000;
 /** Pixel budget for the room atlas of a projector in the room (≈ 1.5 × 4K). */
 const ATLAS_MAX_PIXELS = 12_500_000;
+
+/** Lens shift: moves the picture center off the optical axis (same model as projectPose). */
+export function applyLensShift(
+  cam: THREE.PerspectiveCamera,
+  pose: { shiftX?: number; shiftY?: number },
+): void {
+  cam.projectionMatrix.elements[8] = -(pose.shiftX ?? 0);
+  cam.projectionMatrix.elements[9] = -(pose.shiftY ?? 0);
+  cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+}
 
 function makeRT(w: number, h: number): THREE.WebGLRenderTarget {
   return new THREE.WebGLRenderTarget(w, h, {
@@ -849,7 +865,12 @@ export class StageRenderer {
     // Blackout is immediate; resume fades in.
     this.gain = targetGain < this.gain ? targetGain : Math.min(targetGain, this.gain + dtMs / 800);
 
-    if (!state || !profile || (this.gain <= 0 && testMode === 'off' && !this.identifyActive(now))) {
+    const aligning = !!output?.align && output.align.until > now && !!profile?.pose;
+    if (
+      !state ||
+      !profile ||
+      (this.gain <= 0 && testMode === 'off' && !aligning && !this.identifyActive(now))
+    ) {
       r.setRenderTarget(null);
       r.setClearColor(0x000000, 1);
       r.clear();
@@ -947,7 +968,7 @@ export class StageRenderer {
     // 3b) Projector in the room: wrap the atlas onto the folded room, look through the projector
     let viewTex: THREE.Texture = this.viewRT.texture;
     if (pose) {
-      viewTex = this.renderPose(state, pose, vp, ow, oh, testMode === 'grid', now);
+      viewTex = this.renderPose(state, pose, vp, ow, oh, testMode === 'grid', now, profile, output);
     }
 
     // 4) Safety limiter (child-safe): limit the rate of brightness increase.
@@ -963,7 +984,7 @@ export class StageRenderer {
     const showOverlay = !this.opts.preview && output && (output.showMasks || testMode !== 'off');
     const finalGain = this.opts.preview
       ? 1
-      : Math.max(this.gain, testMode !== 'off' || identify ? 1 : 0) * limiter;
+      : Math.max(this.gain, testMode !== 'off' || identify || aligning ? 1 : 0) * limiter;
     if (testMode === 'raw') {
       this.maskOverlay.clear();
       drawRawPattern(this.maskOverlay.g, this.width, this.height, output?.name ?? '');
@@ -1179,6 +1200,7 @@ export class StageRenderer {
     cam.position.set(...pose.pos);
     cam.rotation.set(pose.pitch, -pose.yaw, pose.roll, 'YXZ');
     cam.updateProjectionMatrix();
+    applyLensShift(cam, pose);
     cam.updateMatrixWorld();
     cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
   }
@@ -1191,6 +1213,8 @@ export class StageRenderer {
     oh: number,
     markers: boolean,
     now: number,
+    profile: Profile,
+    output: Output | null,
   ): THREE.Texture {
     const r = this.renderer;
     if (!this.poseRT) this.poseRT = makeRT(ow, oh);
@@ -1232,12 +1256,24 @@ export class StageRenderer {
     r.setClearColor(0x000000, 1);
     r.clear();
     r.render(this.poseScene, cam);
-    if (markers) {
+    const align = output?.align && output.align.until > now ? output.align : null;
+    if (markers || align) {
       // numbered image corners for the fine adjustment, in the projector's own image
       this.viewOverlay.resize(ow, oh);
       this.viewOverlayMaterial.uniforms.map!.value = this.viewOverlay.texture;
       this.viewOverlay.clear();
-      drawCornerMarkers(this.viewOverlay.g, ow, oh, this.previewFocus, now);
+      if (align)
+        drawAlignOverlay(
+          this.viewOverlay.g,
+          ow,
+          oh,
+          pose,
+          fold,
+          profile.anchors ?? [],
+          align.sel,
+          Date.now(),
+        );
+      else drawCornerMarkers(this.viewOverlay.g, ow, oh, this.previewFocus, now);
       this.viewOverlay.upload();
       const prev = r.autoClear;
       r.autoClear = false;

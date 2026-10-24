@@ -9,9 +9,12 @@ import {
   completeRoom,
   poseDir,
   poseForSurface,
+  poseRay,
+  roomCorners,
   roomFold,
   roomRay,
   stageBounds,
+  type Anchor,
   type Output,
   type Pose,
   type SessionState,
@@ -21,23 +24,18 @@ import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
 import { roomGeometry } from './roomGeometry.ts';
 import { Slider } from './ui.tsx';
+import { CornerPad } from './CornerPad.tsx';
 
-type Mode = 'look' | 'aim' | 'place';
+type Mode = 'look' | 'aim' | 'place' | 'align';
 
 function outputAspect(o: Output): number {
   const r = activeProfile(o).referenceResolution;
   return r ? r.w / r.h : 16 / 9;
 }
 
-/** Room direction of image coordinate (u, v ∈ -1..1) of a projector. */
+/** Room direction of image coordinate (u, v ∈ -1..1) of a projector (incl. lens shift). */
 function imageRay(p: Pose, aspect: number, u: number, v: number): V3 {
-  const tx = Math.tan((p.fov * Math.PI) / 360);
-  const ty = tx / aspect;
-  const o = new THREE.Object3D();
-  o.rotation.set(p.pitch, -p.yaw, p.roll, 'YXZ');
-  o.updateMatrixWorld();
-  const d = new THREE.Vector3(u * tx, v * ty, -1).applyQuaternion(o.quaternion).normalize();
-  return [d.x, d.y, d.z];
+  return poseRay(p, aspect, u, v);
 }
 
 /**
@@ -67,6 +65,11 @@ export function Room3D({
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const drafts = useRef<Record<string, Pose>>({});
+  const [corner, setCorner] = useState<string | null>(null);
+  const cornerRef = useRef(corner);
+  cornerRef.current = corner;
+  const anchorDrafts = useRef<Record<string, Anchor[]>>({});
+  const anchorsOf = (o: Output): Anchor[] => anchorDrafts.current[o.id] ?? activeProfile(o).anchors ?? [];
   const [, force] = useState(0);
   const [gyro, setGyro] = useState(false);
   const gyroRef = useRef<{ on: boolean; a0: number | null; yaw0: number }>({ on: false, a0: null, yaw0: 0 });
@@ -225,6 +228,49 @@ export function Room3D({
     };
     let lastKey = '';
 
+    // --- room corners (numbered) for measuring
+    const cornerGroup = new THREE.Group();
+    scene.add(cornerGroup);
+    const corners = roomCorners(roomFold(st.surfaces));
+    const label = (text: string, color: string) => {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const g = c.getContext('2d')!;
+      g.fillStyle = color;
+      g.beginPath();
+      g.arc(32, 32, 30, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = '#05040c';
+      g.font = '700 34px system-ui, sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(text, 32, 34);
+      const t = new THREE.CanvasTexture(c);
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, depthTest: false }));
+      sp.scale.set(0.22, 0.22, 1);
+      return sp;
+    };
+    const buildCorners = () => {
+      for (const c of [...cornerGroup.children]) {
+        cornerGroup.remove(c);
+        const m = (c as THREE.Sprite).material;
+        m.map?.dispose();
+        m.dispose();
+      }
+      if (modeRef.current !== 'align') return;
+      const o = stateRef.current.outputs.find((x) => x.id === selRef.current);
+      const done = new Set(o ? anchorsOf(o).map((a) => a.c) : []);
+      for (const c of corners) {
+        const sp = label(
+          String(c.n),
+          c.id === cornerRef.current ? '#ffb347' : done.has(c.id) ? '#7dff8a' : '#3ff2ff',
+        );
+        sp.position.set(...c.p);
+        sp.userData.corner = c.id;
+        cornerGroup.add(sp);
+      }
+    };
+
     // --- view direction and zoom
     const look = new THREE.Vector3(...geo.lookAt).sub(cam.position);
     let yaw = Math.atan2(look.x, -look.z);
@@ -300,8 +346,26 @@ export function Room3D({
         drag = null;
         return;
       }
+      if (modeRef.current === 'align') {
+        // tap a numbered corner to measure it, otherwise look around
+        const rect = canvas.getBoundingClientRect();
+        let best: { id: string; d: number } | null = null;
+        for (const sp of cornerGroup.children) {
+          const v = sp.position.clone().project(cam);
+          if (v.z > 1) continue;
+          const x = rect.left + ((v.x + 1) / 2) * rect.width;
+          const y = rect.top + ((1 - v.y) / 2) * rect.height;
+          const d = Math.hypot(x - e.clientX, y - e.clientY);
+          if (d < 36 && (!best || d < best.d)) best = { id: sp.userData.corner as string, d };
+        }
+        if (best) {
+          onPickCorner.current(best.id);
+          drag = null;
+          return;
+        }
+      }
       const id = selRef.current;
-      if (id && modeRef.current !== 'look') {
+      if (id && modeRef.current !== 'look' && modeRef.current !== 'align') {
         drag = { kind: 'edit', id };
         editAt(id, e.clientX, e.clientY);
         return;
@@ -363,11 +427,19 @@ export function Room3D({
       raf = requestAnimationFrame(loop);
       const key = JSON.stringify([
         selRef.current,
-        stateRef.current.outputs.map((o) => [o.id, poseOf(o), activeProfile(o).referenceResolution]),
+        modeRef.current,
+        cornerRef.current,
+        stateRef.current.outputs.map((o) => [
+          o.id,
+          poseOf(o),
+          activeProfile(o).referenceResolution,
+          anchorsOf(o),
+        ]),
       ]);
       if (key !== lastKey) {
         lastKey = key;
         buildProjectors();
+        buildCorners();
       }
       cg.drawImage(src, 0, 0, TW, TH);
       tex.needsUpdate = true;
@@ -390,6 +462,37 @@ export function Room3D({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layoutKey]);
+
+  // corner measuring: the projector shows edges/corners/markers while this mode is open
+  const alignOut = mode === 'align' ? selected : null;
+  useEffect(() => {
+    if (!alignOut) return;
+    void store.send({ t: 'output.align', outputId: alignOut, on: true, sel: corner });
+  }, [alignOut, corner, store]);
+  useEffect(() => {
+    if (!alignOut) return;
+    return () => void store.send({ t: 'output.align', outputId: alignOut, on: false, sel: null });
+  }, [alignOut, store]);
+  const anchorTimer = useRef(0);
+  const sendAnchors = (id: string, list: Anchor[], final: boolean) => {
+    anchorDrafts.current[id] = list;
+    force((n) => n + 1);
+    const flush = () => {
+      anchorTimer.current = 0;
+      const l = anchorDrafts.current[id];
+      if (!l) return;
+      void store.send({ t: 'output.setAnchors', outputId: id, anchors: l }).finally(() => {
+        if (anchorDrafts.current[id] === l) delete anchorDrafts.current[id];
+      });
+    };
+    if (final) {
+      window.clearTimeout(anchorTimer.current);
+      flush();
+    } else if (!anchorTimer.current) anchorTimer.current = window.setTimeout(flush, 90);
+  };
+
+  const onPickCorner = useRef<(id: string) => void>(() => {});
+  onPickCorner.current = (id: string) => setCorner(id);
 
   const toggleGyro = async () => {
     const next = !gyro;
@@ -486,6 +589,7 @@ export function Room3D({
             ['look', '👀 ' + L('Look around', 'Umschauen')],
             ['aim', '🎯 ' + L('Aim', 'Ausrichten')],
             ['place', '📍 ' + L('Position', 'Standort')],
+            ['align', '📐 ' + L('Measure corners', 'Ecken einmessen')],
           ] as [Mode, string][]
         ).map(([m, label]) => (
           <button key={m} className={`chip${mode === m ? ' on' : ''}`} onClick={() => setMode(m)}>
@@ -511,7 +615,20 @@ export function Room3D({
           {L('Put this projector into the room', 'Diesen Beamer in den Raum stellen')}
         </button>
       )}
-      {sel && selPose && (
+      {mode === 'align' && sel && selPose && (
+        <CornerPad
+          L={L}
+          pose={selPose}
+          aspect={outputAspect(sel)}
+          corners={roomCorners(roomFold(state.surfaces))}
+          corner={corner}
+          onCorner={setCorner}
+          anchors={anchorsOf(sel)}
+          onAnchors={(list, final) => sendAnchors(sel.id, list, final)}
+          onDone={() => setMode('aim')}
+        />
+      )}
+      {sel && selPose && mode !== 'align' && (
         <div className="panel stack" onPointerUp={commit} onKeyUp={commit}>
           <div className="row" style={{ justifyContent: 'space-between' }}>
             <strong>📽 {sel.name}</strong>
