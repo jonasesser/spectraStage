@@ -13,6 +13,7 @@ import {
 import { useT, type Tr } from '../lib/i18n.tsx';
 import { useShow, useStore } from './store.ts';
 import { kindColor, kindLabel } from './ui.tsx';
+import { Room3D } from './Room3D.tsx';
 
 type V = { x: number; y: number };
 type Sel = { type: 'surface'; id: string; vertex: number | null } | { type: 'output'; id: string } | null;
@@ -36,6 +37,7 @@ export function StageEditor() {
   const svgRef = useRef<SVGSVGElement>(null);
   const [sel, setSel] = useState<Sel>(null);
   const [snap, setSnap] = useState(true);
+  const [view, setView] = useState<'plan' | '3d'>('plan');
   const [drafts, setDrafts] = useState<{ polys: Record<string, V[]>; vps: Record<string, Viewport> }>({
     polys: {},
     vps: {},
@@ -239,192 +241,212 @@ export function StageEditor() {
   return (
     <div className="split">
       <div>
-        <div className="editor" style={{ aspectRatio: '4 / 3', maxHeight: '70vh' }}>
-          <svg
-            ref={svgRef}
-            viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
-            preserveAspectRatio="xMidYMid meet"
-            onPointerDown={onBgDown}
-            onPointerMove={onMove}
-            onPointerUp={onUp}
-            onPointerCancel={onUp}
-            onWheel={onWheel}
-          >
-            <rect data-bg="1" x={box.x} y={box.y} width={box.w} height={box.h} fill="#07060f" />
-            {gridLines.map((l, i) => (
-              <line
-                key={i}
-                {...l}
-                stroke={l.major ? '#2a2550' : '#1a1735'}
-                strokeWidth={unit * 0.08}
-                pointerEvents="none"
-              />
-            ))}
-            {state.surfaces.map((s) => {
-              const poly = polyOf(s);
-              const b = polygonBBox(poly);
-              const isSel = selSurface?.id === s.id;
-              return (
-                <g key={s.id}>
-                  <polygon
-                    points={poly.map((p) => `${p.x},${p.y}`).join(' ')}
-                    fill={kindColor(s.kind)}
-                    fillOpacity={isSel ? 0.35 : 0.18}
-                    stroke={kindColor(s.kind)}
-                    strokeWidth={unit * (isSel ? 0.35 : 0.18)}
-                    style={{ cursor: 'move' }}
-                    onPointerDown={(e) =>
-                      begin(
-                        e,
-                        { kind: 'surface', id: s.id, start: toStage(e), orig: poly },
-                        { type: 'surface', id: s.id, vertex: null },
-                      )
-                    }
-                  />
-                  <text
-                    x={b.x + b.w / 2}
-                    y={b.y + b.h / 2}
-                    fontSize={unit * 1.6}
-                    textAnchor="middle"
-                    fill="#f3efe6"
-                    pointerEvents="none"
-                    fontWeight={700}
-                  >
-                    {s.name}
-                  </text>
-                  <text
-                    x={b.x + b.w / 2}
-                    y={b.y + b.h / 2 + unit * 1.8}
-                    fontSize={unit * 1.1}
-                    textAnchor="middle"
-                    fill="#a9a3c9"
-                    pointerEvents="none"
-                  >
-                    {b.w.toFixed(2)} × {b.h.toFixed(2)} m
-                  </text>
-                  {isSel &&
-                    poly.map((p, i) => {
-                      const n = poly[(i + 1) % poly.length]!;
-                      return (
-                        <g key={i}>
-                          <circle
-                            className="handle"
-                            cx={(p.x + n.x) / 2}
-                            cy={(p.y + n.y) / 2}
-                            r={unit * 0.55}
-                            fill="#14112b"
-                            stroke="#ffb347"
-                            strokeWidth={unit * 0.12}
-                            strokeDasharray={`${unit * 0.3} ${unit * 0.2}`}
-                            onPointerDown={(e) => {
-                              const next = [
-                                ...poly.slice(0, i + 1),
-                                { x: (p.x + n.x) / 2, y: (p.y + n.y) / 2 },
-                                ...poly.slice(i + 1),
-                              ];
-                              setDrafts((d) => ({ ...d, polys: { ...d.polys, [s.id]: next } }));
-                              begin(
-                                e,
-                                { kind: 'vertex', id: s.id, index: i + 1 },
-                                { type: 'surface', id: s.id, vertex: i + 1 },
-                              );
-                            }}
-                          />
-                          <circle
-                            className="handle"
-                            cx={p.x}
-                            cy={p.y}
-                            r={unit * (sel?.type === 'surface' && sel.vertex === i ? 1.1 : 0.85)}
-                            fill="#ffb347"
-                            stroke="#2a1600"
-                            strokeWidth={unit * 0.15}
-                            onPointerDown={(e) =>
-                              begin(
-                                e,
-                                { kind: 'vertex', id: s.id, index: i },
-                                { type: 'surface', id: s.id, vertex: i },
-                              )
-                            }
-                          />
-                        </g>
-                      );
-                    })}
-                </g>
-              );
-            })}
-            {state.outputs.map((o) => {
-              const vp = vpOf(o);
-              const isSel = selOutput?.id === o.id;
-              return (
-                <g key={o.id}>
-                  <rect
-                    x={vp.x}
-                    y={vp.y}
-                    width={vp.w}
-                    height={vp.h}
-                    fill={isSel ? 'rgba(255,255,255,0.06)' : 'transparent'}
-                    stroke={isSel ? '#ffffff' : 'rgba(255,255,255,0.6)'}
-                    strokeWidth={unit * (isSel ? 0.25 : 0.15)}
-                    strokeDasharray={`${unit * 0.8} ${unit * 0.5}`}
-                    style={{ cursor: 'move' }}
-                    onPointerDown={(e) =>
-                      begin(
-                        e,
-                        { kind: 'output', id: o.id, start: toStage(e), orig: vp },
-                        { type: 'output', id: o.id },
-                      )
-                    }
-                  />
-                  <text
-                    x={vp.x + unit * 0.6}
-                    y={vp.y + unit * 1.6}
-                    fontSize={unit * 1.2}
-                    fill="#ffffff"
-                    pointerEvents="none"
-                  >
-                    📽 {o.name}
-                  </text>
-                  {isSel && (
-                    <rect
-                      className="handle"
-                      x={vp.x + vp.w - unit}
-                      y={vp.y + vp.h - unit}
-                      width={unit * 2}
-                      height={unit * 2}
-                      fill="#fff"
-                      stroke="#14112b"
-                      strokeWidth={unit * 0.15}
-                      onPointerDown={(e) =>
-                        begin(e, { kind: 'resize', id: o.id, orig: vp, aspect: outputAspect(o) }, null)
-                      }
-                    />
-                  )}
-                </g>
-              );
-            })}
-          </svg>
+        <div className="row" role="tablist" style={{ marginBottom: '0.5rem' }}>
+          <button className={`chip${view === 'plan' ? ' on' : ''}`} onClick={() => setView('plan')}>
+            🗺️ {L('Plan (unfolded)', 'Plan (aufgeklappt)')}
+          </button>
+          <button className={`chip${view === '3d' ? ' on' : ''}`} onClick={() => setView('3d')}>
+            🥽 {L('3D room', '3D-Raum')}
+          </button>
         </div>
-        <div className="editor-tools">
-          <button className="btn small" onClick={() => zoom(1 / 1.3)} aria-label="Zoom in">
-            ＋
-          </button>
-          <button className="btn small" onClick={() => zoom(1.3)} aria-label="Zoom out">
-            －
-          </button>
-          <button className="btn small" onClick={() => setBox(fitBox)}>
-            {L('Fit', 'Einpassen')}
-          </button>
-          <label className="check" style={{ minHeight: 36 }}>
-            <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} />{' '}
-            {L('Snap 5 cm', '5-cm-Raster')}
-          </label>
-        </div>
-        <p className="muted small">
-          {L(
-            'Lay out your house unfolded: walls side by side, the driveway below the garage. Dashed frames are the projector images – drag the white corner to make an image bigger or smaller.',
-            'Lege dein Haus „aufgeklappt“ an: Wände nebeneinander, die Einfahrt unter dem Garagentor. Gestrichelte Rahmen sind die Beamer-Bilder – mit der weißen Ecke machst du ein Bild größer oder kleiner.',
-          )}
-        </p>
+        {view === '3d' && (
+          <Room3D
+            state={state}
+            L={L}
+            selected={sel?.type === 'output' ? sel.id : null}
+            onSelect={(id) => setSel(id ? { type: 'output', id } : null)}
+          />
+        )}
+        {view === 'plan' && (
+          <>
+            <div className="editor" style={{ aspectRatio: '4 / 3', maxHeight: '70vh' }}>
+              <svg
+                ref={svgRef}
+                viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
+                preserveAspectRatio="xMidYMid meet"
+                onPointerDown={onBgDown}
+                onPointerMove={onMove}
+                onPointerUp={onUp}
+                onPointerCancel={onUp}
+                onWheel={onWheel}
+              >
+                <rect data-bg="1" x={box.x} y={box.y} width={box.w} height={box.h} fill="#07060f" />
+                {gridLines.map((l, i) => (
+                  <line
+                    key={i}
+                    {...l}
+                    stroke={l.major ? '#2a2550' : '#1a1735'}
+                    strokeWidth={unit * 0.08}
+                    pointerEvents="none"
+                  />
+                ))}
+                {state.surfaces.map((s) => {
+                  const poly = polyOf(s);
+                  const b = polygonBBox(poly);
+                  const isSel = selSurface?.id === s.id;
+                  return (
+                    <g key={s.id}>
+                      <polygon
+                        points={poly.map((p) => `${p.x},${p.y}`).join(' ')}
+                        fill={kindColor(s.kind)}
+                        fillOpacity={isSel ? 0.35 : 0.18}
+                        stroke={kindColor(s.kind)}
+                        strokeWidth={unit * (isSel ? 0.35 : 0.18)}
+                        style={{ cursor: 'move' }}
+                        onPointerDown={(e) =>
+                          begin(
+                            e,
+                            { kind: 'surface', id: s.id, start: toStage(e), orig: poly },
+                            { type: 'surface', id: s.id, vertex: null },
+                          )
+                        }
+                      />
+                      <text
+                        x={b.x + b.w / 2}
+                        y={b.y + b.h / 2}
+                        fontSize={unit * 1.6}
+                        textAnchor="middle"
+                        fill="#f3efe6"
+                        pointerEvents="none"
+                        fontWeight={700}
+                      >
+                        {s.name}
+                      </text>
+                      <text
+                        x={b.x + b.w / 2}
+                        y={b.y + b.h / 2 + unit * 1.8}
+                        fontSize={unit * 1.1}
+                        textAnchor="middle"
+                        fill="#a9a3c9"
+                        pointerEvents="none"
+                      >
+                        {b.w.toFixed(2)} × {b.h.toFixed(2)} m
+                      </text>
+                      {isSel &&
+                        poly.map((p, i) => {
+                          const n = poly[(i + 1) % poly.length]!;
+                          return (
+                            <g key={i}>
+                              <circle
+                                className="handle"
+                                cx={(p.x + n.x) / 2}
+                                cy={(p.y + n.y) / 2}
+                                r={unit * 0.55}
+                                fill="#14112b"
+                                stroke="#ffb347"
+                                strokeWidth={unit * 0.12}
+                                strokeDasharray={`${unit * 0.3} ${unit * 0.2}`}
+                                onPointerDown={(e) => {
+                                  const next = [
+                                    ...poly.slice(0, i + 1),
+                                    { x: (p.x + n.x) / 2, y: (p.y + n.y) / 2 },
+                                    ...poly.slice(i + 1),
+                                  ];
+                                  setDrafts((d) => ({ ...d, polys: { ...d.polys, [s.id]: next } }));
+                                  begin(
+                                    e,
+                                    { kind: 'vertex', id: s.id, index: i + 1 },
+                                    { type: 'surface', id: s.id, vertex: i + 1 },
+                                  );
+                                }}
+                              />
+                              <circle
+                                className="handle"
+                                cx={p.x}
+                                cy={p.y}
+                                r={unit * (sel?.type === 'surface' && sel.vertex === i ? 1.1 : 0.85)}
+                                fill="#ffb347"
+                                stroke="#2a1600"
+                                strokeWidth={unit * 0.15}
+                                onPointerDown={(e) =>
+                                  begin(
+                                    e,
+                                    { kind: 'vertex', id: s.id, index: i },
+                                    { type: 'surface', id: s.id, vertex: i },
+                                  )
+                                }
+                              />
+                            </g>
+                          );
+                        })}
+                    </g>
+                  );
+                })}
+                {state.outputs.map((o) => {
+                  const vp = vpOf(o);
+                  const isSel = selOutput?.id === o.id;
+                  return (
+                    <g key={o.id}>
+                      <rect
+                        x={vp.x}
+                        y={vp.y}
+                        width={vp.w}
+                        height={vp.h}
+                        fill={isSel ? 'rgba(255,255,255,0.06)' : 'transparent'}
+                        stroke={isSel ? '#ffffff' : 'rgba(255,255,255,0.6)'}
+                        strokeWidth={unit * (isSel ? 0.25 : 0.15)}
+                        strokeDasharray={`${unit * 0.8} ${unit * 0.5}`}
+                        style={{ cursor: 'move' }}
+                        onPointerDown={(e) =>
+                          begin(
+                            e,
+                            { kind: 'output', id: o.id, start: toStage(e), orig: vp },
+                            { type: 'output', id: o.id },
+                          )
+                        }
+                      />
+                      <text
+                        x={vp.x + unit * 0.6}
+                        y={vp.y + unit * 1.6}
+                        fontSize={unit * 1.2}
+                        fill="#ffffff"
+                        pointerEvents="none"
+                      >
+                        📽 {o.name}
+                      </text>
+                      {isSel && (
+                        <rect
+                          className="handle"
+                          x={vp.x + vp.w - unit}
+                          y={vp.y + vp.h - unit}
+                          width={unit * 2}
+                          height={unit * 2}
+                          fill="#fff"
+                          stroke="#14112b"
+                          strokeWidth={unit * 0.15}
+                          onPointerDown={(e) =>
+                            begin(e, { kind: 'resize', id: o.id, orig: vp, aspect: outputAspect(o) }, null)
+                          }
+                        />
+                      )}
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+            <div className="editor-tools">
+              <button className="btn small" onClick={() => zoom(1 / 1.3)} aria-label="Zoom in">
+                ＋
+              </button>
+              <button className="btn small" onClick={() => zoom(1.3)} aria-label="Zoom out">
+                －
+              </button>
+              <button className="btn small" onClick={() => setBox(fitBox)}>
+                {L('Fit', 'Einpassen')}
+              </button>
+              <label className="check" style={{ minHeight: 36 }}>
+                <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} />{' '}
+                {L('Snap 5 cm', '5-cm-Raster')}
+              </label>
+            </div>
+            <p className="muted small">
+              {L(
+                'Lay out your house unfolded: walls side by side, the driveway below the garage. Dashed frames are the projector images – drag the white corner to make an image bigger or smaller.',
+                'Lege dein Haus „aufgeklappt“ an: Wände nebeneinander, die Einfahrt unter dem Garagentor. Gestrichelte Rahmen sind die Beamer-Bilder – mit der weißen Ecke machst du ein Bild größer oder kleiner.',
+              )}
+            </p>
+          </>
+        )}
       </div>
       <div className="stack">
         <RoomPanel state={state} L={L} />

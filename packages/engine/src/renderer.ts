@@ -57,6 +57,8 @@ export interface RendererOptions {
   /** Preview mode (controller): no warp, masks, limiter or sound; shows a fixed stage area. */
   preview?: boolean;
   maxPixelRatio?: number;
+  /** Keep the drawing buffer so the canvas can be copied (e.g. as a texture for the 3D room view). */
+  readable?: boolean;
 }
 
 export interface RendererStats {
@@ -374,7 +376,7 @@ export class StageRenderer {
       antialias: false,
       alpha: false,
       powerPreference: 'high-performance',
-      preserveDrawingBuffer: false,
+      preserveDrawingBuffer: !!opts.readable,
     });
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     this.renderer.setClearColor(0x000000, 1);

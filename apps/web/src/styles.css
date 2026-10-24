@@ -1062,3 +1062,13 @@ body,
     bottom: auto;
   }
 }
+
+/* 3D room view */
+.room3d {
+  width: 100%;
+  height: min(70vh, 560px);
+  border-radius: 14px;
+  overflow: hidden;
+  background: #05040c;
+  border: 1px solid #2a2550;
+}
