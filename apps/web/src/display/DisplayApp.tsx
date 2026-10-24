@@ -204,6 +204,17 @@ function Projection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slot]);
 
+  const outputId =
+    state && deviceId ? (state.devices.find((d) => d.id === deviceId)?.outputId ?? null) : null;
+  const output = state && outputId ? state.outputs.find((o) => o.id === outputId) : undefined;
+  const renderMode = output?.renderMode ?? 'standard';
+  const rendererModeRef = useRef(renderMode);
+  rendererModeRef.current = renderMode;
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const outputIdRef = useRef(outputId);
+  outputIdRef.current = outputId;
+
   // Renderer
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -215,8 +226,10 @@ function Projection({
       sound: soundRef.current,
       // Render in physical projector pixels (Windows scaling 150 % on a 4K beamer = 3840 px).
       maxPixelRatio: 4,
-      // After a GPU crash (context lost) this tab runs in a safe Full HD mode.
-      maxRenderPixels: gpuSafe() ? 1920 * 1200 : undefined,
+      // Full HD modes, or after a GPU crash (context lost) this tab runs in a safe Full HD mode.
+      maxRenderPixels:
+        gpuSafe() || renderMode === 'fullhd' || renderMode === 'lowpower' ? 1920 * 1200 : undefined,
+      powerPreference: renderMode === 'lowpower' ? 'low-power' : 'high-performance',
     });
     // GPU context lost and not restored (e.g. overloaded at 4K): reload in safe mode instead of
     // staying black.
@@ -236,9 +249,13 @@ function Projection({
     canvas.addEventListener('webglcontextlost', onLost);
     canvas.addEventListener('webglcontextrestored', onRestored);
     rendererRef.current = r;
+    r.setState(phaseRef.current === 'run' ? stateRef.current : null, outputIdRef.current);
     r.start();
     // Read-only diagnostics hook (used by end-to-end tests and support).
-    (window as unknown as { __spectrastage?: unknown }).__spectrastage = { stats: () => r.stats() };
+    (window as unknown as { __spectrastage?: unknown }).__spectrastage = {
+      stats: () => r.stats(),
+      capture: (w: number) => r.capture(w, false),
+    };
     return () => {
       window.clearTimeout(lostTimer);
       canvas.removeEventListener('webglcontextlost', onLost);
@@ -246,11 +263,8 @@ function Projection({
       r.dispose();
       rendererRef.current = null;
     };
-  }, []);
-
-  const outputId =
-    state && deviceId ? (state.devices.find((d) => d.id === deviceId)?.outputId ?? null) : null;
-  const output = state && outputId ? state.outputs.find((o) => o.id === outputId) : undefined;
+    // A new mode needs a fresh canvas (a WebGL context keeps its GPU choice).
+  }, [renderMode]);
 
   useEffect(() => {
     rendererRef.current?.setState(phase === 'run' ? state : null, outputId);
@@ -259,7 +273,7 @@ function Projection({
 
   useEffect(() => {
     rendererRef.current?.setConnection(status === 'online');
-  }, [status]);
+  }, [status, renderMode]);
 
   // Remember the device id across offline reloads.
   useEffect(() => {
@@ -270,12 +284,31 @@ function Projection({
     if (deviceId) storage.set(`${KEYS.displayToken(slot)}.id`, deviceId);
   }, [deviceId, state, phase, slot]);
 
-  // Telemetry every 5 s
+  // Telemetry every 5 s (every 2 s with a live picture while the admin watches the diagnosis)
+  const diagRef = useRef(0);
+  diagRef.current = output?.diagUntil ?? 0;
   useEffect(() => {
-    const id = window.setInterval(() => {
+    let last = 0;
+    let busy = false;
+    let lastLum = -1;
+    let lastThumb: string | undefined;
+    const id = window.setInterval(async () => {
       const conn = connRef.current;
       const r = rendererRef.current;
-      if (!conn || !r || phaseRef.current !== 'run') return;
+      if (!conn || !r || phaseRef.current !== 'run' || busy) return;
+      const diag = diagRef.current > (conn.clock.now() ?? Date.now());
+      const wall = Date.now();
+      if (wall - last < (diag ? 2000 : 5000) - 100) return;
+      last = wall;
+      busy = true;
+      const shot = await Promise.race([
+        r.capture(diag ? 480 : 64, diag),
+        new Promise<{ lum: number; image?: string }>((res) => setTimeout(() => res({ lum: -1 }), 3000)),
+      ]);
+      busy = false;
+      if (shot.lum >= 0) lastLum = shot.lum;
+      if (shot.image) lastThumb = shot.image;
+      if (!diag) lastThumb = undefined;
       const st = r.stats();
       const cs = conn.clock.stats();
       const dpr = window.devicePixelRatio || 1;
@@ -291,9 +324,21 @@ function Projection({
         jitterMs: Math.round(cs.jitterMs),
         clockOffsetMs: Math.round(cs.offsetMs),
         calibrationOk: st.calibrationOk,
+        gpu: st.gpu.slice(0, 200),
+        dpr,
+        winW: Math.round(window.innerWidth * dpr),
+        winH: Math.round(window.innerHeight * dpr),
+        renderW: st.renderW,
+        renderH: st.renderH,
+        contextLost: st.contextLost,
+        lastError: st.lastError,
+        renderMode: rendererModeRef.current,
+        lum: lastLum >= 0 ? Math.min(1, lastLum) : undefined,
+        blackReason: st.blackReason,
+        thumb: lastThumb && lastThumb.length < 150_000 ? lastThumb : undefined,
       });
       if (showInfo || st.contextLost || st.lastError) force((n) => n + 1);
-    }, 5000);
+    }, 500);
     return () => window.clearInterval(id);
   }, [showInfo]);
 
@@ -354,7 +399,11 @@ function Projection({
       onClick={activate}
       onDoubleClick={activate}
     >
-      <canvas ref={canvasRef} className="projection-canvas" />
+      <canvas
+        key={renderMode}
+        ref={canvasRef}
+        className={`projection-canvas${renderMode === 'compat' ? ' compat' : ''}`}
+      />
       {phase === 'run' && stats && (stats.contextLost || stats.lastError || output?.resolutionMismatch) && (
         <div className="projection-problem">
           {stats.contextLost
@@ -444,7 +493,8 @@ function Projection({
             {output?.resolutionMismatch ? L('changed → black', 'geändert → schwarz') : 'OK'}
           </div>
           <div>
-            GPU: {stats?.gpu} {stats?.contextLost ? '· CONTEXT LOST' : ''}
+            {L('Mode', 'Modus')}: {renderMode} · GPU: {stats?.gpu}{' '}
+            {stats?.contextLost ? '· CONTEXT LOST' : ''}
             {stats?.lastError ? ` · ${stats.lastError}` : ''}
           </div>
           <div className="muted">

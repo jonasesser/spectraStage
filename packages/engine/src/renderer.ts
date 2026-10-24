@@ -69,6 +69,8 @@ export interface RendererOptions {
   readable?: boolean;
   /** Upper bound for the internal render resolution (default: native up to 4K). */
   maxRenderPixels?: number;
+  /** GPU choice on PCs with two graphics chips (default high-performance). */
+  powerPreference?: 'high-performance' | 'low-power';
 }
 
 export interface RendererStats {
@@ -84,6 +86,11 @@ export interface RendererStats {
   lastError: string | null;
   /** Graphics card as reported by the browser (diagnostics). */
   gpu: string;
+  /** Internal render size (before upscaling to the canvas). */
+  renderW: number;
+  renderH: number;
+  /** Why black is drawn on purpose, or null. */
+  blackReason: string | null;
 }
 
 const VERT = /* glsl */ `
@@ -387,6 +394,15 @@ export class StageRenderer {
   private quality = 1;
   private qualityInit = false;
   private frameErrors = 0;
+  private renderW = 0;
+  private renderH = 0;
+  private blackReason: string | null = null;
+  private captureReq: {
+    maxW: number;
+    image: boolean;
+    done: (r: { lum: number; image?: string }) => void;
+  } | null = null;
+  private captureCanvas: HTMLCanvasElement | null = null;
   private lastError: { msg: string; at: number } | null = null;
   /** GPU limit for texture / render target sides. */
   private maxTex = 4096;
@@ -414,7 +430,7 @@ export class StageRenderer {
       canvas: opts.canvas,
       antialias: false,
       alpha: false,
-      powerPreference: 'high-performance',
+      powerPreference: opts.powerPreference ?? 'high-performance',
       preserveDrawingBuffer: !!opts.readable,
     });
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
@@ -551,6 +567,9 @@ export class StageRenderer {
       blackout: this.blackoutNow,
       contextLost: this.contextLost,
       gpu: this.gpuName(),
+      renderW: this.renderW,
+      renderH: this.renderH,
+      blackReason: this.blackReason,
       lastError: this.lastError && Date.now() - this.lastError.at < 60_000 ? this.lastError.msg : null,
     };
   }
@@ -569,6 +588,40 @@ export class StageRenderer {
     return this.gpu;
   }
 
+  /**
+   * What the app actually puts on the canvas (read right after drawing, so no preserved buffer
+   * is needed): average brightness and optionally a small JPEG for the admin.
+   */
+  capture(maxW: number, image: boolean): Promise<{ lum: number; image?: string }> {
+    return new Promise((done) => {
+      this.captureReq?.done({ lum: 0 });
+      this.captureReq = { maxW, image, done };
+    });
+  }
+
+  private doCapture(): void {
+    const req = this.captureReq!;
+    this.captureReq = null;
+    try {
+      const src = this.opts.canvas;
+      const w = Math.max(16, Math.min(req.maxW, src.width));
+      const h = Math.max(9, Math.round((w * src.height) / Math.max(1, src.width)));
+      const c = (this.captureCanvas ??= document.createElement('canvas'));
+      c.width = w;
+      c.height = h;
+      const g = c.getContext('2d', { willReadFrequently: true })!;
+      g.drawImage(src, 0, 0, w, h);
+      const px = g.getImageData(0, 0, w, h).data;
+      let sum = 0;
+      for (let i = 0; i < px.length; i += 16)
+        sum += 0.2126 * px[i]! + 0.7152 * px[i + 1]! + 0.0722 * px[i + 2]!;
+      const lum = sum / (px.length / 16) / 255;
+      req.done({ lum, image: req.image ? c.toDataURL('image/jpeg', 0.6) : undefined });
+    } catch {
+      req.done({ lum: 0 });
+    }
+  }
+
   start(): void {
     if (this.running) return;
     this.running = true;
@@ -578,6 +631,7 @@ export class StageRenderer {
       try {
         this.frame(t);
         this.frameErrors = 0;
+        if (this.captureReq) this.doCapture();
       } catch (e) {
         console.error('[SpectraStage] frame error', e);
         this.lastError = { msg: String((e as Error)?.message ?? e).slice(0, 160), at: Date.now() };
@@ -778,6 +832,19 @@ export class StageRenderer {
           failoverBlack ||
           !this.calibrationOk));
     this.blackoutNow = blackout;
+    this.blackReason = !blackout
+      ? null
+      : !state
+        ? 'no-show'
+        : !profile || (!this.opts.preview && !output)
+          ? 'no-output'
+          : state.blackoutAll || output?.blackout
+            ? 'blackout'
+            : this.localBlackout
+              ? 'local-blackout'
+              : failoverBlack
+                ? 'offline'
+                : 'format';
     const targetGain = blackout ? 0 : this.opts.preview ? 1 : output!.intensity;
     // Blackout is immediate; resume fades in.
     this.gain = targetGain < this.gain ? targetGain : Math.min(targetGain, this.gain + dtMs / 800);
@@ -802,6 +869,8 @@ export class StageRenderer {
     const q = this.quality * cap * (perf === 'eco' ? 0.7 : 1);
     const ow = Math.max(2, Math.round(this.width * q));
     const oh = Math.max(2, Math.round(this.height * q));
+    this.renderW = ow;
+    this.renderH = oh;
     let vp: Viewport = profile.viewport;
     let vw = ow;
     let vh = oh;

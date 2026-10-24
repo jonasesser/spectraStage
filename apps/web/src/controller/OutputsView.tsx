@@ -7,6 +7,7 @@ import {
   type Device,
   type Output,
   type SessionState,
+  type Telemetry,
 } from '@spectrastage/shared';
 import { useT, type Tr } from '../lib/i18n.tsx';
 import { api } from '../lib/api.ts';
@@ -385,6 +386,7 @@ function OutputCard({
           <dd>{tel ? `${tel.fullscreen ? '✓' : '✗'} / ${tel.audioUnlocked ? '✓' : '✗'}` : '–'}</dd>
         </dl>
       )}
+      {details && device && <Diagnosis output={output} tel={tel ?? null} L={L} />}
       <div className="row" style={{ marginTop: '0.75rem' }}>
         <button className="btn primary" onClick={onCalibrate}>
           {L('Calibrate', 'Kalibrieren')}
@@ -460,6 +462,38 @@ function OutputCard({
                 {L(
                   'Eco – 30 fps for weak PCs / projector browsers',
                   'Eco – 30 fps für schwache PCs / Beamer-Browser',
+                )}
+              </option>
+            </select>
+          </label>
+        )}
+        {details && (
+          <label>
+            {L('Graphics mode (switches live)', 'Grafikmodus (schaltet sofort um)')}
+            <select
+              value={output.renderMode ?? 'standard'}
+              onChange={(e) =>
+                store.send({
+                  t: 'output.update',
+                  outputId: output.id,
+                  renderMode: e.target.value as 'standard' | 'compat' | 'fullhd' | 'lowpower',
+                })
+              }
+            >
+              <option value="standard">
+                {L('Standard – graphics card, up to native 4K', 'Standard – Grafikkarte, bis nativ 4K')}
+              </option>
+              <option value="compat">
+                {L(
+                  'Compatible – if the picture stays black in fullscreen',
+                  'Kompatibel – wenn das Bild im Vollbild schwarz bleibt',
+                )}
+              </option>
+              <option value="fullhd">{L('Full HD – less load', 'Full HD – weniger Last')}</option>
+              <option value="lowpower">
+                {L(
+                  'Power-saving graphics chip (laptops with two GPUs), Full HD',
+                  'Stromspar-Grafikchip (Laptops mit zwei GPUs), Full HD',
                 )}
               </option>
             </select>
@@ -565,5 +599,93 @@ function DevicesPanel({ state, L }: { state: SessionState; L: Tr }) {
         })}
       </div>
     </section>
+  );
+}
+
+const BLACK_REASONS: Record<string, [string, string]> = {
+  'no-show': ['not connected to the show yet', 'noch nicht mit der Show verbunden'],
+  'no-output': ['no projector assigned', 'keinem Beamer zugeordnet'],
+  blackout: ['blackout is on', 'Blackout ist an'],
+  'local-blackout': ['local blackout (key B on the projector PC)', 'lokaler Blackout (Taste B am Beamer-PC)'],
+  offline: ['offline for too long (failover)', 'zu lange offline (Ausfall-Verhalten)'],
+  format: ['picture format changed – confirm above', 'Bildformat geändert – oben bestätigen'],
+};
+
+/** Remote diagnosis of a projector PC, entirely from the phone. */
+function Diagnosis({ output, tel, L }: { output: Output; tel: Telemetry | null; L: Tr }) {
+  const store = useStore();
+  const live = (output.diagUntil ?? 0) > Date.now();
+  if (!tel)
+    return (
+      <p className="muted small">{L('No data from the projector yet.', 'Noch keine Daten vom Beamer.')}</p>
+    );
+  const reason = tel.blackReason ? BLACK_REASONS[tel.blackReason] : null;
+  let verdict: string;
+  let bad = false;
+  if (tel.contextLost) {
+    verdict = L(
+      'The graphics card dropped the picture (context lost) – it restarts automatically. If this repeats, try graphics mode Full HD.',
+      'Die Grafikkarte hat das Bild verloren (Context lost) – startet automatisch neu. Passiert das öfter: Grafikmodus „Full HD“ probieren.',
+    );
+    bad = true;
+  } else if (reason) verdict = `${L('Black on purpose', 'Absichtlich schwarz')}: ${L(reason[0], reason[1])}.`;
+  else if (tel.lum !== undefined && tel.lum < 0.004) {
+    verdict = L(
+      'The app draws a black picture although the show runs – rendering problem.',
+      'Die App zeichnet ein schwarzes Bild, obwohl die Show läuft – Darstellungsproblem.',
+    );
+    bad = true;
+  } else
+    verdict = L(
+      'The app draws the picture. If the projector still shows black, the browser/driver does not display it: switch the graphics mode (e.g. “Compatible”) and watch the wall.',
+      'Die App zeichnet das Bild. Zeigt der Beamer trotzdem Schwarz, bringt Browser/Treiber es nicht auf den Schirm: Grafikmodus umschalten (z. B. „Kompatibel“) und auf die Wand schauen.',
+    );
+  return (
+    <div className="stack" style={{ marginTop: '0.75rem' }}>
+      <strong>{L('Diagnosis', 'Diagnose')}</strong>
+      <div className={bad ? 'safety-note' : 'muted small'}>{verdict}</div>
+      <dl className="kv">
+        <dt>{L('Picture brightness', 'Bildhelligkeit')}</dt>
+        <dd>{tel.lum !== undefined ? `${Math.round(tel.lum * 100)} %` : '–'}</dd>
+        <dt>{L('Screen', 'Bildschirm')}</dt>
+        <dd>
+          {tel.width}×{tel.height}
+          {tel.dpr ? ` · ${L('scaling', 'Skalierung')} ${Math.round(tel.dpr * 100)} %` : ''}
+        </dd>
+        <dt>{L('Window', 'Fenster')}</dt>
+        <dd>
+          {tel.winW ? `${tel.winW}×${tel.winH}` : '–'} ·{' '}
+          {tel.fullscreen ? L('fullscreen', 'Vollbild') : L('windowed', 'Fenster')}
+        </dd>
+        <dt>{L('Rendered at', 'Gerechnet in')}</dt>
+        <dd>{tel.renderW ? `${tel.renderW}×${tel.renderH}` : '–'}</dd>
+        <dt>{L('Graphics mode', 'Grafikmodus')}</dt>
+        <dd>{tel.renderMode ?? '–'}</dd>
+        <dt>GPU</dt>
+        <dd style={{ wordBreak: 'break-word' }}>{tel.gpu ?? '–'}</dd>
+        {tel.lastError && (
+          <>
+            <dt>{L('Error', 'Fehler')}</dt>
+            <dd style={{ wordBreak: 'break-word' }}>{tel.lastError}</dd>
+          </>
+        )}
+      </dl>
+      <button
+        className={`btn small${live ? ' on' : ''}`}
+        onClick={() => store.send({ t: 'output.update', outputId: output.id, diag: !live })}
+      >
+        📷{' '}
+        {live
+          ? L('Stop live picture', 'Live-Bild beenden')
+          : L('Live picture from the projector (5 min)', 'Live-Bild vom Beamer (5 Min.)')}
+      </button>
+      {live && tel.thumb && (
+        <img
+          src={tel.thumb}
+          alt={L('What the projector app draws', 'Was die Beamer-App zeichnet')}
+          style={{ width: '100%', borderRadius: 8, border: '1px solid var(--line, #333)' }}
+        />
+      )}
+    </div>
   );
 }

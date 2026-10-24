@@ -133,6 +133,14 @@ export const OutputSchema = z.object({
   showMasks: z.boolean(),
   /** Rendering budget: auto (adaptive, may drop to 30 fps), high (always 60 fps target), eco (30 fps, lower internal resolution). */
   performance: z.enum(['auto', 'high', 'eco']).optional(),
+  /**
+   * How the projector PC draws (switchable live to find what works with its GPU/driver):
+   * standard (GPU, native up to 4K), compat (no hardware overlay), fullhd (internal Full HD),
+   * lowpower (power-saving GPU, Full HD).
+   */
+  renderMode: z.enum(['standard', 'compat', 'fullhd', 'lowpower']).optional(),
+  /** Until when the projector sends a live picture to the admin (ms epoch). */
+  diagUntil: z.number().optional(),
   /** Set when the client reported a resolution different from the active profile. */
   resolutionMismatch: z.object({ w: z.number().int(), h: z.number().int() }).nullable(),
 });
@@ -306,6 +314,22 @@ export const TelemetrySchema = z.object({
   jitterMs: z.number().min(0).max(60000),
   clockOffsetMs: z.number().min(-1e12).max(1e12),
   calibrationOk: z.boolean(),
+  // --- diagnostics (all optional, older displays omit them)
+  gpu: z.string().max(200).optional(),
+  dpr: z.number().min(0).max(16).optional(),
+  winW: z.number().int().min(0).max(20000).optional(),
+  winH: z.number().int().min(0).max(20000).optional(),
+  renderW: z.number().int().min(0).max(20000).optional(),
+  renderH: z.number().int().min(0).max(20000).optional(),
+  contextLost: z.boolean().optional(),
+  lastError: z.string().max(200).nullable().optional(),
+  renderMode: z.string().max(20).optional(),
+  /** Average brightness of the picture the app draws (0..1). */
+  lum: z.number().min(0).max(1).optional(),
+  /** Why the app draws black on purpose (blackout, format, …), null when it draws the show. */
+  blackReason: z.string().max(40).nullable().optional(),
+  /** Small JPEG of the projector picture (only while the admin watches it). */
+  thumb: z.string().max(150_000).optional(),
 });
 export type Telemetry = z.infer<typeof TelemetrySchema>;
 
@@ -416,6 +440,9 @@ export const CommandSchema = z.discriminatedUnion('t', [
     failover: OutputSchema.shape.failover.optional(),
     showMasks: z.boolean().optional(),
     performance: z.enum(['auto', 'high', 'eco']).optional(),
+    renderMode: z.enum(['standard', 'compat', 'fullhd', 'lowpower']).optional(),
+    /** Live picture of the projector in the admin app for 5 minutes (or off). */
+    diag: z.boolean().optional(),
   }),
   z.object({ t: z.literal('output.blackout'), outputIds, on: z.boolean() }),
   z.object({

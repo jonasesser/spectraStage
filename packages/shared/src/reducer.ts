@@ -546,6 +546,8 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       if (cmd.failover !== undefined) o.failover = cmd.failover;
       if (cmd.showMasks !== undefined) o.showMasks = cmd.showMasks;
       if (cmd.performance !== undefined) o.performance = cmd.performance;
+      if (cmd.renderMode !== undefined) o.renderMode = cmd.renderMode;
+      if (cmd.diag !== undefined) o.diagUntil = cmd.diag ? ctx.now + 5 * 60_000 : 0;
       return res(`${o.name} updated`);
     }
     case 'output.blackout': {

@@ -800,6 +800,11 @@ label.check {
   height: 100%;
   display: block;
 }
+.projection-canvas.compat {
+  /* Compatibility: a not quite opaque canvas is never handed to a hardware overlay
+     (DirectComposition on Windows), which some GPU drivers show black. */
+  opacity: 0.999;
+}
 .projection-center {
   position: absolute;
   inset: 0;
