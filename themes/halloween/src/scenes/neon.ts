@@ -26,7 +26,7 @@ import { addGlow, envPalette, lightPool, offscreen, paintLeaf, SKY_FRAG, skyUnif
 import { backdrop, drawManor, MOON_POS } from './manor.ts';
 
 const FACES: GhostFace[] = ['happy', 'oo', 'wow', 'sleepy'];
-const LIME = '#7dff4d';
+export const LIME = '#7dff4d';
 
 function hexRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.slice(1), 16);
@@ -34,7 +34,7 @@ function hexRgb(hex: string): [number, number, number] {
 }
 
 /** Shader colors: A = purple base, B = warm glow, C = green accent. */
-function neonUniforms(s: DrawState) {
+export function neonUniforms(s: DrawState) {
   const pal = palette(s.params);
   const green = pal.party[1] ?? LIME;
   return {
@@ -306,7 +306,7 @@ const neonParty: SceneModule = hybridScene(
 // ---------------------------------------------------------------------------
 // Neon Fog (floor)
 // ---------------------------------------------------------------------------
-const FOG_FRAG = /* glsl */ `
+export const FOG_FRAG = /* glsl */ `
 ${HEADER}
 float fbm3(vec2 p) {
   float v = 0.5 * vnoise(p); p = p * 2.03 + vec2(17.1, 9.2);

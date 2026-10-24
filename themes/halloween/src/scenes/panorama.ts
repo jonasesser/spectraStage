@@ -16,6 +16,8 @@ import {
   dancePose,
   footprint,
   fuzzySpider,
+  leaf,
+  pawPrint,
   ghost,
   pumpkin,
   skeleton,
@@ -24,6 +26,8 @@ import {
 } from '../shapes.ts';
 import { web } from './floor.ts';
 import { monster } from './wall.ts';
+import { drawPiece, paintPiece, PIECE_HALF, type PieceId } from './pieces.ts';
+import { FOG_FRAG, LIME, neonUniforms } from './neon.ts';
 import { densityOf, mod, speedOf } from './common.ts';
 import {
   addGlow,
@@ -54,6 +58,12 @@ export interface PanoOpts {
   portal?: boolean;
   /** Monsterhaus: monsters peek out of the windows, glowing tracks lead out of the door. */
   monsters?: boolean;
+  /** Centerpieces of the other walls, in order around the room (side 0, 1, 2 …). */
+  sides?: PieceId[];
+  /** Centerpiece of the main wall when there is no house/portal. */
+  mainPiece?: PieceId;
+  /** Big, bright, friendly cast (neon look): large ghosts, dancing skeletons, big pumpkins. */
+  big?: boolean;
   /** Use the neon palette regardless of the mood param default. */
   neon?: boolean;
 }
@@ -81,6 +91,8 @@ interface Frame {
   frontGround: Rect | null;
   /** A floor continues directly below this surface (no vignette / edge grass needed). */
   groundBelowSelf: boolean;
+  /** Centerpieces of all walls in world x. */
+  pieces: { id: PieceId; X: number }[];
 }
 
 const FACES: GhostFace[] = ['happy', 'oo', 'wow', 'sleepy'];
@@ -111,6 +123,14 @@ function frame(s: DrawState, o: PanoOpts): Frame {
       mainBottom: main.y + main.h,
       frontGround: below(w?.surfaces ?? [], main),
       groundBelowSelf: !!below(w?.surfaces ?? [], r),
+      pieces: [
+        ...(o.mainPiece ? [{ id: o.mainPiece, X: main.x + main.w / 2 }] : []),
+        ...(o.sides?.length
+          ? (w?.surfaces ?? [])
+              .filter((x) => x.role === 'side')
+              .map((x) => ({ id: o.sides![x.roleIndex % o.sides!.length]!, X: x.rect.x + x.rect.w / 2 }))
+          : []),
+      ],
     };
   });
 }
@@ -242,6 +262,73 @@ function mixHexHex(a: string, b: string, t: number): string {
   return '#' + m.map((v) => v.toString(16).padStart(2, '0')).join('');
 }
 
+/** Neon: purple glow at the bottom of the walls = where the glowing floor begins. */
+const NEON_SEAM = '#3a1468';
+
+/**
+ * Neon look (reference picture): big friendly ghosts around the house, dancing skeletons and big
+ * jack-o'-lanterns in front of it. Placed in world meters around the house.
+ */
+function drawBigCast(
+  g: CanvasRenderingContext2D,
+  F: Frame,
+  pal: Palette,
+  t: number,
+  visible: (X: number, Y: number, r: number) => boolean,
+) {
+  const { U } = F;
+  const top = F.groundY - U * 0.8;
+  const spots: [number, number, number][] = [
+    [-0.95, 0.42, 1],
+    [0.95, 0.48, 1],
+    [-0.45, 0.2, 0.6],
+    [0.5, 0.16, 0.6],
+  ];
+  spots.forEach(([dx, dy, k], i) => {
+    const X = F.houseX + dx * F.houseW + Math.sin(t * 0.35 + i * 1.7) * U * 0.06;
+    const Y = top + dy * U + Math.sin(t * 0.8 + i) * U * 0.04;
+    const size = U * 0.3 * k;
+    if (!visible(X, Y, size)) return;
+    ghost(g, px(F, X), py(F, Y), size * F.ppm, {
+      color: pal.ghost,
+      t: t + i,
+      face: FACES[i % 4],
+      wave: Math.sin(t * 2 + i) * 0.6,
+      glow: 1.4,
+      mirror: dx > 0,
+      blush: '#ff9ac8',
+    });
+  });
+  const beat = (t * 108) / 60;
+  [-0.62, -0.32, 0.36, 0.66].forEach((dx, i) => {
+    const size = U * 0.3;
+    const X = F.houseX + dx * F.houseW * 1.3;
+    const Y = F.groundY + U * 0.06 - size / 2;
+    if (!visible(X, Y, size)) return;
+    skeleton(
+      g,
+      px(F, X),
+      py(F, Y),
+      size * F.ppm,
+      dancePose(beat + (i % 2) * 0.5, (i + Math.floor(beat / 8)) % 4),
+      pal.ghost,
+      pal.party[i % pal.party.length],
+    );
+  });
+  [-1.05, -0.8, 0.82, 1.1].forEach((dx, i) => {
+    const size = U * (0.12 + 0.03 * (i % 2));
+    const X = F.houseX + dx * F.houseW;
+    const Y = F.groundY + U * 0.1;
+    if (!visible(X, Y, size)) return;
+    pumpkin(g, px(F, X), py(F, Y), size * F.ppm, {
+      pal,
+      face: i % 6,
+      glow: 1.2 + 0.2 * Math.sin(t * 1.5 + i),
+      t: t + i,
+    });
+  });
+}
+
 const px = (F: Frame, X: number) => (X - F.r.x) * F.ppm;
 const py = (F: Frame, Y: number) => (Y - F.r.y) * F.ppm;
 
@@ -295,7 +382,9 @@ function paintStatic(s: DrawState, F: Frame, env: EnvPalette, o: PanoOpts): Stat
     const left = r.x - U * 0.5;
     const right = r.x + r.w + U * 0.5;
     const lightDir = 1;
-    const nearHouse = (X: number, k: number) => F.houseW > 0 && Math.abs(X - F.houseX) < F.houseW * k;
+    const nearHouse = (X: number, k: number) =>
+      (F.houseW > 0 && Math.abs(X - F.houseX) < F.houseW * k) ||
+      F.pieces.some((p) => Math.abs(X - p.X) < PIECE_HALF[p.id] * U * (0.6 + k * 0.5));
     const centerHere = F.houseW > 0 && F.houseX + F.houseW > left && F.houseX - F.houseW < right;
 
     // --- far hills
@@ -412,7 +501,7 @@ function paintStatic(s: DrawState, F: Frame, env: EnvPalette, o: PanoOpts): Stat
     // --- lawn (world-continuous ground line)
     const lawn = g.createLinearGradient(0, py(F, F.groundY), 0, h);
     lawn.addColorStop(0, mixHex(env.grass, env.mid, 0.3));
-    lawn.addColorStop(1, env.near);
+    lawn.addColorStop(1, env.neon ? NEON_SEAM : env.near);
     g.fillStyle = lawn;
     g.beginPath();
     g.moveTo(0, h);
@@ -445,6 +534,20 @@ function paintStatic(s: DrawState, F: Frame, env: EnvPalette, o: PanoOpts): Stat
           idx,
           (h01(F, idx, 9) - 0.5) * 0.15,
         );
+      });
+    }
+
+    // --- the centerpieces of the other walls (crypt, forest, scarecrow, cauldron …)
+    for (const p of F.pieces) {
+      const hw = PIECE_HALF[p.id] * U * 1.2;
+      if (p.X + hw < left || p.X - hw > right) continue;
+      paintPiece(g, p.id, {
+        x: px(F, p.X),
+        y: py(F, F.groundY),
+        u: U * F.ppm,
+        env,
+        pal: palette(s.params),
+        seed: F.seed + Math.round(p.X * 10),
       });
     }
 
@@ -582,6 +685,17 @@ function panoDraw(o: PanoOpts) {
 
     const st = paintStatic(s, F, env, o);
     g.drawImage(st.layer, 0, 0);
+    for (const p of F.pieces) {
+      const hw = PIECE_HALF[p.id] * U * 1.3;
+      if (p.X + hw < r.x || p.X - hw > r.x + r.w) continue;
+      drawPiece(
+        g,
+        p.id,
+        { x: px(F, p.X), y: py(F, F.groundY), u: U * F.ppm, env, pal, seed: F.seed + Math.round(p.X * 10) },
+        t,
+      );
+    }
+    if (o.big && F.houseW) drawBigCast(g, F, pal, t, visible);
 
     if (o.portal) {
       const R = portalR(F);
@@ -780,7 +894,7 @@ function panoDraw(o: PanoOpts) {
       });
       const beat = (t * 108) / 60;
       cells(F, U * 0.5, r.x - U, r.x + r.w + U, (idx, X) => {
-        if (h01(F, idx, 41) > 0.5) return;
+        if (o.mainPiece || h01(F, idx, 41) > 0.5) return;
         const size = U * 0.42;
         const Y = F.groundY + U * 0.09;
         if (!visible(X, Y - size / 2, size)) return;
@@ -839,6 +953,7 @@ export function panoramaScene(id: string, o: PanoOpts): SceneModule {
 
 export const panoramaScenes: SceneModule[] = [
   panoramaScene('magicPanorama', {
+    sides: ['cauldron', 'forest', 'pumpkinPatch'],
     house: false,
     portal: true,
     graves: 0.5,
@@ -848,6 +963,7 @@ export const panoramaScenes: SceneModule[] = [
     party: false,
   }),
   panoramaScene('monsterPanorama', {
+    sides: ['monsterGraves', 'forest', 'cauldron'],
     house: true,
     monsters: true,
     graves: 0.9,
@@ -856,8 +972,18 @@ export const panoramaScenes: SceneModule[] = [
     pumpkins: 0.8,
     party: false,
   }),
-  panoramaScene('spookPanorama', { house: true, graves: 1, ghosts: 1, bats: 1, pumpkins: 1, party: false }),
+  panoramaScene('spookPanorama', {
+    sides: ['graveyard', 'forest', 'pumpkinPatch'],
+    house: true,
+    graves: 1,
+    ghosts: 1,
+    bats: 1,
+    pumpkins: 1,
+    party: false,
+  }),
   panoramaScene('partyPanorama', {
+    mainPiece: 'stage',
+    sides: ['bonfire', 'pumpkinPatch', 'cauldron'],
     house: false,
     graves: 0,
     ghosts: 0.8,
@@ -866,6 +992,8 @@ export const panoramaScenes: SceneModule[] = [
     party: true,
   }),
   panoramaScene('quietPanorama', {
+    mainPiece: 'crypt',
+    sides: ['forest', 'graveyard', 'forest'],
     house: false,
     graves: 1.6,
     ghosts: 0.5,
@@ -874,6 +1002,8 @@ export const panoramaScenes: SceneModule[] = [
     party: false,
   }),
   panoramaScene('neonPanorama', {
+    big: true,
+    sides: ['pumpkinPatch', 'stage', 'graveyard'],
     house: true,
     graves: 0.6,
     ghosts: 1.4,
@@ -979,6 +1109,24 @@ export function groundScene(id: string, o: PanoOpts): SceneModule {
         pumpkin(g, px(F, p.X), py(F, p.Y), p.size * F.ppm, { pal, face: p.face, t: t + p.face, glow: 0.9 });
       }
 
+    if (o.party) {
+      // disco reflections sweeping over the ground + confetti
+      for (let i = 0; i < 9; i++) {
+        const X = r.x + r.w * (0.5 + 0.42 * Math.sin(t * (0.3 + 0.07 * i) + i * 1.3));
+        const Y = r.y + r.h * (0.5 + 0.42 * Math.cos(t * (0.25 + 0.05 * i) + i * 2.1));
+        addGlow(g, px(F, X), py(F, Y), 0.35 * F.ppm, pal.party[i % pal.party.length]!, 0.45);
+      }
+      for (let i = 0; i < 24; i++) {
+        const X = r.x + r.w * hash01(i * 7 + F.seed);
+        const Y = r.y + r.h * hash01(i * 13 + F.seed);
+        g.fillStyle = pal.party[i % pal.party.length]!;
+        g.save();
+        g.translate(px(F, X), py(F, Y));
+        g.rotate(i + t * 0.2);
+        g.fillRect(-0.02 * F.ppm, -0.01 * F.ppm, 0.04 * F.ppm, 0.02 * F.ppm);
+        g.restore();
+      }
+    }
     if (o.portal) drawPathSparkles(g, F, t, pal.accent);
     if (o.monsters) drawTracks(g, F, t, '#b6ff4d');
 
@@ -1002,7 +1150,87 @@ export function groundScene(id: string, o: PanoOpts): SceneModule {
   });
 }
 
+/**
+ * Neon ground (reference picture): glowing purple/green billows, green paw-print trails coming
+ * out of the house door and across the floor, leaves, little ghosts and fuzzy spiders. The top
+ * edge continues the purple glow at the bottom of the wall.
+ */
+export const neonGround: SceneModule = hybridScene(
+  'neonGround',
+  FOG_FRAG,
+  (s) => neonUniforms({ ...s, params: { ...s.params, mood: 'neon' } }),
+  (g, s, f) => {
+    const pal = palette({ ...s.params, mood: 'neon' });
+    const F = frame(s, { house: true, graves: 0, ghosts: 0, bats: 0, pumpkins: 0, party: false, neon: true });
+    const t = f.time * speedOf(s);
+    const { r } = F;
+    const top = g.createLinearGradient(0, 0, 0, s.h * 0.12);
+    top.addColorStop(0, NEON_SEAM);
+    top.addColorStop(1, 'rgba(58,20,104,0)');
+    g.fillStyle = top;
+    g.fillRect(0, 0, s.w, s.h * 0.12);
+    // paw-print trails from the door across the floor (world meters)
+    const end = r.y + r.h;
+    for (let k = 0; k < 2; k++) {
+      const prog = mod(t / 14 + k * 0.5, 1) * 1.4;
+      const steps = 16;
+      for (let j = 0; j < steps; j++) {
+        const u = j / steps;
+        const age = prog - u;
+        if (age < 0 || age > 0.6) continue;
+        const a = Math.min(1, age * 8) * Math.min(1, (0.6 - age) * 4);
+        const Y = F.mainBottom + u * (end - F.mainBottom);
+        const X =
+          F.houseX +
+          Math.sin(u * 3 + k * 2) * Math.min(r.w * 0.3, 1.2) * (k ? 1 : -1) +
+          (j % 2 ? 0.07 : -0.07);
+        if (X < r.x || X > r.x + r.w) continue;
+        pawPrint(g, px(F, X), py(F, Y), 0.16 * F.ppm, Math.PI, LIME, a);
+      }
+    }
+    // drifting leaves
+    for (let i = 0; i < 10; i++) {
+      const X = r.x + mod(hash01(i * 7) + t * (0.01 + hash01(i * 5) * 0.015), 1) * r.w;
+      const Y = r.y + (hash01(i * 9) + 0.04 * Math.sin(t * 0.5 + i)) * r.h;
+      leaf(
+        g,
+        px(F, X),
+        py(F, Y),
+        0.18 * F.ppm,
+        t * (0.4 + hash01(i) * 0.6) + i,
+        i % 3 === 0 ? '#ffb13b' : pal.primary,
+        0.9,
+      );
+    }
+    // two little ghosts gliding, two fuzzy spiders wandering
+    for (let i = 0; i < 2; i++) {
+      const u = mod(t / (12 + i * 3) + i * 0.37, 1);
+      const X = r.x + r.w * (0.2 + 0.6 * noise1(t * 0.05 + i * 9, F.seed));
+      const Y = r.y + r.h * (0.25 + 0.5 * noise1(t * 0.05 + i * 9 + 40, F.seed)) - u * 0.2;
+      ghost(g, px(F, X), py(F, Y), 0.5 * F.ppm, {
+        color: pal.ghost,
+        t: t + i,
+        alpha: Math.sin(u * Math.PI),
+        face: FACES[i],
+        glow: 1.5,
+        blush: '#ff9ac8',
+      });
+      const sx = r.x + r.w * (0.1 + 0.8 * noise1(t * 0.03 + i * 10, F.seed + 5));
+      const sy = r.y + r.h * (0.15 + 0.75 * noise1(t * 0.03 + i * 10 + 50, F.seed + 6));
+      const sx2 = r.x + r.w * (0.1 + 0.8 * noise1(t * 0.03 + i * 10 + 0.05, F.seed + 5));
+      const sy2 = r.y + r.h * (0.15 + 0.75 * noise1(t * 0.03 + i * 10 + 50.05, F.seed + 6));
+      g.save();
+      g.translate(px(F, sx), py(F, sy));
+      g.rotate(Math.atan2(sy2 - sy, sx2 - sx));
+      fuzzySpider(g, 0.5 * F.ppm, t * 5 + i * 3, 0.25, pal.rim, '#ffe14d', i);
+      g.restore();
+    }
+  },
+  { shaderScale: 0.5 },
+);
+
 export const groundScenes: SceneModule[] = [
+  neonGround,
   groundScene('magicGround', {
     house: false,
     portal: true,
@@ -1024,13 +1252,4 @@ export const groundScenes: SceneModule[] = [
   groundScene('spookGround', { house: true, graves: 0, ghosts: 0, bats: 0, pumpkins: 1, party: false }),
   groundScene('partyGround', { house: false, graves: 0, ghosts: 0, bats: 0, pumpkins: 0, party: true }),
   groundScene('quietGround', { house: false, graves: 0, ghosts: 0, bats: 0, pumpkins: 0, party: false }),
-  groundScene('neonGround', {
-    house: true,
-    graves: 0,
-    ghosts: 0,
-    bats: 0,
-    pumpkins: 1.8,
-    party: false,
-    neon: true,
-  }),
 ];

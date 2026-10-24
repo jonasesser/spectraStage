@@ -3,7 +3,7 @@ import { wallScenes } from './scenes/wall.ts';
 import { floorScenes } from './scenes/floor.ts';
 import { neonScenes } from './scenes/neon.ts';
 import { darkScenes } from './scenes/dark.ts';
-import { nightSky, worldScenes } from './scenes/worlds.ts';
+import { ceilingScenes, nightSky, worldScenes } from './scenes/worlds.ts';
 import { groundScenes, panoramaScenes } from './scenes/panorama.ts';
 import { effects } from './effects.ts';
 import { actors } from './actors.ts';
@@ -16,6 +16,7 @@ const parts: Record<string, SceneModule> = Object.fromEntries(
     ...darkScenes,
     ...panoramaScenes,
     ...groundScenes,
+    ...ceilingScenes,
     nightSky,
   ].map((s) => [s.id, s]),
 );

@@ -10,35 +10,140 @@ import { hybridScene, hash01 } from '@spectrastage/engine';
 import { palette } from '../palette.ts';
 import { bat, px } from '../shapes.ts';
 import { speedOf } from './common.ts';
-import { envPalette, SKY_FRAG, skyUniforms } from './env.ts';
+import { addGlow, envPalette, SKY_FRAG, skyUniforms } from './env.ts';
 import { drawWorldEvents } from './worldEvents.ts';
 
-/** Night sky seen from below – stars, drifting clouds, a few bats. For a ceiling. */
-export const nightSky: SceneModule = hybridScene(
-  'nightSky',
-  SKY_FRAG,
-  (s) =>
-    skyUniforms(
-      s,
-      envPalette(s.params),
-      { moon: [0.5, -3], moonR: 0.06, horizonY: -0.6, clouds: 0.8, cloudBand: 2 },
-      speedOf(s),
-    ),
-  (g, s, f) => {
-    const pal = palette(s.params);
-    const t = f.time * speedOf(s);
-    const n = 3;
-    for (let i = 0; i < n; i++) {
-      const period = 16 + hash01(i * 7 + 2) * 10;
-      const u = ((t / period + hash01(i * 3)) % 1) * 1.3 - 0.15;
-      const ang = hash01(i * 11) * Math.PI * 2;
-      const cx = s.w / 2 + Math.cos(ang) * (u - 0.5) * s.w * 1.2;
-      const cy = s.h / 2 + Math.sin(ang) * (u - 0.5) * s.h * 1.2;
-      bat(g, cx, cy, px(s, 0.45, 0.05, 0.12), Math.sin(t * 15 + i), pal);
-    }
-  },
-  { shaderScale: 0.5 },
-);
+type CeilingKind = 'night' | 'neon' | 'party' | 'magic' | 'monster';
+
+/**
+ * Ceilings: the sky seen from below, one per world. Night: stars, clouds, bats. Neon: glowing
+ * purple/green sky. Party: string lights from the corners to a disco ball in the middle. Magic:
+ * an aurora swirl with spirits. Monster: huge eyes opening in the clouds.
+ */
+function ceiling(id: string, kind: CeilingKind): SceneModule {
+  return hybridScene(
+    id,
+    SKY_FRAG,
+    (s) =>
+      skyUniforms(
+        s,
+        envPalette(kind === 'neon' ? { ...s.params, mood: 'neon' } : s.params),
+        { moon: [0.5, -3], moonR: 0.06, horizonY: kind === 'neon' ? 0.1 : -0.6, clouds: 0.8, cloudBand: 2 },
+        speedOf(s),
+      ),
+    (g, s, f) => {
+      const pal = palette(kind === 'neon' ? { ...s.params, mood: 'neon' } : s.params);
+      const t = f.time * speedOf(s);
+      const { w, h } = s;
+      const m = Math.min(w, h);
+      const cx = w / 2;
+      const cy = h / 2;
+      if (kind === 'party') {
+        for (const [x0, y0] of [
+          [0, 0],
+          [w, 0],
+          [w, h],
+          [0, h],
+        ] as const) {
+          for (let k = 0; k < 2; k++) {
+            g.strokeStyle = 'rgba(80,70,90,0.8)';
+            g.lineWidth = Math.max(1, m * 0.004);
+            g.beginPath();
+            g.moveTo(x0, y0);
+            g.quadraticCurveTo((x0 + cx) / 2 + (k ? 20 : -20), (y0 + cy) / 2 + (k ? -20 : 20), cx, cy);
+            g.stroke();
+            for (let i = 1; i < 10; i++) {
+              const u = i / 10;
+              const mx = (x0 + cx) / 2 + (k ? 20 : -20);
+              const my = (y0 + cy) / 2 + (k ? -20 : 20);
+              const x = (1 - u) * (1 - u) * x0 + 2 * (1 - u) * u * mx + u * u * cx;
+              const y = (1 - u) * (1 - u) * y0 + 2 * (1 - u) * u * my + u * u * cy;
+              const c = pal.party[(i + k) % pal.party.length]!;
+              const tw = 0.55 + 0.45 * Math.sin(t * 1.5 + i + k);
+              addGlow(g, x, y, m * 0.035, c, 0.55 * tw);
+              g.fillStyle = c;
+              g.beginPath();
+              g.arc(x, y, m * 0.008, 0, Math.PI * 2);
+              g.fill();
+            }
+          }
+        }
+        const br = m * 0.07;
+        const ball = g.createRadialGradient(cx - br * 0.3, cy - br * 0.3, br * 0.1, cx, cy, br);
+        ball.addColorStop(0, '#ffffff');
+        ball.addColorStop(1, '#5a5f7a');
+        g.fillStyle = ball;
+        g.beginPath();
+        g.arc(cx, cy, br, 0, Math.PI * 2);
+        g.fill();
+        for (let i = 0; i < 8; i++) {
+          const a = t * 0.6 + (i / 8) * Math.PI * 2;
+          addGlow(
+            g,
+            cx + Math.cos(a) * m * 0.35,
+            cy + Math.sin(a) * m * 0.35,
+            m * 0.04,
+            pal.party[i % pal.party.length]!,
+            0.6,
+          );
+        }
+        return;
+      }
+      if (kind === 'magic') {
+        for (let k = 0; k < 4; k++) {
+          const a = t * 0.15 + k * 1.6;
+          addGlow(
+            g,
+            cx + Math.cos(a) * m * 0.3,
+            cy + Math.sin(a * 1.3) * m * 0.25,
+            m * 0.5,
+            [pal.accent, '#7dffd8', pal.secondary, '#b06bff'][k]!,
+            0.35,
+          );
+        }
+      }
+      if (kind === 'monster') {
+        for (let i = 0; i < 3; i++) {
+          const ph = (t / (9 + i * 2) + hash01(i * 5)) % 1;
+          const open = Math.sin(Math.min(1, Math.max(0, (ph - 0.2) / 0.5)) * Math.PI);
+          if (open < 0.02) continue;
+          const ex = w * (0.25 + 0.5 * hash01(i * 7 + Math.floor(t / (9 + i * 2))));
+          const ey = h * (0.25 + 0.5 * hash01(i * 11 + Math.floor(t / (9 + i * 2))));
+          const er = m * 0.06;
+          for (const sd of [-1, 1]) {
+            addGlow(g, ex + sd * er * 1.6, ey, er * 2.5, '#b6ff4d', 0.35 * open);
+            g.fillStyle = '#d6ff6b';
+            g.beginPath();
+            g.ellipse(ex + sd * er * 1.6, ey, er, er * 0.6 * open, 0, 0, Math.PI * 2);
+            g.fill();
+            g.fillStyle = '#000';
+            g.beginPath();
+            g.ellipse(ex + sd * er * 1.6, ey, er * 0.15, er * 0.5 * open, 0, 0, Math.PI * 2);
+            g.fill();
+          }
+        }
+      }
+      const n = kind === 'neon' ? 5 : 3;
+      for (let i = 0; i < n; i++) {
+        const period = 16 + hash01(i * 7 + 2) * 10;
+        const u = ((t / period + hash01(i * 3)) % 1) * 1.3 - 0.15;
+        const ang = hash01(i * 11) * Math.PI * 2;
+        const x = cx + Math.cos(ang) * (u - 0.5) * w * 1.2;
+        const y = cy + Math.sin(ang) * (u - 0.5) * h * 1.2;
+        bat(g, x, y, px(s, 0.45, 0.05, 0.12), Math.sin(t * 15 + i), pal);
+      }
+    },
+    { shaderScale: 0.5 },
+  );
+}
+
+export const nightSky = ceiling('nightSky', 'night');
+export const ceilingScenes: SceneModule[] = [
+  ceiling('neonCeiling', 'neon'),
+  ceiling('partyCeiling', 'party'),
+  ceiling('magicCeiling', 'magic'),
+  ceiling('monsterCeiling', 'monster'),
+];
 
 export interface WorldParts {
   main: string;
@@ -50,10 +155,25 @@ export interface WorldParts {
 export const WORLDS: Record<string, WorldParts> = {
   // Walls are one continuous panorama (see panorama.ts); ground and ceiling are their own planes.
   spookWorld: { main: 'spookPanorama', side: ['spookPanorama'], ground: ['spookGround'] },
-  partyWorld: { main: 'partyPanorama', side: ['partyPanorama'], ground: ['partyGround'] },
-  neonWorld: { main: 'neonPanorama', side: ['neonPanorama'], ground: ['neonGround'] },
-  magicWorld: { main: 'magicPanorama', side: ['magicPanorama'], ground: ['magicGround'] },
-  monsterWorld: { main: 'monsterPanorama', side: ['monsterPanorama'], ground: ['monsterGround'] },
+  partyWorld: {
+    main: 'partyPanorama',
+    side: ['partyPanorama'],
+    ground: ['partyGround'],
+    ceiling: 'partyCeiling',
+  },
+  neonWorld: { main: 'neonPanorama', side: ['neonPanorama'], ground: ['neonGround'], ceiling: 'neonCeiling' },
+  magicWorld: {
+    main: 'magicPanorama',
+    side: ['magicPanorama'],
+    ground: ['magicGround'],
+    ceiling: 'magicCeiling',
+  },
+  monsterWorld: {
+    main: 'monsterPanorama',
+    side: ['monsterPanorama'],
+    ground: ['monsterGround'],
+    ceiling: 'monsterCeiling',
+  },
   quietWorld: { main: 'quietPanorama', side: ['quietPanorama'], ground: ['quietGround'] },
 };
 
