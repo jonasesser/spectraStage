@@ -355,7 +355,6 @@ function Projection({
       onDoubleClick={activate}
     >
       <canvas ref={canvasRef} className="projection-canvas" />
-      <div className="projection-overlay-guard" />
       {phase === 'run' && stats && (stats.contextLost || stats.lastError || output?.resolutionMismatch) && (
         <div className="projection-problem">
           {stats.contextLost
@@ -438,6 +437,15 @@ function Projection({
             {L('Calibration', 'Kalibrierung')}:{' '}
             {stats?.calibrationOk ? 'OK' : L('invalid → black', 'ungültig → schwarz')} ·{' '}
             {L('Blackout', 'Blackout')}: {stats?.blackout ? L('yes', 'ja') : L('no', 'nein')}
+          </div>
+          <div>
+            {L('Screen', 'Bildschirm')}: {screen.width}×{screen.height} @ {window.devicePixelRatio} ·{' '}
+            {L('Window', 'Fenster')}: {window.innerWidth}×{window.innerHeight} · {L('Format', 'Format')}:{' '}
+            {output?.resolutionMismatch ? L('changed → black', 'geändert → schwarz') : 'OK'}
+          </div>
+          <div>
+            GPU: {stats?.gpu} {stats?.contextLost ? '· CONTEXT LOST' : ''}
+            {stats?.lastError ? ` · ${stats.lastError}` : ''}
           </div>
           <div className="muted">
             B = {L('local blackout', 'lokaler Blackout')} · F = {L('fullscreen', 'Vollbild')} · I = Info

@@ -799,19 +799,6 @@ label.check {
   width: 100%;
   height: 100%;
   display: block;
-  /* Chrome/Edge on Windows hand a screen-filling opaque WebGL canvas to a hardware overlay
-     (DirectComposition); some GPU drivers then show it black at large sizes. A not quite
-     opaque canvas plus a tiny element on top keeps it in normal composition. */
-  opacity: 0.999;
-}
-.projection-overlay-guard {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 2px;
-  height: 2px;
-  background: rgba(0, 0, 0, 0.02);
-  pointer-events: none;
 }
 .projection-center {
   position: absolute;

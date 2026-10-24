@@ -82,6 +82,8 @@ export interface RendererStats {
   contextLost: boolean;
   /** Last frame error (rendering problem), if any in the last minute. */
   lastError: string | null;
+  /** Graphics card as reported by the browser (diagnostics). */
+  gpu: string;
 }
 
 const VERT = /* glsl */ `
@@ -548,8 +550,23 @@ export class StageRenderer {
       height: this.height,
       blackout: this.blackoutNow,
       contextLost: this.contextLost,
+      gpu: this.gpuName(),
       lastError: this.lastError && Date.now() - this.lastError.at < 60_000 ? this.lastError.msg : null,
     };
+  }
+
+  private gpu: string | null = null;
+  private gpuName(): string {
+    if (this.gpu === null) {
+      try {
+        const gl = this.renderer.getContext();
+        const ext = gl.getExtension('WEBGL_debug_renderer_info');
+        this.gpu = String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+      } catch {
+        this.gpu = '?';
+      }
+    }
+    return this.gpu;
   }
 
   start(): void {
