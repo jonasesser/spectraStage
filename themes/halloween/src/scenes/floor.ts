@@ -30,7 +30,7 @@ function stopGo(k: number): number {
   return i + smoothstep(0, 0.7, k - i);
 }
 
-function web(
+export function web(
   g: CanvasRenderingContext2D,
   cx: number,
   cy: number,

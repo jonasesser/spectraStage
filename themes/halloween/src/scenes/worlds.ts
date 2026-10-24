@@ -49,10 +49,10 @@ export interface WorldParts {
 
 export const WORLDS: Record<string, WorldParts> = {
   // Walls are one continuous panorama (see panorama.ts); ground and ceiling are their own planes.
-  spookWorld: { main: 'spookPanorama', side: ['spookPanorama'], ground: ['spidersAndFog'] },
-  partyWorld: { main: 'partyPanorama', side: ['partyPanorama'], ground: ['pumpkinTrail'] },
-  neonWorld: { main: 'neonPanorama', side: ['neonPanorama'], ground: ['neonFog'] },
-  quietWorld: { main: 'quietPanorama', side: ['quietPanorama'], ground: ['ghostFootprints'] },
+  spookWorld: { main: 'spookPanorama', side: ['spookPanorama'], ground: ['spookGround'] },
+  partyWorld: { main: 'partyPanorama', side: ['partyPanorama'], ground: ['partyGround'] },
+  neonWorld: { main: 'neonPanorama', side: ['neonPanorama'], ground: ['neonGround'] },
+  quietWorld: { main: 'quietPanorama', side: ['quietPanorama'], ground: ['quietGround'] },
 };
 
 /** Which part scene a surface plays inside a world. */

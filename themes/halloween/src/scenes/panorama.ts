@@ -8,10 +8,11 @@
  * Everything placed "by world x" uses either integer-frequency sines over the period or a cell
  * grid whose cell count divides the period – both are periodic by construction.
  */
-import { hash01, hybridScene, memo, noise1, smoothstep, TAU } from '@spectrastage/engine';
+import { canvasScene, hash01, hybridScene, memo, noise1, smoothstep, TAU } from '@spectrastage/engine';
 import type { DrawState, SceneModule } from '@spectrastage/engine';
 import { palette, type Palette } from '../palette.ts';
-import { bat, dancePose, ghost, pumpkin, skeleton, type GhostFace } from '../shapes.ts';
+import { bat, dancePose, fuzzySpider, ghost, pumpkin, skeleton, type GhostFace } from '../shapes.ts';
+import { web } from './floor.ts';
 import { densityOf, mod, speedOf } from './common.ts';
 import {
   addGlow,
@@ -59,6 +60,12 @@ interface Frame {
   houseX: number;
   houseW: number;
   seed: number;
+  /** Bottom edge of the main wall = where the ground in front of the house begins. */
+  mainBottom: number;
+  /** Floor surface laid out directly below the main wall (the front yard / driveway). */
+  frontGround: Rect | null;
+  /** A floor continues directly below this surface (no vignette / edge grass needed). */
+  groundBelowSelf: boolean;
 }
 
 const FACES: GhostFace[] = ['happy', 'oo', 'wow', 'sleepy'];
@@ -86,8 +93,77 @@ function frame(s: DrawState, o: PanoOpts): Frame {
       houseX: main.x + main.w / 2,
       houseW: o.house ? Math.min(main.w * 0.56, U * 0.66) : 0,
       seed: (w?.seed ?? s.seed) & 0xffff,
+      mainBottom: main.y + main.h,
+      frontGround: below(w?.surfaces ?? [], main),
+      groundBelowSelf: !!below(w?.surfaces ?? [], r),
     };
   });
+}
+
+/** The floor laid out directly below a wall in the unfolded stage (= the ground in front of it). */
+function below(surfaces: readonly { role: string; rect: Rect }[], wall: Rect): Rect | null {
+  const bottom = wall.y + wall.h;
+  return (
+    surfaces
+      .filter((x) => x.role === 'ground')
+      .map((x) => x.rect)
+      .filter((g) => Math.abs(g.y - bottom) < 0.6 && g.x < wall.x + wall.w && g.x + g.w > wall.x)
+      .sort((a, b) => Math.abs(a.y - bottom) - Math.abs(b.y - bottom))[0] ?? null
+  );
+}
+
+/**
+ * The garden path in stage meters: from the door down the wall (fake perspective: it widens
+ * towards the viewer) and then straight on across the floor in front of the house at its real
+ * width – the same function is used on the wall and on the floor, so both halves meet exactly.
+ */
+function pathHalf(F: Frame, Y: number): number {
+  const dw = F.houseW * 0.09;
+  if (Y <= F.mainBottom) {
+    const v = Math.max(0, (Y - F.groundY) / Math.max(0.05, F.mainBottom - F.groundY));
+    return dw * (0.7 + 2.5 * v * v);
+  }
+  return dw * 3.2 + (Y - F.mainBottom) * 0.04;
+}
+
+interface PathPumpkin {
+  X: number;
+  Y: number;
+  size: number;
+  face: number;
+}
+
+/** Jack-o'-lanterns lining the path – on the wall and continued on the floor. */
+function pathPumpkins(F: Frame, d: number): PathPumpkin[] {
+  const out: PathPumpkin[] = [];
+  if (!F.houseW) return out;
+  const dw = F.houseW * 0.09;
+  const nW = Math.max(1, Math.round(Math.min(4, d * 3)));
+  for (let k = 0; k < nW; k++) {
+    const v = (k + 0.6) / nW;
+    const Y = F.groundY + (F.mainBottom - F.groundY) * v * 0.85;
+    for (const side of [-1, 1])
+      out.push({
+        X: F.houseX + side * (pathHalf(F, Y) + dw * 0.8),
+        Y,
+        size: F.U * 0.09 * (0.55 + 0.6 * v),
+        face: (k * 2 + (side > 0 ? 1 : 0) + F.seed) % 6,
+      });
+  }
+  const g = F.frontGround;
+  if (g) {
+    const step = Math.max(0.7, 0.95 / Math.max(0.5, d));
+    let k = 0;
+    for (let Y = F.mainBottom + step * 0.5; Y < g.y + g.h - 0.15; Y += step, k++)
+      for (const side of [-1, 1])
+        out.push({
+          X: F.houseX + side * (pathHalf(F, Y) + F.U * 0.08),
+          Y,
+          size: F.U * 0.11,
+          face: (k * 2 + (side > 0 ? 1 : 0) + F.seed + 3) % 6,
+        });
+  }
+  return out;
 }
 
 const px = (F: Frame, X: number) => (X - F.r.x) * F.ppm;
@@ -259,22 +335,29 @@ function paintStatic(s: DrawState, F: Frame, env: EnvPalette, o: PanoOpts): Stat
       });
     }
 
-    // --- path from the door to the viewer
+    // --- path from the door to the viewer (continues on the floor in front of the house)
     if (manor) {
-      const doorX = mx + manor.door.x + manor.door.w / 2;
-      const dw = manor.door.w;
+      const pathPoly = (y0: number, y1: number) => {
+        const n = 24;
+        const pts: [number, number][] = [];
+        for (let i = 0; i <= n; i++) {
+          const Y = y0 + ((y1 - y0) * i) / n;
+          pts.push([px(F, F.houseX + pathHalf(F, Y)), py(F, Y)]);
+        }
+        for (let i = n; i >= 0; i--) {
+          const Y = y0 + ((y1 - y0) * i) / n;
+          pts.push([px(F, F.houseX - pathHalf(F, Y)), py(F, Y)]);
+        }
+        return pts;
+      };
       const gy = py(F, F.groundY);
-      const bottom = py(F, F.r.y + F.r.h);
+      const bottom = py(F, F.mainBottom);
       const pathG = g.createLinearGradient(0, gy, 0, bottom);
       pathG.addColorStop(0, mixHex(env.stone, env.mid, 0.4));
       pathG.addColorStop(1, mixHex(env.stone, env.near, 0.5));
       g.fillStyle = pathG;
       g.beginPath();
-      g.moveTo(doorX - dw * 0.7, gy);
-      g.lineTo(doorX + dw * 0.7, gy);
-      g.quadraticCurveTo(doorX + dw * 1.6, gy + (bottom - gy) * 0.6, doorX + dw * 3.2, bottom);
-      g.lineTo(doorX - dw * 3.2, bottom);
-      g.quadraticCurveTo(doorX - dw * 1.6, gy + (bottom - gy) * 0.6, doorX - dw * 0.7, gy);
+      pathPoly(F.groundY, F.mainBottom).forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
       g.closePath();
       g.fill();
     }
@@ -309,23 +392,25 @@ function paintStatic(s: DrawState, F: Frame, env: EnvPalette, o: PanoOpts): Stat
       g.fill();
     });
 
-    // --- foreground grass tufts along the bottom edge (world cells)
-    const gb = py(F, r.y + r.h) - 1;
-    g.fillStyle = env.near;
-    cells(F, U * 0.05, left, right, (idx, X) => {
-      const bh = U * (0.02 + 0.03 * h01(F, idx, 11)) * F.ppm;
-      const x = px(F, X);
-      g.beginPath();
-      g.moveTo(x - bh * 0.3, gb);
-      g.quadraticCurveTo(x, gb - bh * 0.6, x + bh * (h01(F, idx, 12) - 0.5), gb - bh);
-      g.quadraticCurveTo(x + bh * 0.05, gb - bh * 0.5, x + bh * 0.3, gb);
-      g.fill();
-    });
-    const vig = g.createLinearGradient(0, h * 0.9, 0, h);
-    vig.addColorStop(0, 'rgba(0,0,0,0)');
-    vig.addColorStop(1, 'rgba(0,0,0,0.5)');
-    g.fillStyle = vig;
-    g.fillRect(0, h * 0.9, w, h * 0.1);
+    // --- foreground grass + vignette at the bottom edge – only if no floor continues below
+    if (!F.groundBelowSelf) {
+      const gb = py(F, r.y + r.h) - 1;
+      g.fillStyle = env.near;
+      cells(F, U * 0.05, left, right, (idx, X) => {
+        const bh = U * (0.02 + 0.03 * h01(F, idx, 11)) * F.ppm;
+        const x = px(F, X);
+        g.beginPath();
+        g.moveTo(x - bh * 0.3, gb);
+        g.quadraticCurveTo(x, gb - bh * 0.6, x + bh * (h01(F, idx, 12) - 0.5), gb - bh);
+        g.quadraticCurveTo(x + bh * 0.05, gb - bh * 0.5, x + bh * 0.3, gb);
+        g.fill();
+      });
+      const vig = g.createLinearGradient(0, h * 0.9, 0, h);
+      vig.addColorStop(0, 'rgba(0,0,0,0)');
+      vig.addColorStop(1, 'rgba(0,0,0,0.5)');
+      g.fillStyle = vig;
+      g.fillRect(0, h * 0.9, w, h * 0.1);
+    }
     return { layer: c, manor, mx, my };
   });
 }
@@ -433,24 +518,12 @@ function panoDraw(o: PanoOpts) {
         env.winEdge,
         0.45 + 0.1 * Math.sin(t * 1.7),
       );
-      // jack-o'-lanterns lining the path
-      const nP = Math.max(2, Math.round(Math.min(8, d * 6)));
-      const bottom = py(F, r.y + r.h);
-      const gy = py(F, F.groundY);
-      for (let i = 0; i < nP && o.pumpkins > 0; i++) {
-        const side = i % 2 ? 1 : -1;
-        const k = Math.floor(i / 2);
-        const v = (k + 0.6) / Math.ceil(nP / 2);
-        const y = gy + (bottom - gy) * v * 0.85;
-        const x = doorX + side * M.door.w * (1.4 + 2.6 * v * v);
-        pumpkin(g, x, y, U * 0.09 * F.ppm * (0.55 + 0.6 * v), {
-          pal,
-          face: (i * 3 + F.seed) % 6,
-          t: t + i,
-          glow: 0.9,
-        });
-      }
     }
+    if (o.pumpkins > 0)
+      for (const p of pathPumpkins(F, d)) {
+        if (!visible(p.X, p.Y, p.size)) continue;
+        pumpkin(g, px(F, p.X), py(F, p.Y), p.size * F.ppm, { pal, face: p.face, t: t + p.face, glow: 0.9 });
+      }
 
     // pumpkins along the fence, eyes in the bushes (world cells)
     if (o.pumpkins > 0) {
@@ -593,6 +666,132 @@ export const panoramaScenes: SceneModule[] = [
     graves: 0.6,
     ghosts: 1.4,
     bats: 1,
+    pumpkins: 1.8,
+    party: false,
+    neon: true,
+  }),
+];
+
+/**
+ * The ground of a panorama world: the floor in front of the walls, seen from above. It continues
+ * what the wall shows at its bottom edge – the garden path with its jack-o'-lanterns, dark lawn,
+ * a thin haze. Kept deliberately sparse: one web, a couple of spiders.
+ */
+export function groundScene(id: string, o: PanoOpts): SceneModule {
+  return canvasScene(id, (g, s, f) => {
+    const env = o.neon ? envPalette({ ...s.params, mood: 'neon' }) : envPalette(s.params);
+    const pal: Palette = o.neon ? palette({ ...s.params, mood: 'neon' }) : palette(s.params);
+    const F = frame(s, o);
+    const t = f.time * speedOf(s);
+    const d = densityOf(s);
+    const { r, U } = F;
+    const front =
+      F.frontGround && Math.abs(F.frontGround.x - r.x) < 1e-6 && Math.abs(F.frontGround.y - r.y) < 1e-6;
+    const st = memo(s, 'groundStatic', () => {
+      const { c, g: q } = offscreen(s.w, s.h);
+      // dark lawn continuing the wall's bottom color, fading into the night
+      const base = q.createLinearGradient(0, 0, 0, s.h);
+      base.addColorStop(0, env.near);
+      base.addColorStop(1, mixHex(env.near, '#000000', 0.6));
+      q.fillStyle = base;
+      q.fillRect(0, 0, s.w, s.h);
+      // the path, continued from the wall at exactly the same width
+      if (front && F.houseW) {
+        const y0 = r.y;
+        const y1 = r.y + r.h;
+        q.fillStyle = mixHex(env.stone, env.near, 0.5);
+        q.beginPath();
+        const n = 16;
+        for (let i = 0; i <= n; i++) {
+          const Y = y0 + ((y1 - y0) * i) / n;
+          q.lineTo(px(F, F.houseX + pathHalf(F, Y)), py(F, Y));
+        }
+        for (let i = n; i >= 0; i--) {
+          const Y = y0 + ((y1 - y0) * i) / n;
+          q.lineTo(px(F, F.houseX - pathHalf(F, Y)), py(F, Y));
+        }
+        q.closePath();
+        q.fill();
+        // flagstone joints
+        q.fillStyle = 'rgba(0,0,0,0.35)';
+        for (let Y = r.y + 0.35; Y < y1; Y += 0.35) {
+          const hw = pathHalf(F, Y);
+          q.fillRect(px(F, F.houseX - hw), py(F, Y), hw * 2 * F.ppm, Math.max(1, 0.015 * F.ppm));
+          const off = (Math.round(Y / 0.35) % 2 ? 0.25 : -0.2) * hw;
+          q.fillRect(px(F, F.houseX + off), py(F, Y), Math.max(1, 0.015 * F.ppm), 0.35 * F.ppm);
+        }
+      }
+      // sparse grass tufts on the lawn
+      q.fillStyle = mixHex(env.near, env.treeRim, 0.15);
+      cells(F, 0.3, r.x - 0.3, r.x + r.w + 0.3, (idx, X) => {
+        for (let k = 0; k < 3; k++) {
+          if (h01(F, idx, 50 + k) > 0.35) continue;
+          const Y = r.y + r.h * h01(F, idx, 60 + k);
+          if (front && F.houseW && Math.abs(X - F.houseX) < pathHalf(F, Y) + 0.15) continue;
+          const bh = (0.04 + 0.05 * h01(F, idx, 70 + k)) * F.ppm;
+          const x = px(F, X);
+          const y = py(F, Y);
+          q.beginPath();
+          q.moveTo(x - bh * 0.3, y);
+          q.quadraticCurveTo(x, y - bh * 0.6, x + bh * (h01(F, idx, 80 + k) - 0.5), y - bh);
+          q.quadraticCurveTo(x + bh * 0.05, y - bh * 0.5, x + bh * 0.3, y);
+          q.fill();
+        }
+      });
+      // one web in the corner away from the path
+      const m = Math.min(s.w, s.h);
+      const rightCorner = !front || F.houseX < r.x + r.w / 2;
+      web(
+        q,
+        rightCorner ? s.w : 0,
+        s.h,
+        m * 0.3,
+        rightCorner ? Math.PI : Math.PI * 1.5,
+        rightCorner ? Math.PI * 1.5 : Math.PI * 2,
+        pal.ghost,
+      );
+      return c;
+    });
+    g.drawImage(st, 0, 0);
+
+    // jack-o'-lanterns continuing along the path + their light on the stones
+    if (o.pumpkins > 0)
+      for (const p of pathPumpkins(F, d)) {
+        if (p.Y < r.y - p.size || p.Y > r.y + r.h + p.size) continue;
+        if (p.X < r.x - p.size || p.X > r.x + r.w + p.size) continue;
+        lightPool(g, px(F, p.X), py(F, p.Y), p.size * 2.2 * F.ppm, p.size * 1.6 * F.ppm, env.winEdge, 0.22);
+        pumpkin(g, px(F, p.X), py(F, p.Y), p.size * F.ppm, { pal, face: p.face, t: t + p.face, glow: 0.9 });
+      }
+
+    // thin haze drifting over the ground (world coordinates, very light)
+    worldFog(g, F, env, r.y + r.h * 0.35, (r.h / U) * 0.5, t, 0.12, F.seed + 11, 0.4);
+
+    // two spiders wandering slowly, never over the path
+    for (let i = 0; i < 2; i++) {
+      const u = t * 0.02 + i * 0.5;
+      const X = r.x + r.w * (0.1 + 0.8 * noise1(u, F.seed + i * 7));
+      const Y = r.y + r.h * (0.15 + 0.7 * noise1(u + 13, F.seed + i * 7 + 3));
+      if (front && F.houseW && Math.abs(X - F.houseX) < pathHalf(F, Y) + 0.2) continue;
+      const X2 = r.x + r.w * (0.1 + 0.8 * noise1(u + 0.01, F.seed + i * 7));
+      const Y2 = r.y + r.h * (0.15 + 0.7 * noise1(u + 13.01, F.seed + i * 7 + 3));
+      g.save();
+      g.translate(px(F, X), py(F, Y));
+      g.rotate(Math.atan2(Y2 - Y, X2 - X));
+      fuzzySpider(g, U * 0.1 * F.ppm, t * 6 + i, 0.6, pal.rim, '#ffe14d', i);
+      g.restore();
+    }
+  });
+}
+
+export const groundScenes: SceneModule[] = [
+  groundScene('spookGround', { house: true, graves: 0, ghosts: 0, bats: 0, pumpkins: 1, party: false }),
+  groundScene('partyGround', { house: false, graves: 0, ghosts: 0, bats: 0, pumpkins: 0, party: true }),
+  groundScene('quietGround', { house: false, graves: 0, ghosts: 0, bats: 0, pumpkins: 0, party: false }),
+  groundScene('neonGround', {
+    house: true,
+    graves: 0,
+    ghosts: 0,
+    bats: 0,
     pumpkins: 1.8,
     party: false,
     neon: true,
