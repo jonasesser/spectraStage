@@ -142,7 +142,8 @@ class ZombieFx {
     // zombie colours for the whole picture
     for (let i = 0, p = 0; i < W * H; i++, p += 4) {
       const c = m[i]!;
-      const a = c <= 0.35 ? 0 : c >= 0.75 ? 1 : (c - 0.35) / 0.4;
+      // solid person, soft only right at the outline
+      const a = c <= 0.3 ? 0 : c >= 0.55 ? 1 : (c - 0.3) / 0.25;
       if (a <= 0) {
         d[p + 3] = 0;
         continue;
@@ -154,20 +155,20 @@ class ZombieFx {
         d[p] = 52 + 150 * q;
         d[p + 1] = 92 + 160 * q;
         d[p + 2] = 64 + 110 * q;
-        d[p + 3] = 255 * a * 0.93;
+        d[p + 3] = 255 * a;
       } else {
         // zombie make-up: every detail of the person stays (recognisable), colours turn pale
         // grey-green with a bit more contrast
         const gray = l * 255;
-        const r0 = d[p]! * 0.45 + gray * 0.55;
-        const g0 = d[p + 1]! * 0.45 + gray * 0.55;
-        const b0 = d[p + 2]! * 0.45 + gray * 0.55;
+        const r0 = d[p]! * 0.65 + gray * 0.35;
+        const g0 = d[p + 1]! * 0.65 + gray * 0.35;
+        const b0 = d[p + 2]! * 0.65 + gray * 0.35;
         // lifted: a ghost must glow on the dark scene, also in dark clothes
-        const k = (x: number) => Math.max(0, Math.min(255, 62 + ((x - 128) * 1.1 + 128) * 0.82));
-        d[p] = k(r0 * 0.86);
-        d[p + 1] = k(g0 * 1.02 + 16);
-        d[p + 2] = k(b0 * 0.84);
-        d[p + 3] = 255 * a * 0.95;
+        const k = (x: number) => Math.max(0, Math.min(255, 34 + ((x - 128) * 1.08 + 128) * 0.9));
+        d[p] = k(r0 * 0.88);
+        d[p + 1] = k(g0 * 1.02 + 12);
+        d[p + 2] = k(b0 * 0.86);
+        d[p + 3] = 255 * a;
       }
     }
     const tg = this.tmp.getContext('2d')!;
@@ -193,6 +194,13 @@ class ZombieFx {
         if (!used.has(pr) && Math.abs(pr.box.x + pr.box.w / 2 - cx) < W * 0.25)
           if (!best || Math.abs(pr.box.x + pr.box.w / 2 - cx) < Math.abs(best.box.x + best.box.w / 2 - cx))
             best = pr;
+      // lost for a moment (slow recognition, a jump): take the nearest one seen recently instead
+      // of making a new ghost that would fade in from transparent
+      if (!best)
+        for (const pr of this.people)
+          if (!used.has(pr) && now - pr.seen < 3000)
+            if (!best || Math.abs(pr.box.x + pr.box.w / 2 - cx) < Math.abs(best.box.x + best.box.w / 2 - cx))
+              best = pr;
       if (!best) {
         best = {
           id: this.nextId++,
@@ -279,7 +287,7 @@ class ZombieFx {
     g.globalCompositeOperation = 'destination-in';
     const gr = g.createLinearGradient(0, 0, 0, oh);
     gr.addColorStop(0, 'rgba(0,0,0,1)');
-    gr.addColorStop(0.66, 'rgba(0,0,0,1)');
+    gr.addColorStop(0.84, 'rgba(0,0,0,1)');
     gr.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = gr;
     g.fillRect(0, 0, ow, oh);
@@ -296,7 +304,7 @@ class ZombieFx {
     g.save();
     g.globalCompositeOperation = 'destination-over';
     g.filter = `blur(${Math.max(2, Math.round(oh / 45))}px) brightness(1.7)`;
-    g.globalAlpha = 0.8;
+    g.globalAlpha = 0.55;
     g.drawImage(glow, 0, 0);
     g.restore();
   }
@@ -310,8 +318,11 @@ class ZombieFx {
     const now = performance.now();
     const out: { canvas: HTMLCanvasElement; alpha: number; u: number; id: number }[] = [];
     this.people = this.people.filter((pr) => {
-      const target = on && now - pr.seen < 600 ? 1 : 0;
-      pr.alpha += Math.sign(target - pr.alpha) * Math.min(Math.abs(target - pr.alpha), dt * 1.2);
+      // a person stays fully visible while the camera sees them (also on a slow PC where the
+      // recognition runs only a few times a second); fade in quickly, out gently
+      const target = on && now - pr.seen < 1500 ? 1 : 0;
+      const rate = target > pr.alpha ? 3 : 1;
+      pr.alpha += Math.sign(target - pr.alpha) * Math.min(Math.abs(target - pr.alpha), dt * rate);
       if (pr.alpha <= 0.001 && target === 0) return false;
       out.push({
         canvas: pr.canvas,
@@ -534,10 +545,11 @@ export class ZombieReceiver {
 
   private sprite(): LiveSprite[] {
     const now = performance.now();
-    const dt = Math.min(100, now - (this.lastFrame || now)) / 1000;
+    const dt = Math.min(500, now - (this.lastFrame || now)) / 1000;
     this.lastFrame = now;
     if (!this.fx?.ready) return [];
-    return this.fx.sprites(dt, this.live);
+    const sp = this.fx.sprites(dt, this.live);
+    return sp;
   }
 
   private async onRtc(from: string, data: RtcData): Promise<void> {
