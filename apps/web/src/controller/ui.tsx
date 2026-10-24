@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { createContext, useContext, useEffect, type ReactNode } from 'react';
 import type { Output, Presence, SessionState } from '@spectrastage/shared';
 import type { Tr } from '../lib/i18n.tsx';
@@ -16,7 +17,9 @@ export function Sheet({
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [onClose]);
-  return (
+  // Portal to <body>: inside the page a parent stacking context let the tab bar cover the
+  // bottom of the sheet (e.g. the confirm button on iPhone).
+  return createPortal(
     <div className="sheet-backdrop" onClick={onClose}>
       <div
         className="sheet"
@@ -33,7 +36,8 @@ export function Sheet({
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
