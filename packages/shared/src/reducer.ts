@@ -540,9 +540,10 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
         name: cmd.name,
         shape: cmd.shape,
         pos,
-        size: (cmd.shape === 'box' ? [0.6, 0.6, 0.6] : [0.4, 1.2, 0.4]) as [number, number, number],
+        size:
+          cmd.size ?? ((cmd.shape === 'box' ? [0.6, 0.6, 0.6] : [0.4, 1.2, 0.4]) as [number, number, number]),
         yaw: main ? Math.atan2(main.ax[2], main.ax[0]) * -1 : 0,
-        look: 'glow' as const,
+        look: cmd.look ?? ('glow' as const),
         color: '#ff8a2e',
       };
       list.push(o);

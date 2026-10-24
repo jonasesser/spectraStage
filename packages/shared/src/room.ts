@@ -1161,3 +1161,29 @@ export function wallsOfPose(fold: RoomFold, pose: Pose, aspect = 16 / 9): RoomWa
   }
   return out;
 }
+
+/**
+ * Measured points that do not fit the others (e.g. a corner hidden behind a couch and set on the
+ * couch instead): each point is predicted from all the other points; if it lies far from that
+ * prediction while the others agree, it is suspicious. Returns the suspects, worst first.
+ */
+export function findOutliers(
+  pose: Pose,
+  aspect: number,
+  pts: readonly (Measured & { c: string })[],
+): { c: string; errPx: number }[] {
+  if (measureCount(pts) < 9) return [];
+  const errs: { c: string; errPx: number }[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const others = pts.filter((_, k) => k !== i);
+    if (measureCount(others) < 8) continue;
+    const r = solvePose(pose, aspect, others, undefined, true);
+    if (!r) continue;
+    const e = poseErrorPx(r.pose, aspect, [pts[i]!]);
+    if (e !== null) errs.push({ c: pts[i]!.c, errPx: e });
+  }
+  if (errs.length < 4) return [];
+  const sorted = [...errs].map((e) => e.errPx).sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)]!;
+  return errs.filter((e) => e.errPx > Math.max(12, median * 4)).sort((a, b) => b.errPx - a.errPx);
+}

@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   activeProfile,
   anchorWalls,
   cornerWalls,
+  findOutliers,
   measureCount,
   projectPose,
   roomCorners,
@@ -264,6 +265,14 @@ export function MeasureWizard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target?.id]);
 
+  // points that do not fit the others (hidden corner set on furniture …) – checked when idle
+  const outlierKey = draft ? null : JSON.stringify([pose, profile.anchors ?? []]);
+  const outliers = useMemo(
+    () => (outlierKey && pose ? findOutliers(pose, aspect, profile.anchors ?? []) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [outlierKey],
+  );
+
   if (!pose)
     return (
       <p className="muted">
@@ -428,6 +437,44 @@ export function MeasureWizard({
               err !== null ? ` · ${L('accuracy', 'Genauigkeit')} ±${Math.round(err)} px` : ''
             } · ${L('more points = more precise, “Done” any time', 'mehr Punkte = genauer, „Fertig“ jederzeit')}`}
       </div>
+      {outliers.map((o) => {
+        const t = targets.find((x) => x.id === o.c);
+        return (
+          <div key={o.c} className="safety-note small stack" style={{ gap: '0.4rem' }}>
+            <span>
+              ⚠ <b>{t?.title ?? o.c}</b>{' '}
+              {L(
+                `does not fit the other points (off by about ${Math.round(o.errPx)} px). Hidden, e.g. behind furniture? Set it again or remove it.`,
+                `passt nicht zu den anderen Punkten (etwa ${Math.round(o.errPx)} px daneben). Verdeckt, z. B. hinter Möbeln? Neu setzen oder entfernen.`,
+              )}
+            </span>
+            <div className="row">
+              <button
+                className="btn small"
+                onClick={() => {
+                  setHistory((h) => h.filter((x) => x !== o.c));
+                  setActive(o.c);
+                }}
+              >
+                {L('Set again', 'Neu setzen')}
+              </button>
+              <button
+                className="btn small"
+                onClick={() => {
+                  send(
+                    anchors.filter((a) => a.c !== o.c),
+                    'full',
+                  );
+                  setSkipped((sk) => new Set(sk).add(o.c));
+                  if (active === o.c) setActive(null);
+                }}
+              >
+                {L('Remove', 'Entfernen')}
+              </button>
+            </div>
+          </div>
+        );
+      })}
       {count >= 7 && <ZoomSliders output={output} state={state} L={L} />}
       <div className="row">
         {anchors.length > 0 && (

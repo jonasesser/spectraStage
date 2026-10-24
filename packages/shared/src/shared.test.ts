@@ -23,6 +23,7 @@ import {
   boxFrame,
   poseForWalls,
   cornerWalls,
+  findOutliers,
   poseErrorPx,
   type V3,
   dirFromAngles,
@@ -772,6 +773,32 @@ describe('corner measuring (projector pose from room corners)', () => {
       const b = projectPose(r.pose, 16 / 9, P)!;
       expect(Math.hypot(a[0] - b[0], a[1] - b[1]) * 960).toBeLessThan(3);
     }
+  });
+  it('finds the point that was set on the couch instead of the hidden corner', () => {
+    const truth = { ...aimPose([2, 1.6, 3.6], [2, 1.1, 0], 100, 0.02), shiftY: 0.1 };
+    const pts: { c: string; p: V3; q?: V3; u: number; v: number }[] = [];
+    for (const c of corners) {
+      const q = projectPose(truth, 16 / 9, c.p);
+      if (q && Math.abs(q[0]) < 0.97 && Math.abs(q[1]) < 0.97)
+        pts.push({ c: `c|${c.id}`, p: c.p, u: (q[0] + 1) / 2, v: (1 - q[1]) / 2 });
+    }
+    for (const e of roomEdges(fold))
+      for (const t of [0.3, 0.7]) {
+        const P: V3 = [
+          e.a[0] + (e.b[0] - e.a[0]) * t,
+          e.a[1] + (e.b[1] - e.a[1]) * t,
+          e.a[2] + (e.b[2] - e.a[2]) * t,
+        ];
+        const q = projectPose(truth, 16 / 9, P);
+        if (q && Math.abs(q[0]) < 0.97 && Math.abs(q[1]) < 0.97)
+          pts.push({ c: `e|${e.id}|${t}`, p: e.a, q: e.b, u: (q[0] + 1) / 2, v: (1 - q[1]) / 2 });
+      }
+    // the bottom left corner is hidden: the cross was put 8 % higher, on the couch
+    const bad = pts.find((x) => x.c === 'c|vorne-links-unten')!;
+    bad.v -= 0.08;
+    const solved = solvePose(truth, 16 / 9, pts)!;
+    const out = findOutliers(solved.pose, 16 / 9, pts);
+    expect(out[0]?.c).toBe('c|vorne-links-unten');
   });
   it('a projector is set up to cover the sides chosen for it', () => {
     const b = boxFrame(fold)!;

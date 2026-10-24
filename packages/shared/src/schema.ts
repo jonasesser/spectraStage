@@ -460,7 +460,13 @@ export const CommandSchema = z.discriminatedUnion('t', [
     muted: z.boolean().optional(),
   }),
   z.object({ t: z.literal('session.blackoutAll'), on: z.boolean() }),
-  z.object({ t: z.literal('object.create'), shape: z.enum(['box', 'cylinder']), name }),
+  z.object({
+    t: z.literal('object.create'),
+    shape: z.enum(['box', 'cylinder']),
+    name,
+    size: RoomObjectSchema.shape.size.optional(),
+    look: RoomObjectSchema.shape.look.optional(),
+  }),
   z.object({
     t: z.literal('object.update'),
     id: z.string().max(40),

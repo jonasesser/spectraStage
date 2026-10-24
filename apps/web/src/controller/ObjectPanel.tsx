@@ -10,6 +10,33 @@ import { Slider } from './ui.tsx';
  * exactly on the real thing – then the projectors light it with its own look and hide the
  * walls behind it.
  */
+interface Preset {
+  en: string;
+  de: string;
+  icon: string;
+  shape: RoomObject['shape'];
+  size: [number, number, number];
+  look: RoomObject['look'];
+}
+/** Typical furniture (left dark) and props (lit) with a sensible starting size. */
+const PRESETS: Preset[] = [
+  { en: 'Couch', de: 'Couch', icon: '🛋', shape: 'box', size: [2.0, 0.85, 0.9], look: 'dark' },
+  { en: 'Armchair', de: 'Sessel', icon: '💺', shape: 'box', size: [0.9, 0.9, 0.9], look: 'dark' },
+  { en: 'Table', de: 'Tisch', icon: '🪑', shape: 'box', size: [1.2, 0.75, 0.8], look: 'dark' },
+  { en: 'Cupboard', de: 'Schrank', icon: '🗄', shape: 'box', size: [1.0, 1.9, 0.6], look: 'dark' },
+  {
+    en: 'Vase / plant',
+    de: 'Vase / Pflanze',
+    icon: '🪴',
+    shape: 'cylinder',
+    size: [0.35, 0.8, 0.35],
+    look: 'dark',
+  },
+  { en: 'Box', de: 'Kiste', icon: '📦', shape: 'box', size: [0.6, 0.6, 0.6], look: 'glow' },
+  { en: 'Pillar', de: 'Säule', icon: '🛢', shape: 'cylinder', size: [0.4, 1.2, 0.4], look: 'spooky' },
+  { en: 'Gravestone', de: 'Grabstein', icon: '🪦', shape: 'box', size: [0.6, 0.9, 0.15], look: 'edges' },
+];
+
 export function ObjectPanel({
   L,
   objects,
@@ -28,10 +55,17 @@ export function ObjectPanel({
   const store = useStore();
   const [fine, setFine] = useState(false);
   const o = objects.find((x) => x.id === selected) ?? null;
-  const add = async (shape: RoomObject['shape']) => {
+  const add = async (preset: Preset) => {
     const before = new Set(objects.map((x) => x.id));
-    const name = shape === 'box' ? L('Box', 'Kiste') : L('Pillar', 'Säule');
-    await store.send({ t: 'object.create', shape, name: `${name} ${objects.length + 1}` });
+    const name = L(preset.en, preset.de);
+    const n = objects.filter((x) => x.name.startsWith(name)).length;
+    await store.send({
+      t: 'object.create',
+      shape: preset.shape,
+      name: n ? `${name} ${n + 1}` : name,
+      size: preset.size,
+      look: preset.look,
+    });
     for (let i = 0; i < 20; i++) {
       const created = (store.get().state?.objects ?? []).find((x) => !before.has(x.id));
       if (created) return onSelect(created.id);
@@ -80,12 +114,24 @@ export function ObjectPanel({
             {x.shape === 'box' ? '📦' : '🛢'} {x.name}
           </button>
         ))}
-        <button className="btn small" onClick={() => void add('box')}>
-          ＋ {L('Box', 'Kiste')}
-        </button>
-        <button className="btn small" onClick={() => void add('cylinder')}>
-          ＋ {L('Pillar / round', 'Säule / rund')}
-        </button>
+      </div>
+      <span className="small muted">
+        {L('Not to be lit (picture left out there):', 'Nicht anstrahlen (dort bleibt es dunkel):')}
+      </span>
+      <div className="row">
+        {PRESETS.filter((p) => p.look === 'dark').map((p) => (
+          <button key={p.de} className="btn small" onClick={() => void add(p)}>
+            ＋ {p.icon} {L(p.en, p.de)}
+          </button>
+        ))}
+      </div>
+      <span className="small muted">{L('To be lit as a prop:', 'Als Requisite bespielen:')}</span>
+      <div className="row">
+        {PRESETS.filter((p) => p.look !== 'dark').map((p) => (
+          <button key={p.de} className="btn small" onClick={() => void add(p)}>
+            ＋ {p.icon} {L(p.en, p.de)}
+          </button>
+        ))}
       </div>
       {o && (
         <>
