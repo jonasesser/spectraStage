@@ -369,6 +369,63 @@ describe('reducer', () => {
       expect(poseErrorPx(pr.pose!, 16 / 9, pr.anchors!)!).toBeLessThan(1);
     }
   });
+  it('measured depth also resizes own side walls', () => {
+    let s = base();
+    const c1 = ctx();
+    s = applyCommand(s, { t: 'surface.create', name: 'Wall', kind: 'wall' }, c1).state;
+    s = applyCommand(s, { t: 'surface.create', name: 'Right', kind: 'wall' }, c1).state;
+    s = applyCommand(s, { t: 'output.create', name: 'A' }, c1).state;
+    s = applyCommand(s, { t: 'output.create', name: 'B' }, c1).state;
+    const fold0 = roomFold(s.surfaces);
+    const box = boxFrame(fold0)!;
+    expect(box).not.toBeNull();
+    const [W, D, H] = [box.w * 1.2, box.w * 0.7, box.h];
+    const corners = roomCorners(fold0);
+    const edges = roomEdges(fold0);
+    const truths = [
+      { ...aimPose([W * 0.5, H * 0.8, D * 0.95], [W * 0.5, H * 0.45, 0], 116, 0.01), shiftY: 0.15 },
+      aimPose([W * 0.2, H * 0.7, D * 0.3], [W, H * 0.4, D * 0.7], 95, -0.02),
+    ];
+    const inImg = (q: [number, number] | null) => !!q && Math.abs(q[0]) < 0.97 && Math.abs(q[1]) < 0.97;
+    truths.forEach((truth, k) => {
+      const anchors: { c: string; p: V3; q?: V3; u: number; v: number }[] = [];
+      for (const c of corners) {
+        const P = boxCorner(box, c.id, W, D, H)!;
+        const q = projectPose(truth, 16 / 9, P);
+        if (inImg(q)) anchors.push({ c: `c|${c.id}`, p: c.p, u: (q![0] + 1) / 2, v: (1 - q![1]) / 2 });
+      }
+      for (const e of edges) {
+        const [ka, kb] = e.id.split('|');
+        const A = boxCorner(box, ka!, W, D, H)!;
+        const B = boxCorner(box, kb!, W, D, H)!;
+        for (const [n, t] of [
+          ['A', 0.3],
+          ['B', 0.7],
+        ] as const) {
+          const q = projectPose(truth, 16 / 9, [
+            A[0] + (B[0] - A[0]) * t,
+            A[1] + (B[1] - A[1]) * t,
+            A[2] + (B[2] - A[2]) * t,
+          ]);
+          if (inImg(q))
+            anchors.push({ c: `e|${e.id}|${n}`, p: e.a, q: e.b, u: (q![0] + 1) / 2, v: (1 - q![1]) / 2 });
+        }
+      }
+      s = applyCommand(s, { t: 'output.setAnchors', outputId: s.outputs[k]!.id, anchors }, c1).state;
+    });
+    const main = s.surfaces[0]!;
+    const b = polygonBBox(main.polygon);
+    // width and depth come out of the measurements (no dimensions entered); the picture fit is
+    // what matters, so a few percent are fine
+    expect(Math.abs(b.w - W) / W).toBeLessThan(0.05);
+    const right = polygonBBox(s.surfaces[1]!.polygon);
+    expect(Math.abs(right.w - D) / D).toBeLessThan(0.05);
+    expect(right.x).toBeCloseTo(b.x + b.w, 3);
+    for (const o of s.outputs) {
+      const pr = o.profiles[0]!;
+      expect(poseErrorPx(pr.pose!, 16 / 9, pr.anchors!)!).toBeLessThan(1);
+    }
+  });
   it('enforces owner-only commands', () => {
     const s = base();
     s.devices.push({ id: 'd1', name: 'X', status: 'pending', outputId: null, joinedAt: 0 });

@@ -137,6 +137,19 @@ export const ProfileSchema = z.object({
     .array(z.enum(['vorne', 'rechts', 'hinten', 'links', 'boden', 'decke']))
     .max(6)
     .optional(),
+  /**
+   * Squeeze (< 1) or stretch (> 1) the picture of a side along the room depth, from the
+   * transition to the front wall – fits the whole side into the part a slanted projector lights.
+   */
+  zoom: z
+    .object({
+      links: z.number().min(0.2).max(5),
+      rechts: z.number().min(0.2).max(5),
+      boden: z.number().min(0.2).max(5),
+      decke: z.number().min(0.2).max(5),
+    })
+    .partial()
+    .optional(),
   /** Measured room corners and edge points → the pose is computed from them. */
   anchors: z.array(AnchorSchema).max(40).optional(),
   updatedAt: z.number(),
@@ -541,6 +554,18 @@ export const CommandSchema = z.discriminatedUnion('t', [
     t: z.literal('output.setWalls'),
     outputId: id,
     walls: z.array(z.enum(['vorne', 'rechts', 'hinten', 'links', 'boden', 'decke'])).max(6),
+  }),
+  z.object({
+    t: z.literal('output.setZoom'),
+    outputId: id,
+    zoom: z
+      .object({
+        links: z.number().min(0.2).max(5),
+        rechts: z.number().min(0.2).max(5),
+        boden: z.number().min(0.2).max(5),
+        decke: z.number().min(0.2).max(5),
+      })
+      .partial(),
   }),
   /** Start/stop corner measuring on the projector (sel = highlighted corner). */
   z.object({

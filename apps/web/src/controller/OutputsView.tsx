@@ -16,6 +16,7 @@ import { Light, outputHealth, Sheet, Slider, kindLabel } from './ui.tsx';
 import { CalibrationEditor } from './CalibrationEditor.tsx';
 import { MeasureWizard } from './MeasureWizard.tsx';
 import { WallPicker } from './WallPicker.tsx';
+import { ZoomSliders } from './ZoomSliders.tsx';
 import { StagePreview } from './Preview.tsx';
 
 export function OutputsView() {
@@ -370,6 +371,7 @@ function OutputCard({
       {profile.pose && (
         <div style={{ marginTop: '0.75rem' }}>
           <WallPicker output={output} state={state} L={L} />
+          {details && <ZoomSliders output={output} state={state} L={L} />}
         </div>
       )}
       {output.resolutionMismatch && (

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   activeProfile,
   anchorWalls,
+  cornerWalls,
   measureCount,
   projectPose,
   roomCorners,
@@ -17,14 +18,19 @@ import {
 import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
 import { WallPicker } from './WallPicker.tsx';
+import { ZoomSliders } from './ZoomSliders.tsx';
 
 interface Target {
   id: string;
   kind: 'corner' | 'edge';
   title: string;
+  /** What exactly to hit, in words. */
+  hint: string;
+  /** Box corner keys for the sketch (1 = corner, 2 = edge). */
+  keys: string[];
   p: V3;
   q?: V3;
-  /** Where the marker starts (predicted picture position). */
+  /** Where the marker starts (predicted picture position, kept inside the picture). */
   u: number;
   v: number;
 }
@@ -35,53 +41,142 @@ const lerp = (a: V3, b: V3, t: number): V3 => [
   a[2] + (b[2] - a[2]) * t,
 ];
 
-/** What this projector should be measured against, from where the app currently thinks it points. */
+const SIDE: Record<string, [string, string]> = {
+  vorne: ['the front wall', 'die vordere Wand'],
+  hinten: ['the back wall', 'die hintere Wand'],
+  links: ['the left wall', 'die linke Wand'],
+  rechts: ['the right wall', 'die rechte Wand'],
+  boden: ['the floor', 'der Boden'],
+  decke: ['the ceiling', 'die Decke'],
+};
+const side = (L: Tr, w: string) => L(...(SIDE[w] ?? [w, w]));
+
+/**
+ * Everything of the room this projector could be measured against – all corners and edges, also
+ * those the app does not expect in the picture yet (its guess of the room can be wrong; a corner
+ * the projector really reaches is what tells the app the true size).
+ */
 function targetsFor(state: SessionState, pose: Pose, aspect: number, L: Tr): Target[] {
   const fold = roomFold(state.surfaces);
-  const uv = (P: V3) => {
+  const clamp = (k: number) => Math.min(0.96, Math.max(0.04, k));
+  const start = (P: V3) => {
     const q = projectPose(pose, aspect, P);
-    return q ? { u: (q[0] + 1) / 2, v: (1 - q[1]) / 2 } : null;
+    // behind the projector: start in the middle; otherwise at the picture edge in its direction
+    return q ? { u: clamp((q[0] + 1) / 2), v: clamp((1 - q[1]) / 2) } : { u: 0.5, v: 0.5 };
   };
-  const inside = (x: { u: number; v: number } | null, m = 0.02) =>
-    !!x && x.u > m && x.u < 1 - m && x.v > m && x.v < 1 - m;
   const out: Target[] = [];
   for (const c of roomCorners(fold)) {
-    const x = uv(c.p);
-    if (!x || x.u < -0.1 || x.u > 1.1 || x.v < -0.1 || x.v > 1.1) continue;
-    const clamp = (k: number) => Math.min(0.97, Math.max(0.03, k));
+    const walls = cornerWalls(c.id);
+    const words = c.id.split('-');
     out.push({
       id: `c|${c.id}`,
       kind: 'corner',
-      title: `${L('Corner', 'Ecke')} ${c.n}: ${c.label}`,
+      title:
+        walls.length === 3
+          ? `${L('Corner', 'Ecke')} ${words.join(' ')}`
+          : `${L('Corner', 'Ecke')} ${c.n}: ${c.label}`,
+      hint:
+        walls.length === 3
+          ? L(
+              `Where ${side(L, walls[0]!)}, ${side(L, walls[1]!)} and ${side(L, walls[2]!)} meet.`,
+              `Wo ${side(L, walls[0]!)}, ${side(L, walls[1]!)} und ${side(L, walls[2]!)} zusammenstoßen.`,
+            )
+          : '',
+      keys: [c.id],
       p: c.p,
-      u: clamp(x.u),
-      v: clamp(x.v),
+      ...start(c.p),
     });
   }
   for (const e of roomEdges(fold)) {
-    const vis: { t: number; u: number; v: number }[] = [];
-    for (let i = 0; i <= 40; i++) {
-      const x = uv(lerp(e.a, e.b, i / 40));
-      if (inside(x, 0.04)) vis.push({ t: i / 40, ...x! });
-    }
-    if (vis.length < 5) continue;
-    for (const [k, f] of [
-      ['A', 0.25],
-      ['B', 0.75],
+    const [ka, kb] = e.id.split('|');
+    const both = anchorWalls(`e|${e.id}|A`);
+    const vertical = both.every((w) => w !== 'boden' && w !== 'decke');
+    for (const [k, t] of [
+      ['1', 0.3],
+      ['2', 0.7],
     ] as const) {
-      const s = vis[Math.round((vis.length - 1) * f)]!;
+      const P = lerp(e.a, e.b, t);
       out.push({
-        id: `e|${e.id}|${k}`,
+        id: `e|${e.id}|${k === '1' ? 'A' : 'B'}`,
         kind: 'edge',
-        title: `${L('Edge', 'Kante')} ${e.label} · ${L('point', 'Punkt')} ${k}`,
+        title: `${L('Edge', 'Kante')} ${both.map((w) => side(L, w)).join(' / ')} · ${L('point', 'Punkt')} ${k}`,
+        hint:
+          both.length === 2
+            ? L(
+                `The ${vertical ? 'vertical' : 'horizontal'} line where ${side(L, both[0]!)} and ${side(L, both[1]!)} meet – put the cross anywhere exactly on it.`,
+                `Die ${vertical ? 'senkrechte' : 'waagerechte'} Linie, an der ${side(L, both[0]!)} und ${side(L, both[1]!)} zusammenstoßen – das Kreuz irgendwo genau darauf setzen.`,
+              )
+            : '',
+        keys: [ka!, kb!],
         p: e.a,
         q: e.b,
-        u: s.u,
-        v: s.v,
+        ...start(P),
       });
     }
   }
   return out;
+}
+
+/** The room seen from inside towards the front wall, with the corner or edge to hit marked. */
+function RoomSketch({ keys, L }: { keys: string[]; L: Tr }) {
+  const pos = (k: string): [number, number] | null => {
+    const [z, x, y] = k.split('-');
+    if (!z || !x || !y) return null;
+    const front = z === 'vorne';
+    const left = x === 'links';
+    const top = y === 'oben';
+    return front ? [left ? 70 : 150, top ? 42 : 98] : [left ? 6 : 214, top ? 6 : 134];
+  };
+  const pts = keys.map(pos);
+  if (pts.some((p) => !p)) return null;
+  const c = '#3ff2ff';
+  const o = '#ffb347';
+  return (
+    <svg
+      viewBox="0 0 220 140"
+      style={{ width: '100%', maxWidth: 320, display: 'block', margin: '0 auto' }}
+      role="img"
+      aria-label={L('Sketch of the room', 'Skizze des Raums')}
+    >
+      <rect x="0" y="0" width="220" height="140" rx="8" fill="#0b0918" />
+      <g stroke={c} strokeWidth="1.5" fill="none" opacity="0.7">
+        <rect x="70" y="42" width="80" height="56" />
+        <line x1="6" y1="6" x2="70" y2="42" />
+        <line x1="214" y1="6" x2="150" y2="42" />
+        <line x1="6" y1="134" x2="70" y2="98" />
+        <line x1="214" y1="134" x2="150" y2="98" />
+      </g>
+      <g fill="#9d93d9" fontSize="10" textAnchor="middle" fontFamily="system-ui, sans-serif">
+        <text x="110" y="74">
+          {L('front', 'vorne')}
+        </text>
+        <text x="30" y="74">
+          {L('left', 'links')}
+        </text>
+        <text x="190" y="74">
+          {L('right', 'rechts')}
+        </text>
+        <text x="110" y="124">
+          {L('floor', 'Boden')}
+        </text>
+        <text x="110" y="24">
+          {L('ceiling', 'Decke')}
+        </text>
+      </g>
+      {pts.length === 2 && (
+        <line
+          x1={pts[0]![0]}
+          y1={pts[0]![1]}
+          x2={pts[1]![0]}
+          y2={pts[1]![1]}
+          stroke={o}
+          strokeWidth="5"
+          strokeLinecap="round"
+        />
+      )}
+      {pts.length === 1 && <circle cx={pts[0]![0]} cy={pts[0]![1]} r="7" fill={o} />}
+    </svg>
+  );
 }
 
 /**
@@ -248,15 +343,17 @@ export function MeasureWizard({
             {L('Step', 'Schritt')} {Math.min(total, doneSteps + 1)} {L('of', 'von')} {total}
           </div>
           <div style={{ fontWeight: 700 }}>{target.title}</div>
+          {target.hint && <div className="small">{target.hint}</div>}
+          <RoomSketch keys={target.keys} L={L} />
           <p className="small" style={{ margin: 0 }}>
             {target.kind === 'corner'
               ? L(
-                  'Look at the wall: move the orange cross exactly onto this corner of the room.',
-                  'Schau an die Wand: Schiebe das orange Kreuz genau auf diese Raumecke.',
+                  'Look at the wall: move the orange cross exactly onto this corner. If your projector does not reach it: “not visible – skip”.',
+                  'Schau an die Wand: Schiebe das orange Kreuz genau auf diese Ecke. Trifft dein Beamer sie nicht: „Nicht sichtbar – überspringen“.',
                 )
               : L(
-                  'This edge glows orange on the projector. Move the cross anywhere exactly onto the real edge.',
-                  'Diese Kante leuchtet am Beamer orange. Schiebe das Kreuz irgendwo genau auf die echte Kante.',
+                  'Where the app expects this edge, the projector draws an orange line. Move the cross onto the real edge (not onto the orange line).',
+                  'Wo die App diese Kante vermutet, zeichnet der Beamer eine orange Linie. Schiebe das Kreuz auf die echte Kante (nicht auf die orange Linie).',
                 )}
           </p>
           <div
@@ -331,6 +428,7 @@ export function MeasureWizard({
               err !== null ? ` · ${L('accuracy', 'Genauigkeit')} ±${Math.round(err)} px` : ''
             } · ${L('more points = more precise, “Done” any time', 'mehr Punkte = genauer, „Fertig“ jederzeit')}`}
       </div>
+      {count >= 7 && <ZoomSliders output={output} state={state} L={L} />}
       <div className="row">
         {anchors.length > 0 && (
           <button className="btn small" onClick={restart}>

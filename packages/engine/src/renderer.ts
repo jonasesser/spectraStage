@@ -28,6 +28,7 @@ import {
   dirFromAngles,
   facePoint,
   roomRay,
+  boxFrame,
   stageBounds,
   mainAzimuth,
   type RoomFold,
@@ -1299,8 +1300,20 @@ export class StageRenderer {
       this.poseScene.add(this.poseRoom, this.poseObjects);
     } else if (this.poseRT.width !== ow || this.poseRT.height !== oh) this.poseRT.setSize(ow, oh);
     const fold = this.worldFor(state).fold;
-    const key = JSON.stringify([vp, fold.faces.map((f) => [f.id, f.o, f.ax, f.ay, f.rect])]);
+    const zoom = profile.zoom ?? {};
+    const key = JSON.stringify([vp, zoom, fold.faces.map((f) => [f.id, f.o, f.ax, f.ay, f.rect])]);
     if (key !== this.poseKey) {
+      // squeeze/stretch per side along the room depth, from the transition to the front wall
+      const box = boxFrame(fold);
+      const sideOf = (n: readonly number[]): 'links' | 'rechts' | 'boden' | 'decke' | null => {
+        if (!box) return null;
+        const ax = n[0]! * box.ax[0] + n[1]! * box.ax[1] + n[2]! * box.ax[2];
+        if (ax > 0.9) return 'links';
+        if (ax < -0.9) return 'rechts';
+        if (n[1]! > 0.9) return 'boden';
+        if (n[1]! < -0.9) return 'decke';
+        return null;
+      };
       this.poseKey = key;
       for (const c of [...this.poseRoom.children]) {
         this.poseRoom.remove(c);
@@ -1315,9 +1328,23 @@ export class StageRenderer {
         ];
         const pos: number[] = [];
         const uv: number[] = [];
+        const sd = sideOf(f.n);
+        const z = sd ? (zoom[sd] ?? 1) : 1;
+        const gx = box ? f.ax[0] * box.n[0] + f.ax[1] * box.n[1] + f.ax[2] * box.n[2] : 0;
+        const gy = box ? f.ay[0] * box.n[0] + f.ay[1] * box.n[1] + f.ay[2] * box.n[2] : 0;
         for (const [x, y] of pts) {
-          pos.push(...facePoint(f, x, y));
-          uv.push((x - vp.x) / vp.w, 1 - (y - vp.y) / vp.h);
+          const P = facePoint(f, x, y);
+          pos.push(...P);
+          let cx = x;
+          let cy = y;
+          if (box && z !== 1) {
+            // depth from the front wall; the picture shows the content at depth d / z
+            const d = (P[0] - box.o[0]) * box.n[0] + (P[2] - box.o[2]) * box.n[2];
+            const dd = d / z - d;
+            if (Math.abs(gx) > 0.5) cx = x + dd / gx;
+            else if (Math.abs(gy) > 0.5) cy = y + dd / gy;
+          }
+          uv.push((cx - vp.x) / vp.w, 1 - (cy - vp.y) / vp.h);
         }
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));

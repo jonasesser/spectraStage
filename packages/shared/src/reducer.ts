@@ -273,6 +273,8 @@ export function createOutput(
  * is built around a single main wall – also its width and depth, which are then written to the
  * main wall (the walls the app adds around it follow).
  */
+const dot3 = (a: readonly number[], b: readonly number[]) => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!;
+
 export function solveMeasuredRoom(state: SessionState, quickFor: string | null = null): void {
   const fold = roomFold(state.surfaces);
   const lay = worldLayout(state.surfaces);
@@ -291,7 +293,7 @@ export function solveMeasuredRoom(state: SessionState, quickFor: string | null =
     })
     .filter((x): x is NonNullable<typeof x> => !!x);
   if (!projectors.length) return;
-  const r = solveRoom({ fold, sizeFree: !!main && walls.length === 1, projectors, quick: !!quickFor });
+  const r = solveRoom({ fold, sizeFree: !!main, projectors, quick: !!quickFor });
   for (const o of state.outputs) {
     const sol = r.poses[o.id];
     if (sol) activeProfile(o).pose = sol.pose;
@@ -299,7 +301,39 @@ export function solveMeasuredRoom(state: SessionState, quickFor: string | null =
   if (r.size && main) {
     const b = polygonBBox(main.polygon);
     const k = r.size.w / b.w;
-    main.polygon = main.polygon.map((pt) => ({ x: b.x + (pt.x - b.x) * k, y: pt.y }));
+    const mainFace = fold.faces.find((f) => f.id === main.id);
+    // own surfaces follow the measured room: side walls get its depth, a back wall its width,
+    // floors/ceilings along the main wall its width; walls stay lined up as before
+    const scaleX = (sf: Surface, nw: number, x0: number) => {
+      const bb = polygonBBox(sf.polygon);
+      const kk = nw / bb.w;
+      sf.polygon = sf.polygon.map((pt) => ({ x: x0 + (pt.x - bb.x) * kk, y: pt.y }));
+    };
+    const ordered = walls
+      .map((w) => ({ w, s: state.surfaces.find((x) => x.id === w.id)! }))
+      .sort((a, c) => a.w.rect.x - c.w.rect.x);
+    let prevEnd: number | null = null;
+    let prevOldEnd = 0;
+    for (const { w, s: sf } of ordered) {
+      const f = fold.faces.find((x) => x.id === w.id);
+      let nw = w.rect.w;
+      if (sf === main) nw = r.size.w;
+      else if (f && mainFace) {
+        if (Math.abs(dot3(f.n, mainFace.ax)) > 0.9) nw = r.size.d;
+        else if (dot3(f.n, mainFace.n) < -0.9) nw = r.size.w;
+      }
+      const x0: number = prevEnd === null ? w.rect.x : prevEnd + (w.rect.x - prevOldEnd);
+      prevOldEnd = w.rect.x + w.rect.w;
+      scaleX(sf, nw, x0);
+      prevEnd = x0 + nw;
+    }
+    for (const sf of state.surfaces) {
+      const role = lay.find((x) => x.id === sf.id)?.role;
+      if (role !== 'ground' && role !== 'ceiling') continue;
+      const bb = polygonBBox(sf.polygon);
+      if (bb.x + bb.w <= b.x || bb.x >= b.x + b.w) continue;
+      sf.polygon = sf.polygon.map((pt) => ({ x: b.x + (pt.x - b.x) * k, y: pt.y }));
+    }
     main.roomDepth = r.size.d;
     // keep the stored room points of all measurements in step with the new size
     const box = boxFrame(roomFold(state.surfaces));
@@ -751,6 +785,11 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       prof.anchors = [];
       if (/^Beamer( |$)/.test(o.name) || /^Projector/.test(o.name)) o.name = wallsName(walls);
       return res(`${o.name}: covers ${walls.join(', ')}`);
+    }
+    case 'output.setZoom': {
+      const o = requireOutput(state, cmd.outputId);
+      activeProfile(o).zoom = cmd.zoom;
+      return res(`${o.name}: picture squeezed/stretched`);
     }
     case 'output.align': {
       const o = requireOutput(state, cmd.outputId);
