@@ -355,6 +355,7 @@ function Projection({
       onDoubleClick={activate}
     >
       <canvas ref={canvasRef} className="projection-canvas" />
+      <div className="projection-overlay-guard" />
       {phase === 'run' && stats && (stats.contextLost || stats.lastError || output?.resolutionMismatch) && (
         <div className="projection-problem">
           {stats.contextLost
