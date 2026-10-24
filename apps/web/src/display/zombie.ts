@@ -35,6 +35,8 @@ class ZombieFx {
   private faces: Pt[][] = [];
   private frame = 0;
   private people: Person[] = [];
+  /** makeup: the person stays recognisable · comic: cartoon colours with googly eyes. */
+  style: 'makeup' | 'comic' = 'makeup';
   private nextId = 1;
   private glow = document.createElement('canvas');
   ready = false;
@@ -145,13 +147,28 @@ class ZombieFx {
         d[p + 3] = 0;
         continue;
       }
-      // cartoon zombie skin: a few green levels from the brightness
       const l = (0.3 * d[p]! + 0.59 * d[p + 1]! + 0.11 * d[p + 2]!) / 255;
-      const q = Math.min(1, Math.floor(l * 5 + 0.5) / 5 + 0.08);
-      d[p] = 52 + 150 * q;
-      d[p + 1] = 92 + 160 * q;
-      d[p + 2] = 64 + 110 * q;
-      d[p + 3] = 255 * a * 0.93;
+      if (this.style === 'comic') {
+        // cartoon zombie skin: a few green levels from the brightness
+        const q = Math.min(1, Math.floor(l * 5 + 0.5) / 5 + 0.08);
+        d[p] = 52 + 150 * q;
+        d[p + 1] = 92 + 160 * q;
+        d[p + 2] = 64 + 110 * q;
+        d[p + 3] = 255 * a * 0.93;
+      } else {
+        // zombie make-up: every detail of the person stays (recognisable), colours turn pale
+        // grey-green with a bit more contrast
+        const gray = l * 255;
+        const r0 = d[p]! * 0.45 + gray * 0.55;
+        const g0 = d[p + 1]! * 0.45 + gray * 0.55;
+        const b0 = d[p + 2]! * 0.45 + gray * 0.55;
+        // lifted: a ghost must glow on the dark scene, also in dark clothes
+        const k = (x: number) => Math.max(0, Math.min(255, 62 + ((x - 128) * 1.1 + 128) * 0.82));
+        d[p] = k(r0 * 0.86);
+        d[p + 1] = k(g0 * 1.02 + 16);
+        d[p + 2] = k(b0 * 0.84);
+        d[p + 3] = 255 * a * 0.95;
+      }
     }
     const tg = this.tmp.getContext('2d')!;
     tg.putImageData(img, 0, 0);
@@ -308,6 +325,7 @@ class ZombieFx {
   }
 
   private drawFaces(g: CanvasRenderingContext2D, t: number): void {
+    if (this.style === 'makeup') return this.drawMakeup(g);
     const avg = (a: Pt, b: Pt): Pt => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
     const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
     this.faces.forEach((f, n) => {
@@ -389,6 +407,103 @@ class ZombieFx {
     });
   }
 
+  /**
+   * Zombie make-up on the real face (stays recognisable): sunken dark eye sockets, glowing
+   * yellow-green irises on the real eyes, dark lips, green veins at the temples, a small stitched
+   * scar on the forehead.
+   */
+  private drawMakeup(g: CanvasRenderingContext2D): void {
+    const avg = (a: Pt, b: Pt): Pt => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+    const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
+    for (const f of this.faces) {
+      if (f.length < 468) continue;
+      const eyes = [avg(f[33]!, f[133]!), avg(f[362]!, f[263]!)];
+      const ew = (dist(f[33]!, f[133]!) + dist(f[362]!, f[263]!)) / 2;
+      g.save();
+      // sunken eye sockets (darken, the eye itself stays visible)
+      g.globalCompositeOperation = 'multiply';
+      for (const e of eyes) {
+        const gr = g.createRadialGradient(e.x, e.y + ew * 0.1, ew * 0.25, e.x, e.y + ew * 0.1, ew * 1.05);
+        gr.addColorStop(0, 'rgba(70,40,90,0.9)');
+        gr.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = gr;
+        g.beginPath();
+        g.arc(e.x, e.y + ew * 0.1, ew * 1.05, 0, Math.PI * 2);
+        g.fill();
+      }
+      // dark lips
+      const lips = [61, 40, 37, 0, 267, 270, 291, 321, 314, 17, 84, 91];
+      g.fillStyle = 'rgba(60,30,60,0.55)';
+      g.beginPath();
+      lips.forEach((i, k) => (k ? g.lineTo(f[i]!.x, f[i]!.y) : g.moveTo(f[i]!.x, f[i]!.y)));
+      g.closePath();
+      g.fill();
+      g.restore();
+      // glowing irises on the real eyes
+      if (f.length >= 478) {
+        g.save();
+        g.globalCompositeOperation = 'screen';
+        for (const i of [468, 473]) {
+          const c = f[i]!;
+          const r = ew * 0.2;
+          const gr = g.createRadialGradient(c.x, c.y, 0, c.x, c.y, r * 1.8);
+          gr.addColorStop(0, 'rgba(230,255,90,0.75)');
+          gr.addColorStop(0.5, 'rgba(160,255,60,0.35)');
+          gr.addColorStop(1, 'rgba(120,255,40,0)');
+          g.fillStyle = gr;
+          g.beginPath();
+          g.arc(c.x, c.y, r * 1.8, 0, Math.PI * 2);
+          g.fill();
+        }
+        g.restore();
+      }
+      // veins at the temples
+      g.save();
+      g.strokeStyle = 'rgba(30,70,40,0.6)';
+      g.lineWidth = Math.max(1, ew * 0.05);
+      g.lineCap = 'round';
+      for (const [a, b] of [
+        [33, 127],
+        [263, 356],
+      ] as const) {
+        const A = f[a]!;
+        const B = f[b]!;
+        g.beginPath();
+        g.moveTo(A.x + (B.x - A.x) * 0.3, A.y);
+        for (let k = 1; k <= 4; k++) {
+          const u = 0.3 + k * 0.17;
+          g.lineTo(
+            A.x + (B.x - A.x) * u + (k % 2 ? 1 : -1) * ew * 0.08,
+            A.y + (B.y - A.y) * u - ew * 0.25 * k * 0.3,
+          );
+        }
+        g.stroke();
+      }
+      // small stitched scar on the forehead
+      const s0 = f[67]!;
+      const s1 = f[10]!;
+      const a0 = { x: s0.x + (s1.x - s0.x) * 0.2, y: s0.y + ew * 0.35 };
+      const a1 = { x: s0.x + (s1.x - s0.x) * 0.85, y: s1.y + ew * 0.55 };
+      g.strokeStyle = 'rgba(110,30,45,0.85)';
+      g.lineWidth = Math.max(1.5, ew * 0.09);
+      g.beginPath();
+      g.moveTo(a0.x, a0.y);
+      g.lineTo(a1.x, a1.y);
+      g.stroke();
+      g.lineWidth = Math.max(1, ew * 0.05);
+      for (let k = 1; k <= 3; k++) {
+        const u = k / 4;
+        const x = a0.x + (a1.x - a0.x) * u;
+        const y = a0.y + (a1.y - a0.y) * u;
+        g.beginPath();
+        g.moveTo(x - ew * 0.1, y - ew * 0.17);
+        g.lineTo(x + ew * 0.1, y + ew * 0.17);
+        g.stroke();
+      }
+      g.restore();
+    }
+  }
+
   dispose(): void {
     this.seg?.close();
     this.face?.close();
@@ -404,6 +519,7 @@ export class ZombieReceiver {
   private timer = 0;
   private live = false;
   private lastFrame = 0;
+  private style: 'makeup' | 'comic' = 'makeup';
   private off: () => void;
 
   constructor(
@@ -425,6 +541,8 @@ export class ZombieReceiver {
   }
 
   private async onRtc(from: string, data: RtcData): Promise<void> {
+    if (data.style) this.style = data.style;
+    if (this.fx) this.fx.style = this.style;
     if (data.kind === 'offer' && data.sdp) {
       this.close();
       const pc = new RTCPeerConnection(ICE);
@@ -455,6 +573,7 @@ export class ZombieReceiver {
   private async ensureFx(): Promise<void> {
     if (!this.fx) {
       this.fx = new ZombieFx();
+      this.fx.style = this.style;
       await this.fx.init();
     }
     if (this.timer || this.fx.failed) return;

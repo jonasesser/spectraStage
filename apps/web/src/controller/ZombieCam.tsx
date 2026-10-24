@@ -30,6 +30,13 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
   const store = useStore();
   const [on, setOn] = useState(false);
   const [facing, setFacing] = useState<'user' | 'environment'>('environment');
+  const [style, setStyleState] = useState<'makeup' | 'comic'>('makeup');
+  const styleRef = useRef(style);
+  styleRef.current = style;
+  const setStyle = (st: 'makeup' | 'comic') => {
+    setStyleState(st);
+    for (const id of run.current?.peers.keys() ?? []) store.conn.sendRtc(id, { kind: 'style', style: st });
+  };
   const [err, setErr] = useState<string | null>(null);
   const [links, setLinks] = useState<Record<string, string>>({});
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -70,7 +77,7 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
     void (async () => {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      store.conn.sendRtc(id, { kind: 'offer', sdp: offer.sdp ?? '' });
+      store.conn.sendRtc(id, { kind: 'offer', sdp: offer.sdp ?? '', style: styleRef.current });
     })();
   };
 
@@ -147,6 +154,18 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
           background: '#000',
         }}
       />
+      <div className="row" role="group" aria-label={L('Look', 'Aussehen')}>
+        {(
+          [
+            ['makeup', '🧟 ' + L('Zombie make-up (recognisable)', 'Zombie-Make-up (erkennbar)')],
+            ['comic', '👀 ' + L('Comic with googly eyes', 'Comic mit Glubschaugen')],
+          ] as const
+        ).map(([k, label]) => (
+          <button key={k} className={`chip${style === k ? ' on' : ''}`} onClick={() => setStyle(k)}>
+            {label}
+          </button>
+        ))}
+      </div>
       <div className="row">
         {!on ? (
           <>

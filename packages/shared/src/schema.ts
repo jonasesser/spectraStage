@@ -656,7 +656,9 @@ export const OWNER_ONLY: ReadonlySet<CommandType> = new Set<CommandType>([
 // WebSocket messages
 // ---------------------------------------------------------------------------
 export const RtcDataSchema = z.object({
-  kind: z.enum(['offer', 'answer', 'ice', 'bye']),
+  kind: z.enum(['offer', 'answer', 'ice', 'bye', 'style']),
+  /** Zombie camera look: make-up (person stays recognisable) or comic (googly eyes). */
+  style: z.enum(['makeup', 'comic']).optional(),
   sdp: z.string().max(20_000).optional(),
   candidate: z
     .object({
