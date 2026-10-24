@@ -659,7 +659,7 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       const o = requireOutput(state, cmd.outputId);
       const prof = activeProfile(o);
       prof.anchors = cmd.anchors;
-      if (cmd.anchors.length >= 4) {
+      {
         const ref = prof.referenceResolution;
         const aspect = ref ? ref.w / ref.h : 16 / 9;
         const fold = roomFold(state.surfaces);

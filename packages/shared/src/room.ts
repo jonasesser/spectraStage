@@ -482,10 +482,11 @@ export function roomCorners(fold: RoomFold): RoomCorner[] {
 export function solvePose(
   start: Pose,
   aspect: number,
-  pts: readonly { p: V3; u: number; v: number }[],
+  pts: readonly { p: V3; q?: V3 | undefined; u: number; v: number }[],
   fold?: RoomFold,
 ): { pose: Pose; errPx: number } | null {
-  if (pts.length < 4) return null;
+  // a corner gives 2 equations, a point on an edge 1; 7 unknowns (+ lens shift, kept small)
+  if (measureCount(pts) < 7) return null;
   const obs = pts.map((q) => [q.u * 2 - 1, 1 - q.v * 2] as const);
   const toPose = (x: number[]): Pose => ({
     pos: [x[0]!, x[1]!, x[2]!],
@@ -505,12 +506,19 @@ export function solvePose(
     p.shiftX ?? 0,
     p.shiftY ?? 0,
   ];
-  const SHIFT_PRIOR = 0.03;
+  // keep the lens shift small only while few points are measured (a flat wall cannot tell it apart)
+  const SHIFT_PRIOR = measureCount(pts) >= 10 ? 0.002 : 0.03;
   const resid = (x: number[]): number[] => {
     const p = toPose(x);
     const r: number[] = [];
     obs.forEach(([ox, oy], i) => {
-      const q = projectPose(p, aspect, pts[i]!.p);
+      const m = pts[i]!;
+      if (m.q) {
+        const d = edgeDistance(p, aspect, m.p, m.q, ox, oy);
+        r.push(d ?? 10, 0);
+        return;
+      }
+      const q = projectPose(p, aspect, m.p);
       if (!q) r.push(10, 10);
       else r.push(q[0] - ox, q[1] - oy);
     });
@@ -598,11 +606,52 @@ export function solvePose(
   const pose = toPose(best.x);
   let e = 0;
   for (let i = 0; i < pts.length; i++) {
-    const q = projectPose(pose, aspect, pts[i]!.p);
+    const m = pts[i]!;
+    if (m.q) {
+      const d = edgeDistance(pose, aspect, m.p, m.q, obs[i]![0], obs[i]![1]);
+      if (d === null) return null;
+      e += (d * 960) ** 2;
+      continue;
+    }
+    const q = projectPose(pose, aspect, m.p);
     if (!q) return null;
     e += ((q[0] - obs[i]![0]) * 960) ** 2 + ((q[1] - obs[i]![1]) * (960 / aspect)) ** 2;
   }
   return { pose, errPx: Math.sqrt(e / pts.length) };
+}
+
+/** Number of equations measured points give (corner 2, point on an edge 1). */
+export function measureCount(pts: readonly { q?: V3 | undefined }[]): number {
+  return pts.reduce((n, m) => n + (m.q ? 1 : 2), 0);
+}
+
+/**
+ * Distance (NDC, x scaled like y by the aspect) of picture point (ox, oy) from the projected
+ * room edge a–b (only the part in front of the projector counts).
+ */
+export function edgeDistance(p: Pose, aspect: number, a: V3, b: V3, ox: number, oy: number): number | null {
+  let first: [number, number] | null = null;
+  let last: [number, number] | null = null;
+  for (let i = 0; i <= 24; i++) {
+    const t = i / 24;
+    const q = projectPose(p, aspect, [
+      a[0] + (b[0] - a[0]) * t,
+      a[1] + (b[1] - a[1]) * t,
+      a[2] + (b[2] - a[2]) * t,
+    ]);
+    if (!q || Math.abs(q[0]) > 50 || Math.abs(q[1]) > 50) continue;
+    if (!first) first = q;
+    last = q;
+  }
+  if (!first || !last) return null;
+  // work in a square space (x in units of the picture height) so distances are isotropic
+  const ax = first[0] * aspect;
+  const bx = last[0] * aspect;
+  const dx = bx - ax;
+  const dy = last[1] - first[1];
+  const l = Math.hypot(dx, dy);
+  if (l < 1e-6) return Math.hypot(ox * aspect - ax, oy - first[1]) / aspect;
+  return ((ox * aspect - ax) * dy - (oy - first[1]) * dx) / l / aspect;
 }
 
 function solveLinear(A: number[][], b: number[]): number[] | null {
@@ -669,4 +718,75 @@ export function objectEdges(o: RoomObject): [V3, V3][] {
     }
   }
   return segs;
+}
+
+export interface RoomEdge {
+  id: string;
+  a: V3;
+  b: V3;
+  /** e.g. "Wand rechts / Decke". */
+  label: string;
+}
+
+function faceNames(fold: RoomFold): Map<string, string> {
+  const sideNames = ['Wand rechts', 'Rückwand', 'Wand links', 'Wand 5', 'Wand 6'];
+  let side = 0;
+  const names = new Map<string, string>();
+  for (const f of fold.faces)
+    names.set(
+      f.id,
+      f.role === 'main'
+        ? 'Hauptwand'
+        : f.role === 'side'
+          ? (sideNames[side++] ?? 'Wand')
+          : f.role === 'ground'
+            ? 'Boden'
+            : 'Decke',
+    );
+  return names;
+}
+
+function onFace(f: RoomFace, p: V3, tol = 0.03): boolean {
+  const r = sub(p, f.o);
+  if (Math.abs(dot(r, f.n)) > tol) return false;
+  const lx = dot(r, f.ax);
+  const ly = dot(r, f.ay);
+  return lx > -tol && ly > -tol && lx < f.rect.w + tol && ly < f.rect.h + tol;
+}
+
+/**
+ * The real edges of the room (where two sides meet at an angle: wall/wall, wall/floor,
+ * wall/ceiling). A projector that lights several sides sees these lines even where it does not
+ * reach a corner – a point anywhere on such a line is a measurement too.
+ */
+export function roomEdges(fold: RoomFold): RoomEdge[] {
+  const names = faceNames(fold);
+  const corners = roomCorners(fold);
+  // planes (normal + offset) with their faces
+  const planes: { n: V3; d: number; faces: RoomFace[] }[] = [];
+  for (const f of fold.faces) {
+    const d = dot(f.n, f.o);
+    let pl = planes.find((q) => dot(q.n, f.n) > 0.999 && Math.abs(q.d - d) < 0.03);
+    if (!pl) planes.push((pl = { n: f.n, d, faces: [] }));
+    pl.faces.push(f);
+  }
+  const on = (pl: (typeof planes)[number], p: V3) => pl.faces.some((f) => onFace(f, p));
+  const edges: RoomEdge[] = [];
+  for (let i = 0; i < corners.length; i++)
+    for (let j = i + 1; j < corners.length; j++) {
+      const a = corners[i]!.p;
+      const b = corners[j]!.p;
+      const mid: V3 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+      const shared = planes.filter((pl) => on(pl, a) && on(pl, b) && on(pl, mid));
+      if (shared.length < 2) continue;
+      const label = shared
+        .map((pl) => {
+          const f = pl.faces.find((x) => onFace(x, mid)) ?? pl.faces[0]!;
+          return names.get(f.id)!;
+        })
+        .sort((x, y) => (x === 'Hauptwand' ? -1 : y === 'Hauptwand' ? 1 : 0))
+        .join(' / ');
+      edges.push({ id: `${corners[i]!.id}|${corners[j]!.id}`, a, b, label });
+    }
+  return edges;
 }

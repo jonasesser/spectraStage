@@ -17,6 +17,7 @@ import {
   poseRay,
   projectPose,
   roomCorners,
+  roomEdges,
   solvePose,
   type V3,
   dirFromAngles,
@@ -609,6 +610,51 @@ describe('corner measuring (projector pose from room corners)', () => {
     const r = solvePose(start, 16 / 9, pts, fold)!;
     expect(r.errPx).toBeLessThan(0.5);
     expect(Math.hypot(...truth.pos.map((v, i) => v - r.pose.pos[i]!))).toBeLessThan(0.05);
+  });
+  it('finds the 12 edges of the room', () => {
+    const e = roomEdges(fold);
+    expect(e).toHaveLength(12);
+    expect(e.some((x) => x.label === 'Hauptwand / Boden')).toBe(true);
+  });
+  it('five sides from one projector: visible corners plus points on the edges', () => {
+    // projector at the back wall, sees main wall, both side walls, floor and ceiling
+    const truth = { ...aimPose([2.1, 1.9, 3.85], [1.9, 1.0, 0], 118, -0.02), shiftY: 0.2 };
+    const inImg = (q: [number, number] | null) => !!q && Math.abs(q[0]) < 0.98 && Math.abs(q[1]) < 0.98;
+    const pts: { p: V3; q?: V3; u: number; v: number }[] = [];
+    for (const c of corners) {
+      const q = projectPose(truth, 16 / 9, c.p);
+      if (inImg(q)) pts.push({ p: c.p, u: (q![0] + 1) / 2, v: (1 - q![1]) / 2 });
+    }
+    let edgePts = 0;
+    for (const e of roomEdges(fold)) {
+      for (const t of [0.3, 0.6, 0.85]) {
+        const P: V3 = [
+          e.a[0] + (e.b[0] - e.a[0]) * t,
+          e.a[1] + (e.b[1] - e.a[1]) * t,
+          e.a[2] + (e.b[2] - e.a[2]) * t,
+        ];
+        const q = projectPose(truth, 16 / 9, P);
+        if (!inImg(q)) continue;
+        pts.push({ p: e.a, q: e.b, u: (q![0] + 1) / 2, v: (1 - q![1]) / 2 });
+        edgePts++;
+      }
+    }
+    expect(edgePts).toBeGreaterThan(4);
+    const r = solvePose(aimPose([2, 1.4, 2.5], [2, 1.1, 0], 90, 0), 16 / 9, pts, fold)!;
+    expect(r.errPx).toBeLessThan(1);
+    // what counts: the whole picture lines up – check points all over the room
+    for (const P of [
+      [0.5, 0.3, 0],
+      [3.5, 2.0, 0],
+      [4, 1, 1.5],
+      [0, 1.8, 2.5],
+      [2, 0, 1.5],
+      [2, 2.25, 2],
+    ] as V3[]) {
+      const a = projectPose(truth, 16 / 9, P)!;
+      const b = projectPose(r.pose, 16 / 9, P)!;
+      expect(Math.hypot(a[0] - b[0], a[1] - b[1]) * 960).toBeLessThan(3);
+    }
   });
   it('a single wall (4 coplanar corners) still lines up exactly', () => {
     const truth = aimPose([1.5, 1.0, 3.0], [2.1, 1.2, 0], 60, -0.05);

@@ -4,6 +4,7 @@ import {
   polygonBBox,
   projectPose,
   roomCorners,
+  roomEdges,
   type Anchor,
   type Output,
   type Pose,
@@ -260,6 +261,32 @@ export function drawAlignOverlay(
       }
       g.stroke();
     }
+  }
+  // the edge being measured: thick orange
+  const selEdge = sel?.startsWith('e|') ? sel.slice(2, sel.lastIndexOf('|')) : null;
+  const edge = selEdge ? roomEdges(fold).find((e) => e.id === selEdge) : undefined;
+  if (edge) {
+    g.strokeStyle = '#ffb347';
+    g.shadowColor = '#ffb347';
+    g.lineWidth = lw * 2.5;
+    g.beginPath();
+    let pen = false;
+    for (let i = 0; i <= 64; i++) {
+      const t = i / 64;
+      const q = toPx([
+        edge.a[0] + (edge.b[0] - edge.a[0]) * t,
+        edge.a[1] + (edge.b[1] - edge.a[1]) * t,
+        edge.a[2] + (edge.b[2] - edge.a[2]) * t,
+      ]);
+      if (!q || q[0] < -w || q[0] > 2 * w || q[1] < -h || q[1] > 2 * h) {
+        pen = false;
+        continue;
+      }
+      if (pen) g.lineTo(q[0], q[1]);
+      else g.moveTo(q[0], q[1]);
+      pen = true;
+    }
+    g.stroke();
   }
   g.shadowBlur = 0;
   // numbered room corners (where the app thinks they are)

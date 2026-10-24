@@ -85,6 +85,8 @@ export const AnchorSchema = z.object({
   /** Corner id (see roomCorners). */
   c: z.string().max(80),
   p: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]),
+  /** Set for a point on a room edge: the edge runs from p to q (the point may lie anywhere on it). */
+  q: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]).optional(),
   u: z.number().min(-0.5).max(1.5),
   v: z.number().min(-0.5).max(1.5),
 });

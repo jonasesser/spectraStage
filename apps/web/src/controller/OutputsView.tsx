@@ -14,6 +14,7 @@ import { api } from '../lib/api.ts';
 import { useShow, useStore } from './store.ts';
 import { Light, outputHealth, Sheet, Slider, kindLabel } from './ui.tsx';
 import { CalibrationEditor } from './CalibrationEditor.tsx';
+import { MeasureWizard } from './MeasureWizard.tsx';
 import { StagePreview } from './Preview.tsx';
 
 export function OutputsView() {
@@ -22,7 +23,28 @@ export function OutputsView() {
   const [calibrate, setCalibrate] = useState<string | null>(null);
   const pending = state.devices.filter((d) => d.status === 'pending');
   const out = calibrate ? state.outputs.find((o) => o.id === calibrate) : undefined;
-  if (out) return <CalibrationEditor output={out} onClose={() => setCalibrate(null)} />;
+  const [flat, setFlat] = useState(false);
+  // projectors in the 3D room are measured against the real room (guided); the flat 2D
+  // calibration stays available for fine corrections
+  if (out && activeProfile(out).pose && !flat)
+    return (
+      <div className="stack">
+        <MeasureWizard output={out} state={state} L={L} onDone={() => setCalibrate(null)} />
+        <button className="btn small ghost" onClick={() => setFlat(true)}>
+          {L('Flat 2D corner correction (experts)', 'Flache 2D-Eckkorrektur (Experten)')}
+        </button>
+      </div>
+    );
+  if (out)
+    return (
+      <CalibrationEditor
+        output={out}
+        onClose={() => {
+          setCalibrate(null);
+          setFlat(false);
+        }}
+      />
+    );
   return (
     <div className="stack">
       {pending.length > 0 && (

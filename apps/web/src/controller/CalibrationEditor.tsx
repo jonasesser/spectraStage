@@ -942,7 +942,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
             </div>
           )}
 
-          {mode === 'corners' && (
+          {mode === 'corners' && !saved.pose && (
             <div className="panel stack">
               <h3 style={{ margin: 0 }}>{L('Room corner', 'Raumecke')}</h3>
               <p className="muted small" style={{ margin: 0 }}>

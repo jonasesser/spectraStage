@@ -25,7 +25,7 @@ import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
 import { roomGeometry } from './roomGeometry.ts';
 import { Slider } from './ui.tsx';
-import { CornerPad } from './CornerPad.tsx';
+import { MeasureWizard } from './MeasureWizard.tsx';
 import { ObjectPanel } from './ObjectPanel.tsx';
 
 type Mode = 'look' | 'aim' | 'place' | 'align' | 'objects';
@@ -543,34 +543,6 @@ export function Room3D({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layoutKey]);
 
-  // corner measuring: the projector shows edges/corners/markers while this mode is open
-  const alignOut = mode === 'align' ? selected : null;
-  useEffect(() => {
-    if (!alignOut) return;
-    void store.send({ t: 'output.align', outputId: alignOut, on: true, sel: corner });
-  }, [alignOut, corner, store]);
-  useEffect(() => {
-    if (!alignOut) return;
-    return () => void store.send({ t: 'output.align', outputId: alignOut, on: false, sel: null });
-  }, [alignOut, store]);
-  const anchorTimer = useRef(0);
-  const sendAnchors = (id: string, list: Anchor[], final: boolean) => {
-    anchorDrafts.current[id] = list;
-    force((n) => n + 1);
-    const flush = () => {
-      anchorTimer.current = 0;
-      const l = anchorDrafts.current[id];
-      if (!l) return;
-      void store.send({ t: 'output.setAnchors', outputId: id, anchors: l }).finally(() => {
-        if (anchorDrafts.current[id] === l) delete anchorDrafts.current[id];
-      });
-    };
-    if (final) {
-      window.clearTimeout(anchorTimer.current);
-      flush();
-    } else if (!anchorTimer.current) anchorTimer.current = window.setTimeout(flush, 90);
-  };
-
   const onPickObject = useRef<(id: string) => void>(() => {});
   onPickObject.current = (id: string) => setObjSel(id);
   const objTimer = useRef(0);
@@ -701,7 +673,7 @@ export function Room3D({
             ['look', '👀 ' + L('Look around', 'Umschauen')],
             ['aim', '🎯 ' + L('Aim', 'Ausrichten')],
             ['place', '📍 ' + L('Position', 'Standort')],
-            ['align', '📐 ' + L('Measure corners', 'Ecken einmessen')],
+            ['align', '📐 ' + L('Measure', 'Einmessen')],
             ['objects', '📦 ' + L('Objects', 'Objekte')],
           ] as [Mode, string][]
         ).map(([m, label]) => (
@@ -741,18 +713,8 @@ export function Room3D({
           })()}
         />
       )}
-      {mode === 'align' && sel && selPose && (
-        <CornerPad
-          L={L}
-          pose={selPose}
-          aspect={outputAspect(sel)}
-          corners={roomCorners(roomFold(state.surfaces))}
-          corner={corner}
-          onCorner={setCorner}
-          anchors={anchorsOf(sel)}
-          onAnchors={(list, final) => sendAnchors(sel.id, list, final)}
-          onDone={() => setMode('aim')}
-        />
+      {mode === 'align' && sel && (
+        <MeasureWizard output={sel} state={state} L={L} onDone={() => setMode('aim')} />
       )}
       {sel && selPose && mode !== 'align' && mode !== 'objects' && (
         <div className="panel stack" onPointerUp={commit} onKeyUp={commit}>
