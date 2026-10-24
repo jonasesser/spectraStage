@@ -41,6 +41,7 @@ import {
   type ActorCue,
   type Output,
   type Profile,
+  type RoomObject,
   type Route,
   type SessionState,
   type Surface,
@@ -55,6 +56,7 @@ import type { SoundEngine } from './sound.ts';
 import {
   drawAlignOverlay,
   drawCornerMarkers,
+  drawObjectOutline,
   drawRawPattern,
   drawStageGrid,
   drawIdentify,
@@ -184,6 +186,27 @@ void main() {
   vec4 c = texture2D(map, vUv);
   float m = useMask > 0.5 ? texture2D(mask, gl_FragCoord.xy / outSize).r : 1.0;
   gl_FragColor = vec4(c.rgb * m * gain, c.a);
+}
+`;
+
+/** Light on real objects: dark (masked), glow, flicker (fire), spooky (colour drift), edges. */
+const OBJECT_FRAG = `
+uniform vec3 uColor;
+uniform float uTime;
+uniform float uMode;
+varying vec2 vUv;
+float h1(float n){ return fract(sin(n) * 43758.5453); }
+float n1(float x){ float i = floor(x); float f = fract(x); return mix(h1(i), h1(i + 1.0), f * f * (3.0 - 2.0 * f)); }
+void main() {
+  float e = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
+  float line = smoothstep(0.035, 0.0, e);
+  vec3 c = vec3(0.0);
+  if (uMode < 0.5) c = vec3(0.0);
+  else if (uMode < 1.5) c = uColor * (0.7 + 0.3 * sin(uTime * 1.5)) + uColor * line * 0.5;
+  else if (uMode < 2.5) c = uColor * (0.45 + 0.55 * n1(uTime * 9.0) * n1(uTime * 3.1 + 7.0)) * (0.8 + 0.4 * (1.0 - vUv.y));
+  else if (uMode < 3.5) c = mix(uColor, vec3(0.55, 0.2, 1.0), 0.5 + 0.5 * sin(uTime * 0.9 + vUv.y * 3.0)) * (0.65 + 0.35 * sin(uTime * 2.3));
+  else c = uColor * line * 1.3 + uColor * 0.04;
+  gl_FragColor = vec4(c, 1.0);
 }
 `;
 
@@ -373,6 +396,9 @@ export class StageRenderer {
   private poseScene = new THREE.Scene();
   private poseCamera = new THREE.PerspectiveCamera(50, 16 / 9, 0.05, 200);
   private poseKey = '';
+  private poseRoom = new THREE.Group();
+  private poseObjects = new THREE.Group();
+  private poseObjectsKey = '';
   private poseMaterial = new THREE.ShaderMaterial({
     uniforms: { map: { value: null } },
     vertexShader: VERT,
@@ -1193,6 +1219,50 @@ export class StageRenderer {
     return { vp, w, h, seen };
   }
 
+  /** Real objects in the room as 3D bodies in the projector view, with their own light. */
+  private syncPoseObjects(objects: readonly RoomObject[], now: number): void {
+    const key = JSON.stringify(objects.map((o) => [o.id, o.shape, o.pos, o.size, o.yaw]));
+    if (key !== this.poseObjectsKey) {
+      this.poseObjectsKey = key;
+      for (const c of [...this.poseObjects.children]) {
+        this.poseObjects.remove(c);
+        const m = c as THREE.Mesh;
+        m.geometry.dispose();
+        (m.material as THREE.Material).dispose();
+      }
+      for (const o of objects) {
+        const g =
+          o.shape === 'box'
+            ? new THREE.BoxGeometry(o.size[0], o.size[1], o.size[2])
+            : new THREE.CylinderGeometry(0.5, 0.5, 1, 48).scale(o.size[0], o.size[1], o.size[2]);
+        g.translate(0, o.size[1] / 2, 0);
+        const m = new THREE.Mesh(
+          g,
+          new THREE.ShaderMaterial({
+            uniforms: { uColor: { value: new THREE.Color() }, uTime: { value: 0 }, uMode: { value: 1 } },
+            vertexShader: VERT,
+            fragmentShader: OBJECT_FRAG,
+            side: THREE.FrontSide,
+          }),
+        );
+        m.position.set(...o.pos);
+        m.rotation.set(0, o.yaw, 0);
+        m.userData.id = o.id;
+        m.frustumCulled = false;
+        this.poseObjects.add(m);
+      }
+    }
+    const looks = ['dark', 'glow', 'flicker', 'spooky', 'edges'];
+    for (const c of this.poseObjects.children) {
+      const o = objects.find((x) => x.id === c.userData.id);
+      if (!o) continue;
+      const u = ((c as THREE.Mesh).material as THREE.ShaderMaterial).uniforms;
+      (u.uColor!.value as THREE.Color).set(o.color);
+      u.uTime!.value = (now / 1000) % 10000;
+      u.uMode!.value = Math.max(0, looks.indexOf(o.look));
+    }
+  }
+
   private setPoseCamera(pose: NonNullable<Profile['pose']>, aspect: number): void {
     const cam = this.poseCamera;
     cam.aspect = aspect;
@@ -1217,14 +1287,23 @@ export class StageRenderer {
     output: Output | null,
   ): THREE.Texture {
     const r = this.renderer;
-    if (!this.poseRT) this.poseRT = makeRT(ow, oh);
-    else if (this.poseRT.width !== ow || this.poseRT.height !== oh) this.poseRT.setSize(ow, oh);
+    if (!this.poseRT) {
+      // with depth: real objects in the room hide the walls behind them
+      this.poseRT = new THREE.WebGLRenderTarget(ow, oh, {
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        depthBuffer: true,
+        stencilBuffer: false,
+        generateMipmaps: false,
+      });
+      this.poseScene.add(this.poseRoom, this.poseObjects);
+    } else if (this.poseRT.width !== ow || this.poseRT.height !== oh) this.poseRT.setSize(ow, oh);
     const fold = this.worldFor(state).fold;
     const key = JSON.stringify([vp, fold.faces.map((f) => [f.id, f.o, f.ax, f.ay, f.rect])]);
     if (key !== this.poseKey) {
       this.poseKey = key;
-      for (const c of [...this.poseScene.children]) {
-        this.poseScene.remove(c);
+      for (const c of [...this.poseRoom.children]) {
+        this.poseRoom.remove(c);
         (c as THREE.Mesh).geometry?.dispose();
       }
       for (const f of fold.faces) {
@@ -1246,9 +1325,10 @@ export class StageRenderer {
         g.setIndex([0, 3, 1, 1, 3, 2]);
         const m = new THREE.Mesh(g, this.poseMaterial);
         m.frustumCulled = false;
-        this.poseScene.add(m);
+        this.poseRoom.add(m);
       }
     }
+    this.syncPoseObjects(state.objects ?? [], now);
     this.poseMaterial.uniforms.map!.value = this.viewRT.texture;
     const cam = this.poseCamera;
     this.setPoseCamera(pose, ow / oh);
@@ -1257,7 +1337,11 @@ export class StageRenderer {
     r.clear();
     r.render(this.poseScene, cam);
     const align = output?.align && output.align.until > now ? output.align : null;
-    if (markers || align) {
+    const editObj =
+      state.objectEdit && state.objectEdit.until > now
+        ? (state.objects ?? []).find((o) => o.id === state.objectEdit!.id)
+        : undefined;
+    if (markers || align || editObj) {
       // numbered image corners for the fine adjustment, in the projector's own image
       this.viewOverlay.resize(ow, oh);
       this.viewOverlayMaterial.uniforms.map!.value = this.viewOverlay.texture;
@@ -1273,7 +1357,8 @@ export class StageRenderer {
           align.sel,
           Date.now(),
         );
-      else drawCornerMarkers(this.viewOverlay.g, ow, oh, this.previewFocus, now);
+      else if (markers) drawCornerMarkers(this.viewOverlay.g, ow, oh, this.previewFocus, now);
+      if (editObj) drawObjectOutline(this.viewOverlay.g, ow, oh, pose, editObj, Date.now());
       this.viewOverlay.upload();
       const prev = r.autoClear;
       r.autoClear = false;

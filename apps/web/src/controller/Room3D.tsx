@@ -15,6 +15,7 @@ import {
   roomRay,
   stageBounds,
   type Anchor,
+  type RoomObject,
   type Output,
   type Pose,
   type SessionState,
@@ -25,8 +26,9 @@ import { useStore } from './store.ts';
 import { roomGeometry } from './roomGeometry.ts';
 import { Slider } from './ui.tsx';
 import { CornerPad } from './CornerPad.tsx';
+import { ObjectPanel } from './ObjectPanel.tsx';
 
-type Mode = 'look' | 'aim' | 'place' | 'align';
+type Mode = 'look' | 'aim' | 'place' | 'align' | 'objects';
 
 function outputAspect(o: Output): number {
   const r = activeProfile(o).referenceResolution;
@@ -69,6 +71,12 @@ export function Room3D({
   const cornerRef = useRef(corner);
   cornerRef.current = corner;
   const anchorDrafts = useRef<Record<string, Anchor[]>>({});
+  const [objSel, setObjSel] = useState<string | null>(null);
+  const objSelRef = useRef(objSel);
+  objSelRef.current = objSel;
+  const objDrafts = useRef<Record<string, Partial<RoomObject>>>({});
+  const objectsOf = (st: SessionState): RoomObject[] =>
+    (st.objects ?? []).map((o) => ({ ...o, ...(objDrafts.current[o.id] ?? {}) }));
   const anchorsOf = (o: Output): Anchor[] => anchorDrafts.current[o.id] ?? activeProfile(o).anchors ?? [];
   const [, force] = useState(0);
   const [gyro, setGyro] = useState(false);
@@ -228,6 +236,45 @@ export function Room3D({
     };
     let lastKey = '';
 
+    // --- real objects in the room
+    const objGroup = new THREE.Group();
+    scene.add(objGroup);
+    const buildObjects = () => {
+      for (const c of [...objGroup.children]) {
+        objGroup.remove(c);
+        const m = c as THREE.Mesh;
+        m.geometry.dispose();
+        (m.material as THREE.Material).dispose();
+      }
+      for (const o of objectsOf(stateRef.current)) {
+        const sel = o.id === objSelRef.current && modeRef.current === 'objects';
+        const g =
+          o.shape === 'box'
+            ? new THREE.BoxGeometry(o.size[0], o.size[1], o.size[2])
+            : new THREE.CylinderGeometry(0.5, 0.5, 1, 32).scale(o.size[0], o.size[1], o.size[2]);
+        g.translate(0, o.size[1] / 2, 0);
+        const m = new THREE.Mesh(
+          g,
+          new THREE.MeshBasicMaterial({
+            color: o.look === 'dark' ? '#222' : o.color,
+            transparent: true,
+            opacity: 0.85,
+          }),
+        );
+        m.position.set(...o.pos);
+        m.rotation.set(0, o.yaw, 0);
+        m.userData.objectId = o.id;
+        objGroup.add(m);
+        const edges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(g),
+          new THREE.LineBasicMaterial({ color: sel ? 0xffe650 : 0x000000 }),
+        );
+        edges.position.copy(m.position);
+        edges.rotation.copy(m.rotation);
+        objGroup.add(edges);
+      }
+    };
+
     // --- room corners (numbered) for measuring
     const cornerGroup = new THREE.Group();
     scene.add(cornerGroup);
@@ -307,10 +354,17 @@ export function Room3D({
       return ray.intersectObjects(objs, false)[0] ?? null;
     };
     type Drag =
-      { kind: 'look'; x: number; y: number; yaw: number; pitch: number } | { kind: 'edit'; id: string };
+      | { kind: 'look'; x: number; y: number; yaw: number; pitch: number }
+      | { kind: 'edit'; id: string }
+      | { kind: 'object'; id: string };
     let drag: Drag | null = null;
     const pts = new Map<number, { x: number; y: number }>();
     let pinch0: { d: number; fov: number } | null = null;
+    const moveObject = (id: string, x: number, z: number) => {
+      const o = objectsOf(stateRef.current).find((k) => k.id === id);
+      if (!o) return;
+      onObjectPatch.current(id, { pos: [x, o.pos[1], z] }, false);
+    };
     const editAt = (id: string, cx: number, cy: number) => {
       const hit = pick(cx, cy, meshes);
       const o = stateRef.current.outputs.find((x) => x.id === id);
@@ -346,6 +400,25 @@ export function Room3D({
         drag = null;
         return;
       }
+      if (modeRef.current === 'objects') {
+        const ob = pick(
+          e.clientX,
+          e.clientY,
+          objGroup.children.filter((c) => c.userData.objectId),
+        );
+        if (ob) {
+          onPickObject.current(ob.object.userData.objectId as string);
+          drag = { kind: 'object', id: ob.object.userData.objectId as string };
+          return;
+        }
+        const id = objSelRef.current;
+        const hit = pick(e.clientX, e.clientY, meshes);
+        if (id && hit && hit.point.y < 0.05) {
+          drag = { kind: 'object', id };
+          moveObject(id, hit.point.x, hit.point.z);
+          return;
+        }
+      }
       if (modeRef.current === 'align') {
         // tap a numbered corner to measure it, otherwise look around
         const rect = canvas.getBoundingClientRect();
@@ -365,7 +438,7 @@ export function Room3D({
         }
       }
       const id = selRef.current;
-      if (id && modeRef.current !== 'look' && modeRef.current !== 'align') {
+      if (id && (modeRef.current === 'aim' || modeRef.current === 'place')) {
         drag = { kind: 'edit', id };
         editAt(id, e.clientX, e.clientY);
         return;
@@ -390,6 +463,9 @@ export function Room3D({
         yaw = drag.yaw - (e.clientX - drag.x) * k;
         pitch = drag.pitch + (e.clientY - drag.y) * k;
         applyView();
+      } else if (drag.kind === 'object') {
+        const hit = pick(e.clientX, e.clientY, meshes);
+        if (hit && hit.point.y < 0.05) moveObject(drag.id, hit.point.x, hit.point.z);
       } else editAt(drag.id, e.clientX, e.clientY);
     };
     const onUp = (e: PointerEvent) => {
@@ -398,6 +474,7 @@ export function Room3D({
       const d = drag;
       drag = null;
       if (d?.kind === 'edit') sendPose(d.id);
+      if (d?.kind === 'object') onObjectPatch.current(d.id, {}, true);
     };
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -429,6 +506,8 @@ export function Room3D({
         selRef.current,
         modeRef.current,
         cornerRef.current,
+        objSelRef.current,
+        objectsOf(stateRef.current),
         stateRef.current.outputs.map((o) => [
           o.id,
           poseOf(o),
@@ -440,6 +519,7 @@ export function Room3D({
         lastKey = key;
         buildProjectors();
         buildCorners();
+        buildObjects();
       }
       cg.drawImage(src, 0, 0, TW, TH);
       tex.needsUpdate = true;
@@ -490,6 +570,38 @@ export function Room3D({
       flush();
     } else if (!anchorTimer.current) anchorTimer.current = window.setTimeout(flush, 90);
   };
+
+  const onPickObject = useRef<(id: string) => void>(() => {});
+  onPickObject.current = (id: string) => setObjSel(id);
+  const objTimer = useRef(0);
+  const patchObject = (id: string, patch: Partial<RoomObject>, final: boolean) => {
+    objDrafts.current[id] = { ...(objDrafts.current[id] ?? {}), ...patch };
+    force((n) => n + 1);
+    const flush = () => {
+      objTimer.current = 0;
+      const d = objDrafts.current[id];
+      if (!d || !Object.keys(d).length) return;
+      void store.send({ t: 'object.update', id, patch: d }).finally(() => {
+        if (objDrafts.current[id] === d) delete objDrafts.current[id];
+      });
+    };
+    if (final) {
+      window.clearTimeout(objTimer.current);
+      flush();
+    } else if (!objTimer.current) objTimer.current = window.setTimeout(flush, 90);
+  };
+  const onObjectPatch = useRef(patchObject);
+  onObjectPatch.current = patchObject;
+  // all projectors show the outline of the object being placed
+  const editObj = mode === 'objects' ? objSel : null;
+  useEffect(() => {
+    if (mode !== 'objects') return;
+    void store.send({ t: 'object.edit', id: editObj });
+  }, [mode, editObj, store]);
+  useEffect(() => {
+    if (mode !== 'objects') return;
+    return () => void store.send({ t: 'object.edit', id: null });
+  }, [mode, store]);
 
   const onPickCorner = useRef<(id: string) => void>(() => {});
   onPickCorner.current = (id: string) => setCorner(id);
@@ -590,6 +702,7 @@ export function Room3D({
             ['aim', '🎯 ' + L('Aim', 'Ausrichten')],
             ['place', '📍 ' + L('Position', 'Standort')],
             ['align', '📐 ' + L('Measure corners', 'Ecken einmessen')],
+            ['objects', '📦 ' + L('Objects', 'Objekte')],
           ] as [Mode, string][]
         ).map(([m, label]) => (
           <button key={m} className={`chip${mode === m ? ' on' : ''}`} onClick={() => setMode(m)}>
@@ -615,6 +728,19 @@ export function Room3D({
           {L('Put this projector into the room', 'Diesen Beamer in den Raum stellen')}
         </button>
       )}
+      {mode === 'objects' && (
+        <ObjectPanel
+          L={L}
+          objects={objectsOf(state)}
+          selected={objSel}
+          onSelect={setObjSel}
+          onPatch={patchObject}
+          mainAxis={(() => {
+            const m = roomFold(state.surfaces).faces.find((f) => f.role === 'main');
+            return m ? { ax: m.ax, n: m.n } : { ax: [1, 0, 0] as V3, n: [0, 0, 1] as V3 };
+          })()}
+        />
+      )}
       {mode === 'align' && sel && selPose && (
         <CornerPad
           L={L}
@@ -628,7 +754,7 @@ export function Room3D({
           onDone={() => setMode('aim')}
         />
       )}
-      {sel && selPose && mode !== 'align' && (
+      {sel && selPose && mode !== 'align' && mode !== 'objects' && (
         <div className="panel stack" onPointerUp={commit} onKeyUp={commit}>
           <div className="row" style={{ justifyContent: 'space-between' }}>
             <strong>📽 {sel.name}</strong>

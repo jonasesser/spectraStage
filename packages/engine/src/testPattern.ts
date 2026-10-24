@@ -1,5 +1,6 @@
 import {
   facePoint,
+  objectEdges,
   polygonBBox,
   projectPose,
   roomCorners,
@@ -7,6 +8,7 @@ import {
   type Output,
   type Pose,
   type RoomFold,
+  type RoomObject,
   type SessionState,
   type V3,
   type Viewport,
@@ -305,5 +307,37 @@ export function drawAlignOverlay(
       g.fillText(String(c.n), x + s * 1.2, y - s * 1.0);
     }
   }
+  g.restore();
+}
+
+/** Outline of an object being placed: shown on every projector so it can be lined up live. */
+export function drawObjectOutline(
+  g: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  pose: Pose,
+  o: RoomObject,
+  now: number,
+): void {
+  const aspect = w / h;
+  const toPx = (P: V3): [number, number] | null => {
+    const q = projectPose(pose, aspect, P);
+    return q ? [((q[0] + 1) / 2) * w, ((1 - q[1]) / 2) * h] : null;
+  };
+  g.save();
+  const lw = Math.max(2, w / 500);
+  g.strokeStyle = `rgba(255, 230, 80, ${0.75 + 0.25 * Math.sin(now / 160)})`;
+  g.lineWidth = lw;
+  g.shadowColor = '#ffe650';
+  g.shadowBlur = lw * 3;
+  g.beginPath();
+  for (const [a, b] of objectEdges(o)) {
+    const p = toPx(a);
+    const q = toPx(b);
+    if (!p || !q) continue;
+    g.moveTo(p[0], p[1]);
+    g.lineTo(q[0], q[1]);
+  }
+  g.stroke();
   g.restore();
 }

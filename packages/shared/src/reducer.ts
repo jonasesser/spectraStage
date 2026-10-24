@@ -413,6 +413,46 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
     case 'session.setRoom':
       state.room = cmd.room;
       return res(cmd.room ? 'room mode on' : 'room mode off');
+    case 'object.create': {
+      const list = (state.objects ??= []);
+      if (list.length >= 24) fail('limit', 'Too many objects');
+      const fold = roomFold(state.surfaces);
+      const main = fold.faces.find((f) => f.role === 'main');
+      // in front of the main wall, on the floor
+      const pos: [number, number, number] = main
+        ? [
+            main.o[0] + main.ax[0] * (main.rect.w / 2) + main.n[0] * 1,
+            0,
+            main.o[2] + main.ax[2] * (main.rect.w / 2) + main.n[2] * 1,
+          ]
+        : [0, 0, 1];
+      const o = {
+        id: ctx.newId(),
+        name: cmd.name,
+        shape: cmd.shape,
+        pos,
+        size: (cmd.shape === 'box' ? [0.6, 0.6, 0.6] : [0.4, 1.2, 0.4]) as [number, number, number],
+        yaw: main ? Math.atan2(main.ax[2], main.ax[0]) * -1 : 0,
+        look: 'glow' as const,
+        color: '#ff8a2e',
+      };
+      list.push(o);
+      state.objectEdit = { id: o.id, until: ctx.now + 30 * 60_000 };
+      return res(`object ${o.name} added`);
+    }
+    case 'object.update': {
+      const o = state.objects?.find((x) => x.id === cmd.id) ?? fail('not_found', 'Unknown object');
+      Object.assign(o, cmd.patch);
+      return res(`object ${o.name} changed`);
+    }
+    case 'object.delete': {
+      state.objects = (state.objects ?? []).filter((x) => x.id !== cmd.id);
+      if (state.objectEdit?.id === cmd.id) state.objectEdit = null;
+      return res('object removed');
+    }
+    case 'object.edit':
+      state.objectEdit = cmd.id ? { id: cmd.id, until: ctx.now + 30 * 60_000 } : null;
+      return res(cmd.id ? 'placing object' : 'object placed');
     case 'session.setBoost':
       state.boost = cmd.boost;
       return res(`dusk boost ${Math.round(cmd.boost * 100)}%`);

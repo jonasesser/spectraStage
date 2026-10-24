@@ -6,7 +6,7 @@
  *  - the 3D room view in the controller.
  * Room space: x/z on the ground, y up, the viewer stands in `center`.
  */
-import type { Pose, Surface } from './schema.ts';
+import type { Pose, RoomObject, Surface } from './schema.ts';
 import { completeRoom, worldLayout, type BBox } from './stage.ts';
 
 export type V3 = [number, number, number];
@@ -626,4 +626,47 @@ function solveLinear(A: number[][], b: number[]): number[] | null {
     x[r] = s / A[r]![r]!;
   }
   return x;
+}
+
+/** Room point of an object-local point (x right, y up from the bottom, z towards the front). */
+export function objectPoint(o: RoomObject, x: number, y: number, z: number): V3 {
+  const c = Math.cos(o.yaw);
+  const s = Math.sin(o.yaw);
+  return [o.pos[0] + c * x + s * z, o.pos[1] + y, o.pos[2] - s * x + c * z];
+}
+
+/** Outline of an object as line segments (for placing it with live feedback on the projectors). */
+export function objectEdges(o: RoomObject): [V3, V3][] {
+  const [w, h, d] = o.size;
+  const segs: [V3, V3][] = [];
+  if (o.shape === 'box') {
+    const xs = [-w / 2, w / 2];
+    const zs = [-d / 2, d / 2];
+    for (const y of [0, h]) {
+      segs.push([objectPoint(o, xs[0]!, y, zs[0]!), objectPoint(o, xs[1]!, y, zs[0]!)]);
+      segs.push([objectPoint(o, xs[1]!, y, zs[0]!), objectPoint(o, xs[1]!, y, zs[1]!)]);
+      segs.push([objectPoint(o, xs[1]!, y, zs[1]!), objectPoint(o, xs[0]!, y, zs[1]!)]);
+      segs.push([objectPoint(o, xs[0]!, y, zs[1]!), objectPoint(o, xs[0]!, y, zs[0]!)]);
+    }
+    for (const x of xs) for (const z of zs) segs.push([objectPoint(o, x, 0, z), objectPoint(o, x, h, z)]);
+  } else {
+    const n = 32;
+    for (const y of [0, h])
+      for (let i = 0; i < n; i++) {
+        const a0 = (i / n) * Math.PI * 2;
+        const a1 = ((i + 1) / n) * Math.PI * 2;
+        segs.push([
+          objectPoint(o, (Math.cos(a0) * w) / 2, y, (Math.sin(a0) * d) / 2),
+          objectPoint(o, (Math.cos(a1) * w) / 2, y, (Math.sin(a1) * d) / 2),
+        ]);
+      }
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+      segs.push([
+        objectPoint(o, (Math.cos(a) * w) / 2, 0, (Math.sin(a) * d) / 2),
+        objectPoint(o, (Math.cos(a) * w) / 2, h, (Math.sin(a) * d) / 2),
+      ]);
+    }
+  }
+  return segs;
 }

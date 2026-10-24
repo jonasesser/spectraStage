@@ -82,6 +82,25 @@ If the projector later reports a different resolution, that output turns **black
 either keep the calibration or recalibrate – it never silently projects outside the calibrated
 area.
 
+### Projectors in the 3D room: measuring corners and objects
+
+Everything is done from the phone (Stage → 3D room); nothing has to be set on the projector PC.
+
+- **Quick setup**: 6 projectors (one per side), 1 projector for 3 walls, 3 walls + floor + ceiling,
+  1 projector wall + floor, main wall only. Connected projectors are re-aimed, planned ones replaced.
+- **📐 Measure corners**: the projector shows the room edges and numbered room corners as the app
+  thinks they lie. Pick a corner (number in the 3D view or the chip), move the orange cross with
+  the touchpad/arrows until it sits on the real corner. From 4 corners the app computes position,
+  aim, zoom, rotation and lens shift of the projector (Levenberg–Marquardt); the glowing edges then
+  lie on the real edges. More corners (also on other walls) = more precise; accuracy is shown in px.
+- **📦 Objects**: add a box or a pillar; while it is selected every projector shows its yellow
+  outline – drag it on the floor in the 3D view, nudge and size it until the outline sits on the real
+  object. Looks: glow, fire flicker, spooky colours, glowing edges, dark. Objects hide the walls
+  behind them for the projectors.
+- **Diagnosis** (Projectors → details): GPU, scaling, window, render size, graphics mode, errors,
+  picture brightness, why black is drawn on purpose, and a live picture of what the projector app
+  draws. Graphics mode (standard / compatible / Full HD / power-saving GPU) switches live.
+
 ## 4. Running the show
 
 - **Live**: tap surfaces on the stage map to choose targets, fire effects, send creatures (from →

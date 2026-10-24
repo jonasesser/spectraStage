@@ -371,6 +371,22 @@ export const ControllerSchema = z.object({
 });
 export type ControllerInfo = z.infer<typeof ControllerSchema>;
 
+export const RoomObjectSchema = z.object({
+  id: z.string().max(40),
+  name: z.string().min(1).max(40),
+  shape: z.enum(['box', 'cylinder']),
+  /** Room position of the bottom center (m, y up). */
+  pos: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]),
+  /** Width (x), height (y), depth (z) in m. */
+  size: z.tuple([z.number().min(0.05).max(20), z.number().min(0.05).max(20), z.number().min(0.05).max(20)]),
+  /** Rotation around the vertical axis (radians). */
+  yaw: z.number().finite(),
+  /** What the projectors put on it. */
+  look: z.enum(['dark', 'glow', 'flicker', 'spooky', 'edges']),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+});
+export type RoomObject = z.infer<typeof RoomObjectSchema>;
+
 export const SessionStateSchema = z.object({
   id,
   name,
@@ -390,6 +406,16 @@ export const SessionStateSchema = z.object({
   boost: unit.optional(),
   /** Room mode: the walls go all the way around – the world wraps from the last wall to the first. */
   room: z.boolean().optional(),
+  /** Real things in the room (box, pillar, …) that projectors light directly. */
+  objects: z
+    .array(z.lazy(() => RoomObjectSchema))
+    .max(24)
+    .optional(),
+  /** Object being placed: every projector shows its outline so it can be lined up. */
+  objectEdit: z
+    .object({ id: z.string().max(40), until: z.number() })
+    .nullable()
+    .optional(),
   schedule: ScheduleSchema.optional(),
   devices: z.array(DeviceSchema),
   controllers: z.array(ControllerSchema),
@@ -412,6 +438,15 @@ export const CommandSchema = z.discriminatedUnion('t', [
     muted: z.boolean().optional(),
   }),
   z.object({ t: z.literal('session.blackoutAll'), on: z.boolean() }),
+  z.object({ t: z.literal('object.create'), shape: z.enum(['box', 'cylinder']), name }),
+  z.object({
+    t: z.literal('object.update'),
+    id: z.string().max(40),
+    patch: RoomObjectSchema.omit({ id: true }).partial(),
+  }),
+  z.object({ t: z.literal('object.delete'), id: z.string().max(40) }),
+  /** Show the outline of an object on all projectors while it is placed (null = done). */
+  z.object({ t: z.literal('object.edit'), id: z.string().max(40).nullable() }),
   z.object({ t: z.literal('session.setDefaultTheme'), themeId: id }),
   z.object({ t: z.literal('session.setAmbient'), ambient: StageAmbientSchema.omit({ seed: true }) }),
   z.object({ t: z.literal('session.setBoost'), boost: unit }),
