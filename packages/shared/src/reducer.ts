@@ -575,16 +575,13 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
         theme.presets.find((p) => p.id === cmd.presetId) ?? fail('unknown_preset', 'Unknown preset');
       const targets = cmd.surfaceIds ? surfaces(cmd.surfaceIds) : state.surfaces;
       const at = { ...ctx, now: ctx.now + lead };
-      const stagger = new Map<string, number>();
       for (const s of targets) {
         const a = preset.assignments[s.kind] ?? preset.assignments.other ?? preset.assignments.wall;
         if (!a) continue;
         if (a.playlistTemplateId) {
           const id = ensureTemplatePlaylist(state, theme, a.playlistTemplateId, ctx);
-          const n = stagger.get(id) ?? 0;
-          stagger.set(id, n + 1);
-          const len = state.playlists.find((p) => p.id === id)?.items.length ?? 1;
-          s.playback = playlistPlayback(id, at, n % Math.max(1, len));
+          // All surfaces run in lockstep: scene changes and dark phases happen everywhere at once.
+          s.playback = playlistPlayback(id, at, 0);
         } else if (a.sceneId) {
           const scene = sceneOf(theme, a.sceneId);
           s.playback = scenePlayback(theme.id, scene.id, sanitizeParams(scene.params, a.params), at, {
