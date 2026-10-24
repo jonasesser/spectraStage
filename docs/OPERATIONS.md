@@ -110,7 +110,8 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
 Live tab → 🧟 Zombie camera: the phone films the guests; the projector PCs of the front wall cut the
 people out (MediaPipe selfie segmentation + face landmarks, in the browser) and let them drift along
 the main wall as funny zombie ghosts (green cartoon skin, glow, ghost tail, googly eyes, teeth,
-stitched scar) for as long as the camera runs. Video goes phone → projector PC via WebRTC
+stitched scar) for as long as the camera runs. Several people become separate ghosts (each tracked, own place and
+bobbing, in their camera order); faces are searched per person, so googly eyes etc. reach everyone. Video goes phone → projector PC via WebRTC
 (signalling through the show's WebSocket, STUN only – phone and PC should be in the same Wi-Fi);
 nothing is stored. Models and the WebAssembly runtime are served by the app itself
 (/mediapipe/…), not precached by the service worker. Needs camera permission on the phone

@@ -86,6 +86,10 @@ export interface LiveSprite {
   canvas: HTMLCanvasElement;
   /** 0..1 – fade in/out. */
   alpha: number;
+  /** Horizontal place in the camera picture (0 left … 1 right), kept on the wall. */
+  u: number;
+  /** Stable id (own drift and bobbing per person). */
+  id: number;
 }
 
 export interface RendererStats {
@@ -623,9 +627,9 @@ export class StageRenderer {
     };
   }
 
-  private liveSprite: (() => LiveSprite | null) | null = null;
-  /** A live picture (e.g. the zombie camera) drawn into the world on the main wall. */
-  setLiveSprite(fn: (() => LiveSprite | null) | null): void {
+  private liveSprite: (() => LiveSprite[]) | null = null;
+  /** Live pictures (e.g. people from the zombie camera) drawn into the world on the main wall. */
+  setLiveSprite(fn: (() => LiveSprite[]) | null): void {
     this.liveSprite = fn;
   }
 
@@ -1680,8 +1684,8 @@ export class StageRenderer {
     });
     const all = [...cues, ...ambient];
     const o = this.actorOverlay;
-    const live = this.liveSprite?.() ?? null;
-    if (all.length === 0 && !live) {
+    const live = this.liveSprite?.() ?? [];
+    if (all.length === 0 && !live.length) {
       if (o.dirty) {
         o.clear();
         o.upload();
@@ -1806,22 +1810,25 @@ export class StageRenderer {
       }
     }
     if (this.actorSoundAt.size > 200) this.actorSoundAt.clear();
-    if (live) {
-      // live camera people as ghosts drifting along the main wall, standing on its ground line
+    if (live.length) {
+      // people from the live camera as ghosts drifting along the main wall, each on their own,
+      // in the order they stand in the camera picture, standing on the wall's ground line
       const main = this.worldFor(state).surfaces.find((w) => w.role === 'main');
-      if (main && live.canvas.width > 0 && live.canvas.height > 0) {
+      if (main) {
         const r = main.rect;
         const t = now / 1000;
-        // people about life size on the wall; a wide group is kept narrower than the wall
-        const h = Math.min(r.h * 0.78, (r.w * 0.6 * live.canvas.height) / live.canvas.width);
-        const w = (h * live.canvas.width) / live.canvas.height;
-        const cx = r.x + r.w * (0.5 + 0.28 * Math.sin(t / 11));
-        const bottom = r.y + r.h * 0.98 - h * 0.04 * (1 + Math.sin(t * 1.3));
-        g.save();
-        g.globalAlpha = Math.max(0, Math.min(1, live.alpha));
-        g.drawImage(live.canvas, cx - w / 2, bottom - h, w, h);
-        g.restore();
-        drew = true;
+        for (const sp of live) {
+          if (!sp.canvas.width || !sp.canvas.height) continue;
+          const h = Math.min(r.h * 0.78, (r.w * 0.32 * sp.canvas.height) / sp.canvas.width);
+          const w = (h * sp.canvas.width) / sp.canvas.height;
+          const cx = r.x + r.w * (0.14 + 0.72 * sp.u + 0.06 * Math.sin(t / 9 + sp.id * 1.9));
+          const bottom = r.y + r.h * 0.98 - h * 0.04 * (1 + Math.sin(t * 1.3 + sp.id * 2.3));
+          g.save();
+          g.globalAlpha = Math.max(0, Math.min(1, sp.alpha));
+          g.drawImage(sp.canvas, cx - w / 2, bottom - h, w, h);
+          g.restore();
+          drew = true;
+        }
       }
     }
     o.upload();
