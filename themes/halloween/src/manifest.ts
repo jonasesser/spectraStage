@@ -142,6 +142,26 @@ const worldManifests: SceneManifest[] = [
     ['#1a0f3a', '#d24dff'],
   ),
   world(
+    'magicWorld',
+    ['Magic World', 'Zauberwelt'],
+    [
+      'A stone spirit portal on the main wall; spirits from all around fly into it, a glowing magic path leads onto the ground.',
+      'Ein steinernes Geisterportal auf der Hauptwand; Geister von überall fliegen hinein, ein leuchtender Zauberweg führt auf den Boden.',
+    ],
+    '🔮',
+    ['#14062e', '#7dffd8'],
+  ),
+  world(
+    'monsterWorld',
+    ['Monster House', 'Monsterhaus'],
+    [
+      'Monsters peek out of the windows of the house; glowing tracks lead out of the door and across the ground.',
+      'Monster gucken aus den Fenstern des Hauses; leuchtende Spuren führen aus der Tür über den Boden.',
+    ],
+    '👹',
+    ['#1a1030', '#b6ff4d'],
+  ),
+  world(
     'neonWorld',
     ['Neon World (dusk)', 'Neonwelt (Dämmerung)'],
     [
@@ -553,8 +573,9 @@ export const halloweenManifest: ThemeManifest = {
       description: L('Pumpkin magic and a tiny ghost parade.', 'Kürbiszauber und eine Mini-Geisterparade.'),
       icon: '🪄',
       assignments: {
-        wall: { sceneId: 'pumpkinMagic' },
-        floor: { sceneId: 'tinyGhostParade' },
+        wall: { sceneId: 'magicWorld' },
+        floor: { sceneId: 'magicWorld' },
+        other: { sceneId: 'magicWorld' },
       },
       ambientActors: ['ghost', 'blackCat'],
     },
@@ -622,10 +643,16 @@ export const halloweenManifest: ThemeManifest = {
           transition: { type: 'fadeBlack', durationMs: 3000 },
         },
         {
-          sceneId: 'spookWorld',
+          sceneId: 'magicWorld',
           durationSec: 150,
           transition: { type: 'crossfade', durationMs: 3500 },
-          ambient: { effectIds: ['ghostWave', 'boo', 'gentleLightning'], minGapSec: 20, maxGapSec: 45 },
+          ambient: { effectIds: ['magicCircle', 'sparkles', 'ghostWave'], minGapSec: 20, maxGapSec: 40 },
+        },
+        {
+          sceneId: 'monsterWorld',
+          durationSec: 150,
+          transition: { type: 'crossfade', durationMs: 3500 },
+          ambient: { effectIds: ['windowKnock', 'boo', 'footprintChase'], minGapSec: 20, maxGapSec: 40 },
         },
         {
           sceneId: 'quietWorld',

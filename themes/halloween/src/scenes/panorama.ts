@@ -11,8 +11,19 @@
 import { canvasScene, hash01, hybridScene, memo, noise1, smoothstep, TAU } from '@spectrastage/engine';
 import type { DrawState, SceneModule } from '@spectrastage/engine';
 import { palette, type Palette } from '../palette.ts';
-import { bat, dancePose, fuzzySpider, ghost, pumpkin, skeleton, type GhostFace } from '../shapes.ts';
+import {
+  bat,
+  dancePose,
+  footprint,
+  fuzzySpider,
+  ghost,
+  pumpkin,
+  skeleton,
+  star,
+  type GhostFace,
+} from '../shapes.ts';
 import { web } from './floor.ts';
+import { monster } from './wall.ts';
 import { densityOf, mod, speedOf } from './common.ts';
 import {
   addGlow,
@@ -39,6 +50,10 @@ export interface PanoOpts {
   bats: number;
   pumpkins: number;
   party: boolean;
+  /** Zauberwelt: a stone spirit portal on the lawn instead of the house, glowing path. */
+  portal?: boolean;
+  /** Monsterhaus: monsters peek out of the windows, glowing tracks lead out of the door. */
+  monsters?: boolean;
   /** Use the neon palette regardless of the mood param default. */
   neon?: boolean;
 }
@@ -91,7 +106,7 @@ function frame(s: DrawState, o: PanoOpts): Frame {
       groundY: main.y + U * 0.8,
       fenceY: main.y + U * 0.9,
       houseX: main.x + main.w / 2,
-      houseW: o.house ? Math.min(main.w * 0.56, U * 0.66) : 0,
+      houseW: o.house || o.portal ? Math.min(main.w * 0.56, U * 0.66) : 0,
       seed: (w?.seed ?? s.seed) & 0xffff,
       mainBottom: main.y + main.h,
       frontGround: below(w?.surfaces ?? [], main),
@@ -166,6 +181,67 @@ function pathPumpkins(F: Frame, d: number): PathPumpkin[] {
   return out;
 }
 
+/** Portal ring radius and center height (meters). */
+const portalR = (F: Frame) => F.U * 0.2;
+const portalY = (F: Frame) => F.groundY - portalR(F) * 1.32;
+
+/**
+ * Glowing monster tracks from the front door down the path and on across the floor. Steps
+ * appear one after another and fade – the same list is drawn on the wall and on the floor.
+ */
+function drawTracks(g: CanvasRenderingContext2D, F: Frame, t: number, color: string) {
+  if (!F.houseW) return;
+  const end = F.frontGround ? F.frontGround.y + F.frontGround.h : F.mainBottom;
+  const stride = 0.42;
+  const cycle = 14;
+  const ph = (t % cycle) / cycle;
+  const pts: { X: number; Y: number; k: number; size: number }[] = [];
+  let k = 0;
+  // on the wall: fake perspective (small near the door, bigger towards the viewer)
+  for (let v = 0.15; v <= 1; v += 0.28, k++) {
+    const Y = F.groundY + (F.mainBottom - F.groundY) * v;
+    pts.push({
+      X: F.houseX + (k % 2 ? 1 : -1) * pathHalf(F, Y) * 0.35,
+      Y,
+      k,
+      size: F.U * (0.025 + 0.03 * v),
+    });
+  }
+  for (let Y = F.mainBottom + stride * 0.5; Y < end - 0.1; Y += stride, k++)
+    pts.push({ X: F.houseX + (k % 2 ? 1 : -1) * 0.1, Y, k, size: 0.2 });
+  const n = pts.length;
+  for (const p of pts) {
+    const at = (p.k / n) * 0.6;
+    const a = smoothstep(at, at + 0.04, ph) * (1 - smoothstep(at + 0.3, at + 0.4, ph));
+    if (a <= 0.01) continue;
+    if (p.X < F.r.x - 0.3 || p.X > F.r.x + F.r.w + 0.3 || p.Y < F.r.y - 0.3 || p.Y > F.r.y + F.r.h + 0.3)
+      continue;
+    footprint(g, px(F, p.X), py(F, p.Y), p.size * F.ppm, Math.PI, p.k % 2 === 0, color, a);
+  }
+}
+
+/** Sparkles drifting down the glowing magic path (wall and floor alike). */
+function drawPathSparkles(g: CanvasRenderingContext2D, F: Frame, t: number, color: string) {
+  if (!F.houseW) return;
+  const end = F.frontGround ? F.frontGround.y + F.frontGround.h : F.mainBottom;
+  const len = end - F.groundY;
+  for (let i = 0; i < 18; i++) {
+    const u = mod(t * 0.05 + hash01(i * 7 + F.seed), 1);
+    const Y = F.groundY + u * len;
+    const X = F.houseX + (hash01(i * 13 + F.seed) - 0.5) * 1.6 * pathHalf(F, Y);
+    if (X < F.r.x || X > F.r.x + F.r.w || Y < F.r.y || Y > F.r.y + F.r.h) continue;
+    const sz = (Y > F.mainBottom ? 0.05 : F.U * 0.012 * (0.5 + u)) * F.ppm;
+    addGlow(g, px(F, X), py(F, Y), sz * 3, color, 0.4);
+    star(g, px(F, X), py(F, Y), sz, '#ffffff', 0.5 + 0.5 * Math.sin(t * 4 + i));
+  }
+}
+
+/** Like mixHex but returns '#rrggbb' so the result can be mixed again. */
+function mixHexHex(a: string, b: string, t: number): string {
+  const m = mixHex(a, b, t).match(/\d+/g)!.map(Number);
+  return '#' + m.map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
 const px = (F: Frame, X: number) => (X - F.r.x) * F.ppm;
 const py = (F: Frame, Y: number) => (Y - F.r.y) * F.ppm;
 
@@ -219,7 +295,8 @@ function paintStatic(s: DrawState, F: Frame, env: EnvPalette, o: PanoOpts): Stat
     const left = r.x - U * 0.5;
     const right = r.x + r.w + U * 0.5;
     const lightDir = 1;
-    const nearHouse = (X: number, k: number) => o.house && Math.abs(X - F.houseX) < F.houseW * k;
+    const nearHouse = (X: number, k: number) => F.houseW > 0 && Math.abs(X - F.houseX) < F.houseW * k;
+    const centerHere = F.houseW > 0 && F.houseX + F.houseW > left && F.houseX - F.houseW < right;
 
     // --- far hills
     const hill = (baseY: number, amp: number, salt: number, scale: number, top: string, bot: string) => {
@@ -281,6 +358,42 @@ function paintStatic(s: DrawState, F: Frame, env: EnvPalette, o: PanoOpts): Stat
       g.drawImage(manor.canvas, mx, my);
     }
 
+    // --- the spirit portal (Zauberwelt): a ring of carved stones standing on the lawn
+    if (o.portal && centerHere) {
+      const R = portalR(F) * F.ppm;
+      const cx = px(F, F.houseX);
+      const cy = py(F, portalY(F));
+      const r0 = R * 1.05;
+      const r1 = R * 1.3;
+      g.fillStyle = env.mid;
+      g.beginPath();
+      g.ellipse(cx, py(F, F.groundY + U * 0.02), R * 1.9, U * 0.05 * F.ppm, 0, Math.PI, 0);
+      g.fill();
+      for (let k = 0; k < 3; k++) {
+        const sw = R * (1.5 + k * 0.35);
+        const sy = py(F, F.groundY) - R * 0.12 + k * R * 0.08;
+        g.fillStyle = mixHex(mixHexHex(env.stoneLit, env.stone, 0.5 + k * 0.15), '#000000', 0.15 * k);
+        g.fillRect(cx - sw / 2, sy, sw, R * 0.09);
+      }
+      const n = 16;
+      for (let i = 0; i < n; i++) {
+        const a0 = (i / n) * TAU + 0.012;
+        const a1 = ((i + 1) / n) * TAU - 0.012;
+        const am = (a0 + a1) / 2;
+        const lit = 0.5 + 0.5 * Math.cos(am + Math.PI * 0.75);
+        const gr = g.createRadialGradient(cx, cy, r0, cx, cy, r1);
+        gr.addColorStop(0, mixHex(env.moss, env.stoneLit, 0.5));
+        gr.addColorStop(0.18, mixHex(env.stoneLit, env.stone, 1 - lit * 0.6));
+        gr.addColorStop(1, mixHex(env.stone, '#000000', 0.55));
+        g.fillStyle = gr;
+        g.beginPath();
+        g.arc(cx, cy, r1, a0, a1);
+        g.arc(cx, cy, r0, a1, a0, true);
+        g.closePath();
+        g.fill();
+      }
+    }
+
     // --- big trees between the set pieces
     cells(F, U * 1.1, left, right, (idx, X, st) => {
       if (h01(F, idx, 3) < 0.5 || nearHouse(X, 0.85)) return;
@@ -336,7 +449,7 @@ function paintStatic(s: DrawState, F: Frame, env: EnvPalette, o: PanoOpts): Stat
     }
 
     // --- path from the door to the viewer (continues on the floor in front of the house)
-    if (manor) {
+    if (centerHere) {
       const pathPoly = (y0: number, y1: number) => {
         const n = 24;
         const pts: [number, number][] = [];
@@ -353,8 +466,9 @@ function paintStatic(s: DrawState, F: Frame, env: EnvPalette, o: PanoOpts): Stat
       const gy = py(F, F.groundY);
       const bottom = py(F, F.mainBottom);
       const pathG = g.createLinearGradient(0, gy, 0, bottom);
-      pathG.addColorStop(0, mixHex(env.stone, env.mid, 0.4));
-      pathG.addColorStop(1, mixHex(env.stone, env.near, 0.5));
+      const glowTint = o.portal ? palette(s.params).accent : env.stone;
+      pathG.addColorStop(0, mixHex(mixHexHex(env.stone, glowTint, o.portal ? 0.35 : 0), env.mid, 0.4));
+      pathG.addColorStop(1, mixHex(mixHexHex(env.stone, glowTint, o.portal ? 0.25 : 0), env.near, 0.5));
       g.fillStyle = pathG;
       g.beginPath();
       pathPoly(F.groundY, F.mainBottom).forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
@@ -367,13 +481,13 @@ function paintStatic(s: DrawState, F: Frame, env: EnvPalette, o: PanoOpts): Stat
     const step = fh * 0.32;
     const bar = Math.max(1.5, fh * 0.06 * F.ppm);
     const fy = py(F, F.fenceY);
-    const gate = manor ? (manor.door.w / F.ppm) * 2.4 : 0;
-    const gateX = manor ? (mx + manor.door.x + manor.door.w / 2) / F.ppm + r.x : 0;
-    const inGate = (X: number) => manor && Math.abs(X - gateX) < gate;
+    const gate = F.houseW > 0 ? pathHalf(F, F.fenceY) + U * 0.04 : 0;
+    const gateX = F.houseX;
+    const inGate = (X: number) => F.houseW > 0 && Math.abs(X - gateX) < gate;
     g.fillStyle = env.iron;
     for (const yy of [0.82, 0.25]) {
       // rails, interrupted at the gate
-      if (manor) {
+      if (F.houseW > 0) {
         g.fillRect(0, fy - fh * yy * F.ppm, Math.max(0, px(F, gateX - gate)), bar);
         g.fillRect(px(F, gateX + gate), fy - fh * yy * F.ppm, w, bar);
       } else g.fillRect(0, fy - fh * yy * F.ppm, w, bar);
@@ -469,6 +583,75 @@ function panoDraw(o: PanoOpts) {
     const st = paintStatic(s, F, env, o);
     g.drawImage(st.layer, 0, 0);
 
+    if (o.portal) {
+      const R = portalR(F);
+      const cX = F.houseX;
+      const cY = portalY(F);
+      if (visible(cX, cY, R * 2)) {
+        const cx = px(F, cX);
+        const cy = py(F, cY);
+        const Rp = R * F.ppm;
+        // swirling light inside the ring
+        g.save();
+        g.beginPath();
+        g.arc(cx, cy, Rp * 1.05, 0, TAU);
+        g.clip();
+        addGlow(g, cx, cy, Rp * 1.4, pal.accent, 0.8);
+        for (let k = 0; k < 5; k++) {
+          g.strokeStyle = [pal.accent, pal.secondary, pal.primary][k % 3]!;
+          g.globalAlpha = 0.5;
+          g.lineWidth = Rp * 0.06;
+          g.beginPath();
+          for (let j = 0; j <= 30; j++) {
+            const u = j / 30;
+            const a = t * 1.2 + k * (TAU / 5) + u * 4;
+            const rr = Rp * (1 - u) * 1.05;
+            const x = cx + Math.cos(a) * rr;
+            const y = cy + Math.sin(a) * rr;
+            if (j === 0) g.moveTo(x, y);
+            else g.lineTo(x, y);
+          }
+          g.stroke();
+        }
+        g.restore();
+        for (let i = 0; i < 16; i++) {
+          const a = (i / 16) * TAU + Math.PI / 16;
+          const glowA = 0.35 + 0.65 * Math.max(0, Math.sin(t * 1.5 - i * 0.8));
+          const rx = cx + Math.cos(a) * Rp * 1.17;
+          const ry = cy + Math.sin(a) * Rp * 1.17;
+          addGlow(g, rx, ry, Rp * 0.08, pal.secondary, 0.6 * glowA);
+          star(g, rx, ry, Rp * 0.035, '#ffffff', glowA);
+        }
+      }
+      // spirits from all over the world spiral into the portal – across the seams
+      const ns = Math.round((F.P / U) * 0.5 * d);
+      for (let i = 0; i < ns; i++) {
+        const period = 12 + hash01(i + F.seed) * 6;
+        const age = mod(t / period + i / ns, 1);
+        const startX = travel(F, hash01(i * 3 + F.seed));
+        const startY = F.hzY - U * (0.15 + 0.3 * hash01(i * 5));
+        const e = age * age;
+        const spin = (1 - e) * 1.2;
+        const X = startX + (cX - startX) * e + Math.cos(age * TAU * 2 + i) * U * 0.15 * spin;
+        const Y = startY + (cY - startY) * e + Math.sin(age * TAU * 2 + i) * U * 0.08 * spin;
+        const size = U * 0.16 * (0.35 + 0.65 * (1 - e));
+        const alpha = Math.min(1, age * 6) * Math.min(1, (1 - age) * 5);
+        for (const XX of copies(X)) {
+          if (!visible(XX, Y, size)) continue;
+          ghost(g, px(F, XX), py(F, Y), size * F.ppm, {
+            color: pal.ghost,
+            t: t + i,
+            alpha: alpha * 0.9,
+            face: FACES[i % 4],
+            wave: Math.sin(t * 6 + i) * 0.6,
+            mirror: XX < cX,
+          });
+        }
+      }
+      drawPathSparkles(g, F, t, pal.accent);
+    }
+    if (o.monsters) drawTracks(g, F, t, '#b6ff4d');
+
     // house: window light, peeking ghosts, lamps, door glow
     if (st.manor) {
       const M = st.manor;
@@ -487,7 +670,7 @@ function panoDraw(o: PanoOpts) {
           (env.neon ? 0.38 : 0.24) * flick * breathe,
         );
         addGlow(g, x + win.w / 2, y + win.h * 0.55, win.w * 0.7, env.winCore, 0.12 * flick * breathe);
-        if (win.shape === 'round' || hash01(i * 13 + F.seed) > 0.4) return;
+        if (win.shape === 'round' || hash01(i * 13 + F.seed) > (o.monsters ? 0.75 : 0.4)) return;
         const period = 8 + hash01(F.seed + i * 31) * 10;
         const ph = mod(t / period + hash01(F.seed + i * 17), 1);
         const vis = smoothstep(0.1, 0.2, ph) * (1 - smoothstep(0.4, 0.5, ph));
@@ -495,13 +678,24 @@ function panoDraw(o: PanoOpts) {
         g.save();
         winPath(g, x, y, win.w, win.h, win.shape);
         g.clip();
-        ghost(g, x + win.w / 2, y + win.h * (1.2 - 0.6 * vis), Math.min(win.w * 0.95, win.h * 1.2), {
-          color: '#ffffff',
-          t,
-          face: FACES[i % FACES.length],
-          wave: Math.sin(t * 6) * 0.6,
-          glow: 0.3,
-        });
+        if (o.monsters)
+          monster(
+            g,
+            i + F.seed,
+            x + win.w / 2,
+            y + win.h * (1.25 - 0.65 * vis),
+            Math.min(win.w * 0.95, win.h),
+            t,
+            Math.sin(t * 5 + i),
+          );
+        else
+          ghost(g, x + win.w / 2, y + win.h * (1.2 - 0.6 * vis), Math.min(win.w * 0.95, win.h * 1.2), {
+            color: '#ffffff',
+            t,
+            face: FACES[i % FACES.length],
+            wave: Math.sin(t * 6) * 0.6,
+            glow: 0.3,
+          });
         g.restore();
       });
       for (const l of M.lamps) {
@@ -529,7 +723,7 @@ function panoDraw(o: PanoOpts) {
     if (o.pumpkins > 0) {
       cells(F, U * 0.55, r.x - U, r.x + r.w + U, (idx, X) => {
         if (h01(F, idx, 21) > 0.35 * o.pumpkins) return;
-        if (o.house && Math.abs(X - F.houseX) < F.houseW * 0.9) return;
+        if (F.houseW > 0 && Math.abs(X - F.houseX) < F.houseW * 0.9) return;
         const Y = F.fenceY + U * 0.03;
         if (!visible(X, Y, U * 0.1)) return;
         pumpkin(g, px(F, X), py(F, Y), U * 0.08 * F.ppm, { pal, face: idx % 6, t: t + idx, glow: 0.85 });
@@ -644,6 +838,24 @@ export function panoramaScene(id: string, o: PanoOpts): SceneModule {
 }
 
 export const panoramaScenes: SceneModule[] = [
+  panoramaScene('magicPanorama', {
+    house: false,
+    portal: true,
+    graves: 0.5,
+    ghosts: 0.3,
+    bats: 0.6,
+    pumpkins: 1,
+    party: false,
+  }),
+  panoramaScene('monsterPanorama', {
+    house: true,
+    monsters: true,
+    graves: 0.9,
+    ghosts: 0.4,
+    bats: 1,
+    pumpkins: 0.8,
+    party: false,
+  }),
   panoramaScene('spookPanorama', { house: true, graves: 1, ghosts: 1, bats: 1, pumpkins: 1, party: false }),
   panoramaScene('partyPanorama', {
     house: false,
@@ -699,7 +911,11 @@ export function groundScene(id: string, o: PanoOpts): SceneModule {
       if (front && F.houseW) {
         const y0 = r.y;
         const y1 = r.y + r.h;
-        q.fillStyle = mixHex(env.stone, env.near, 0.5);
+        q.fillStyle = mixHex(
+          mixHexHex(env.stone, o.portal ? pal.accent : env.stone, o.portal ? 0.25 : 0),
+          env.near,
+          0.5,
+        );
         q.beginPath();
         const n = 16;
         for (let i = 0; i <= n; i++) {
@@ -763,6 +979,9 @@ export function groundScene(id: string, o: PanoOpts): SceneModule {
         pumpkin(g, px(F, p.X), py(F, p.Y), p.size * F.ppm, { pal, face: p.face, t: t + p.face, glow: 0.9 });
       }
 
+    if (o.portal) drawPathSparkles(g, F, t, pal.accent);
+    if (o.monsters) drawTracks(g, F, t, '#b6ff4d');
+
     // thin haze drifting over the ground (world coordinates, very light)
     worldFog(g, F, env, r.y + r.h * 0.35, (r.h / U) * 0.5, t, 0.12, F.seed + 11, 0.4);
 
@@ -784,6 +1003,24 @@ export function groundScene(id: string, o: PanoOpts): SceneModule {
 }
 
 export const groundScenes: SceneModule[] = [
+  groundScene('magicGround', {
+    house: false,
+    portal: true,
+    graves: 0,
+    ghosts: 0,
+    bats: 0,
+    pumpkins: 1,
+    party: false,
+  }),
+  groundScene('monsterGround', {
+    house: true,
+    monsters: true,
+    graves: 0,
+    ghosts: 0,
+    bats: 0,
+    pumpkins: 0.6,
+    party: false,
+  }),
   groundScene('spookGround', { house: true, graves: 0, ghosts: 0, bats: 0, pumpkins: 1, party: false }),
   groundScene('partyGround', { house: false, graves: 0, ghosts: 0, bats: 0, pumpkins: 0, party: true }),
   groundScene('quietGround', { house: false, graves: 0, ghosts: 0, bats: 0, pumpkins: 0, party: false }),

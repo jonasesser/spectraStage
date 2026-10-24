@@ -20,8 +20,10 @@ export const WORLD_EVENTS: Record<string, WorldEventKind[]> = {
   neonWorld: ['catJump', 'ghostDive', 'pumpkinRoll'],
   partyWorld: ['ghostDive', 'pumpkinRoll'],
   quietWorld: ['ghostDive'],
+  magicWorld: ['ghostDive', 'pumpkinRoll'],
+  monsterWorld: ['catJump', 'ghostDive', 'pumpkinRoll'],
 };
-const HAS_HOUSE = new Set(['spookWorld', 'neonWorld']);
+const HAS_HOUSE = new Set(['spookWorld', 'neonWorld', 'monsterWorld']);
 
 const DUR: Record<WorldEventKind, number> = { catJump: 7, ghostDive: 8, pumpkinRoll: 7 };
 const PERIOD = 26;

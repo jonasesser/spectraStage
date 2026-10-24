@@ -502,7 +502,7 @@ const pumpkinMagic: SceneModule = hybridScene(
 // ---------------------------------------------------------------------------
 // Monster Windows
 // ---------------------------------------------------------------------------
-function monster(
+export function monster(
   g: CanvasRenderingContext2D,
   type: number,
   x: number,

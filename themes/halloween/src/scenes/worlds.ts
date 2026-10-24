@@ -52,6 +52,8 @@ export const WORLDS: Record<string, WorldParts> = {
   spookWorld: { main: 'spookPanorama', side: ['spookPanorama'], ground: ['spookGround'] },
   partyWorld: { main: 'partyPanorama', side: ['partyPanorama'], ground: ['partyGround'] },
   neonWorld: { main: 'neonPanorama', side: ['neonPanorama'], ground: ['neonGround'] },
+  magicWorld: { main: 'magicPanorama', side: ['magicPanorama'], ground: ['magicGround'] },
+  monsterWorld: { main: 'monsterPanorama', side: ['monsterPanorama'], ground: ['monsterGround'] },
   quietWorld: { main: 'quietPanorama', side: ['quietPanorama'], ground: ['quietGround'] },
 };
 
