@@ -655,6 +655,20 @@ export const OWNER_ONLY: ReadonlySet<CommandType> = new Set<CommandType>([
 // ---------------------------------------------------------------------------
 // WebSocket messages
 // ---------------------------------------------------------------------------
+export const RtcDataSchema = z.object({
+  kind: z.enum(['offer', 'answer', 'ice', 'bye']),
+  sdp: z.string().max(20_000).optional(),
+  candidate: z
+    .object({
+      candidate: z.string().max(1000),
+      sdpMid: z.string().max(64).nullable().optional(),
+      sdpMLineIndex: z.number().int().min(0).max(64).nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+});
+export type RtcData = z.infer<typeof RtcDataSchema>;
+
 export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('hello'),
@@ -674,6 +688,11 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     /** Selected corner (0–3) to highlight on the projector while calibrating. */
     focus: z.number().int().min(-1).max(3).optional(),
   }),
+  /**
+   * WebRTC signalling for the live camera (phone → projector PCs), relayed by the server within
+   * the show only: controller ↔ device. `to` is a device id, or the `from` of a received message.
+   */
+  z.object({ type: z.literal('rtc'), to: z.string().min(1).max(200), data: RtcDataSchema }),
 ]);
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
 
@@ -707,6 +726,7 @@ export type ServerMessage =
   | { type: 'pong'; t: number; serverTime: number }
   | { type: 'identify'; deviceId: string; label: string; until: number }
   | { type: 'preview'; outputId: string; profile: Profile | null; focus?: number }
+  | { type: 'rtc'; from: string; data: RtcData }
   | { type: 'approved'; deviceToken: string; deviceId: string }
   | { type: 'rejected' }
   | {

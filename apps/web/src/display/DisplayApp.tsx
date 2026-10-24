@@ -4,6 +4,7 @@ import { catalog } from '@spectrastage/catalog/manifests';
 import { loadThemeRuntime } from '@spectrastage/catalog/runtime';
 import { formatCode, normalizeCode, type SessionState } from '@spectrastage/shared';
 import { Connection, type ConnStatus } from '../lib/connection.ts';
+import { ZombieReceiver } from './zombie.ts';
 import type { ApiError } from '../lib/api.ts';
 import { api } from '../lib/api.ts';
 import { KEYS, storage } from '../lib/storage.ts';
@@ -265,6 +266,15 @@ function Projection({
     };
     // A new mode needs a fresh canvas (a WebGL context keeps its GPU choice).
   }, [renderMode]);
+
+  // Zombie camera: a phone may stream its camera here; people become ghosts on the main wall
+  useEffect(() => {
+    const c = connRef.current;
+    const r = rendererRef.current;
+    if (!c || !r) return;
+    const z = new ZombieReceiver(c, r);
+    return () => z.dispose();
+  }, [slot, renderMode]);
 
   useEffect(() => {
     rendererRef.current?.setState(phase === 'run' ? state : null, outputId);

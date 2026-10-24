@@ -51,10 +51,10 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Referrer-Policy', 'no-referrer');
     reply.header('X-Frame-Options', 'DENY');
-    reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    reply.header('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
     reply.header(
       'Content-Security-Policy',
-      "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'",
+      "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; media-src 'self' blob:; connect-src 'self' ws: wss:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'",
     );
     return payload;
   });
@@ -312,6 +312,9 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
           return;
         case 'preview':
           hub.relayPreview(client, msg.outputId, msg.profile, msg.focus);
+          return;
+        case 'rtc':
+          hub.relayRtc(client, msg.to, msg.data);
           return;
       }
     });

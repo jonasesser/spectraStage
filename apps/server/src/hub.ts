@@ -14,6 +14,7 @@ import {
   type ControllerSecrets,
   type Presence,
   type Profile,
+  type RtcData,
   type Role,
   type ServerMessage,
   type SessionState,
@@ -366,6 +367,24 @@ export class Hub {
       if (c.role !== 'device') continue;
       const d = ls.state.devices.find((x) => x.id === c.subjectId);
       if (d?.outputId === outputId) this.send(c, { type: 'preview', outputId, profile, focus });
+    }
+  }
+
+  /**
+   * WebRTC signalling (live camera): a controller talks to a device by its device id, a device
+   * answers to the controller's address; nothing leaves the show.
+   */
+  relayRtc(client: Client, to: string, data: RtcData): void {
+    const ls = this.live.get(client.sessionId);
+    if (!ls) return;
+    const from = `${client.role === 'device' ? 'd' : 'c'}:${client.subjectId}:${client.clientId}`;
+    for (const c of ls.clients) {
+      if (client.role === 'owner' || client.role === 'controller') {
+        if (c.role === 'device' && c.subjectId === to) this.send(c, { type: 'rtc', from, data });
+      } else if (client.role === 'device') {
+        if ((c.role === 'owner' || c.role === 'controller') && `c:${c.subjectId}:${c.clientId}` === to)
+          this.send(c, { type: 'rtc', from, data });
+      }
     }
   }
 

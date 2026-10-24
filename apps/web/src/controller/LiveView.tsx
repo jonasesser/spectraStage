@@ -1,3 +1,4 @@
+import { ZombieCam } from './ZombieCam.tsx';
 import { useContext, useState } from 'react';
 import { catalog } from '@spectrastage/catalog/manifests';
 import { activeScene, playlistPosition, type SessionState, type Surface } from '@spectrastage/shared';
@@ -61,6 +62,7 @@ export function LiveView() {
         now={now}
         L={L}
       />
+      <ZombieCam state={state} presence={presence} L={L} />
       <section className="panel">
         <div className="section-title">
           <h2>{L('Live preview', 'Live-Vorschau')}</h2>

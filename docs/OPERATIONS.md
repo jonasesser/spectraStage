@@ -105,6 +105,17 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
   picture brightness, why black is drawn on purpose, and a live picture of what the projector app
   draws. Graphics mode (standard / compatible / Full HD / power-saving GPU) switches live.
 
+### Zombie camera
+
+Live tab → 🧟 Zombie camera: the phone films the guests; the projector PCs of the front wall cut the
+people out (MediaPipe selfie segmentation + face landmarks, in the browser) and let them drift along
+the main wall as funny zombie ghosts (green cartoon skin, glow, ghost tail, googly eyes, teeth,
+stitched scar) for as long as the camera runs. Video goes phone → projector PC via WebRTC
+(signalling through the show's WebSocket, STUN only – phone and PC should be in the same Wi-Fi);
+nothing is stored. Models and the WebAssembly runtime are served by the app itself
+(/mediapipe/…), not precached by the service worker. Needs camera permission on the phone
+(Permissions-Policy camera=self) and `wasm-unsafe-eval` in the CSP.
+
 ## 4. Running the show
 
 - **Live**: tap surfaces on the stage map to choose targets, fire effects, send creatures (from →

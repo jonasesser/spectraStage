@@ -13,6 +13,7 @@ import {
   type ControllerSecrets,
   type Presence,
   type Profile,
+  type RtcData,
   type ServerMessage,
   type SessionState,
   type Telemetry,
@@ -213,6 +214,9 @@ export class Connection {
       case 'preview':
         this.handlers.onPreview?.(msg.outputId, msg.profile, msg.focus);
         return;
+      case 'rtc':
+        for (const fn of this.rtcListeners) fn(msg.from, msg.data);
+        return;
       case 'approved':
         this.token = msg.deviceToken;
         this.handlers.onApproved?.(msg.deviceToken, msg.deviceId);
@@ -253,6 +257,16 @@ export class Connection {
 
   sendTelemetry(t: Telemetry): void {
     if (this.online) this.ws?.send(JSON.stringify({ type: 'telemetry', telemetry: t }));
+  }
+
+  private rtcListeners = new Set<(from: string, data: RtcData) => void>();
+  /** WebRTC signalling messages (live camera); returns an unsubscribe function. */
+  onRtc(fn: (from: string, data: RtcData) => void): () => void {
+    this.rtcListeners.add(fn);
+    return () => this.rtcListeners.delete(fn);
+  }
+  sendRtc(to: string, data: RtcData): void {
+    if (this.online) this.ws?.send(JSON.stringify({ type: 'rtc', to, data }));
   }
 
   sendPreview(outputId: string, profile: Profile | null, focus?: number): void {

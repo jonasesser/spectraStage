@@ -82,6 +82,12 @@ export interface RendererOptions {
   powerPreference?: 'high-performance' | 'low-power';
 }
 
+export interface LiveSprite {
+  canvas: HTMLCanvasElement;
+  /** 0..1 – fade in/out. */
+  alpha: number;
+}
+
 export interface RendererStats {
   fps: number;
   quality: number;
@@ -615,6 +621,12 @@ export class StageRenderer {
       blackReason: this.blackReason,
       lastError: this.lastError && Date.now() - this.lastError.at < 60_000 ? this.lastError.msg : null,
     };
+  }
+
+  private liveSprite: (() => LiveSprite | null) | null = null;
+  /** A live picture (e.g. the zombie camera) drawn into the world on the main wall. */
+  setLiveSprite(fn: (() => LiveSprite | null) | null): void {
+    this.liveSprite = fn;
   }
 
   private gpu: string | null = null;
@@ -1668,7 +1680,8 @@ export class StageRenderer {
     });
     const all = [...cues, ...ambient];
     const o = this.actorOverlay;
-    if (all.length === 0) {
+    const live = this.liveSprite?.() ?? null;
+    if (all.length === 0 && !live) {
       if (o.dirty) {
         o.clear();
         o.upload();
@@ -1793,6 +1806,24 @@ export class StageRenderer {
       }
     }
     if (this.actorSoundAt.size > 200) this.actorSoundAt.clear();
+    if (live) {
+      // live camera people as ghosts drifting along the main wall, standing on its ground line
+      const main = this.worldFor(state).surfaces.find((w) => w.role === 'main');
+      if (main && live.canvas.width > 0 && live.canvas.height > 0) {
+        const r = main.rect;
+        const t = now / 1000;
+        // people about life size on the wall; a wide group is kept narrower than the wall
+        const h = Math.min(r.h * 0.78, (r.w * 0.6 * live.canvas.height) / live.canvas.width);
+        const w = (h * live.canvas.width) / live.canvas.height;
+        const cx = r.x + r.w * (0.5 + 0.28 * Math.sin(t / 11));
+        const bottom = r.y + r.h * 0.98 - h * 0.04 * (1 + Math.sin(t * 1.3));
+        g.save();
+        g.globalAlpha = Math.max(0, Math.min(1, live.alpha));
+        g.drawImage(live.canvas, cx - w / 2, bottom - h, w, h);
+        g.restore();
+        drew = true;
+      }
+    }
     o.upload();
     o.dirty = true;
     (this.actorMaterial.uniforms.viewSize!.value as THREE.Vector2).set(vw, vh);
