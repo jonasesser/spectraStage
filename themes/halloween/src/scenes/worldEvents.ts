@@ -11,7 +11,8 @@
 import { hash01, smoothstep } from '@spectrastage/engine';
 import type { DrawState } from '@spectrastage/engine';
 import type { Palette } from '../palette.ts';
-import { cat, ghost, pumpkin } from '../shapes.ts';
+import { bat, cat, ghost, pumpkin } from '../shapes.ts';
+import { dirFromAngles, faceLocal, mainAzimuth, roomHit } from '@spectrastage/shared';
 
 export type WorldEventKind = 'catJump' | 'ghostDive' | 'pumpkinRoll';
 
@@ -182,5 +183,49 @@ export function drawWorldEvents(g: CanvasRenderingContext2D, s: DrawState, pal: 
       pumpkin(g, 0, 0, size * ppm, { pal, face: Math.floor(h(6) * 6), t, glow: 0.9 });
       g.restore();
     }
+  }
+}
+
+/**
+ * Bats that fly around the viewer through the whole room – over the walls and across the
+ * ceiling. Their path is a viewing direction over time; every face draws the bat where that
+ * direction hits the room (unfolded across edges), so they never vanish at a corner.
+ */
+export function drawRoomBats(
+  g: CanvasRenderingContext2D,
+  s: DrawState,
+  pal: Palette,
+  t: number,
+  n = 3,
+): void {
+  const w = s.world;
+  if (!w?.room) return;
+  const face = w.room.faces.find((f) => f.id === w.self.id);
+  if (!face) return;
+  const r = w.self.rect;
+  const az0 = mainAzimuth(w.room);
+  const seed = w.seed & 0xffff;
+  for (let i = 0; i < n; i++) {
+    const h = (k: number) => hash01(seed * 31 + i * 977 + k * 131);
+    const speed = (0.08 + 0.06 * h(1)) * (h(2) < 0.5 ? -1 : 1);
+    const at = (tt: number) => {
+      const az = az0 + h(3) * 6.28 + tt * speed + 0.35 * Math.sin(tt * 0.3 + i);
+      const el = 0.35 + 0.55 * (0.5 + 0.5 * Math.sin(tt * (0.13 + 0.05 * h(4)) + h(5) * 6.28));
+      return roomHit(w.room, dirFromAngles(az, el));
+    };
+    const a = at(t);
+    const b = at(t + 0.05);
+    if (!a) continue;
+    const loc = faceLocal(face, a.p);
+    if (!loc) continue;
+    const size = 0.4;
+    if (loc.x < r.x - size || loc.x > r.x + r.w + size || loc.y < r.y - size || loc.y > r.y + r.h + size)
+      continue;
+    const loc2 = b ? faceLocal(face, b.p) : null;
+    g.save();
+    g.translate((loc.x - r.x) * s.ppm, (loc.y - r.y) * s.ppm);
+    if (loc2) g.rotate(Math.atan2(loc2.y - loc.y, loc2.x - loc.x) * 0.3);
+    bat(g, 0, 0, size * s.ppm, Math.sin(t * 14 + i), pal);
+    g.restore();
   }
 }

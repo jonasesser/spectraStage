@@ -22,12 +22,17 @@ import {
   polygonBBox,
   worldLayout,
   completeRoom,
+  roomFold,
+  roomHit,
+  faceLocal,
+  dirFromAngles,
+  mainAzimuth,
+  type RoomFold,
   wallRing,
   hashInts,
   type WorldSurface,
   polygonCentroid,
   primaryOutputAt,
-  routePose,
   stageBounds,
   UNIT_QUAD,
   type ActiveScene,
@@ -215,6 +220,7 @@ class Overlay2D {
 
 interface WorldInfo {
   key: string;
+  fold: RoomFold;
   wrap: { x: number; w: number } | null;
   surfaces: WorldSurface[];
   bounds: { x: number; y: number; w: number; h: number };
@@ -933,7 +939,7 @@ export class StageRenderer {
         y1 = Math.max(y1, w.rect.y + w.rect.h);
       }
       const bounds = surfaces.length ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : { x: 0, y: 0, w: 1, h: 1 };
-      this.worldCache = { key, surfaces, bounds, wrap: wallRing(surfaces) };
+      this.worldCache = { key, surfaces, bounds, wrap: wallRing(surfaces), fold: roomFold(state.surfaces) };
     }
     return this.worldCache;
   }
@@ -984,6 +990,7 @@ export class StageRenderer {
                 surfaces: world.surfaces,
                 bounds: world.bounds,
                 wrap: world.wrap,
+                room: world.fold,
                 seed: hashInts(Math.floor(active.startedAt / 1000) % 2147483647, 0x3077),
               }
             : undefined,
@@ -1214,30 +1221,86 @@ export class StageRenderer {
           if (this.routes.size > 300) this.routes.delete(this.routes.keys().next().value as string);
         }
         if (!route) continue;
-        const pose = routePose(route, now - cue.startAt);
-        if (!pose.visible) continue;
+        // Creatures move around the viewer in the folded 3D room: their path is a direction
+        // from the room center over time; each face draws the part that lies on it (a creature
+        // on a corner is drawn by both faces, unfolded across the shared edge).
+        const fold = this.worldFor(state).fold;
+        const tMs = now - cue.startAt - route.delayMs;
+        const u = tMs / Math.max(1, route.totalMs);
+        if (u < 0 || u > 1) continue;
+        const flyer = !manifest.kinds.includes('floor');
+        const climber = manifest.kinds.includes('floor') && manifest.kinds.includes('wall');
+        const rr = createRng(hashInts(cue.seed, i + 77));
+        const az0 = mainAzimuth(fold) + (rr() - 0.5) * Math.PI * 1.2;
+        const sweep =
+          (rr() < 0.5 ? -1 : 1) * (flyer ? Math.PI * (0.6 + rr() * 1.2) : Math.PI * (0.3 + rr() * 0.5));
+        const ph = rr() * 10;
+        const path = (q: number) => {
+          const wob = 0.5 + 0.5 * Math.sin(q * (3 + rr2) + ph) * 0.6 + 0.2 * Math.sin(q * 7.3 + ph * 2);
+          const el = flyer
+            ? manifest.sizeM > 0.6
+              ? 0.05 + 0.4 * wob
+              : 0.1 + 1.1 * wob
+            : climber
+              ? -0.9 + 2.0 * wob
+              : -1.0 + 0.45 * wob;
+          const az = az0 + sweep * q + 0.25 * Math.sin(q * 5 + ph);
+          return roomHit(fold, dirFromAngles(az, el));
+        };
+        const rr2 = rr() * 2;
+        const hit = path(u);
+        const hit2 = path(Math.min(1, u + 0.004));
+        if (!hit) continue;
+        const fade = Math.min(1, u / 0.06, (1 - u) / 0.06);
         const half = manifest.sizeM;
-        if (
-          pose.x < vp.x - half ||
-          pose.y < vp.y - half ||
-          pose.x > vp.x + vp.w + half ||
-          pose.y > vp.y + vp.h + half
-        )
-          continue;
-        g.save();
-        g.translate(pose.x, pose.y);
-        if (!mod.upright) g.rotate(pose.angle);
-        const sizePx = manifest.sizeM * ppm;
-        g.scale(1 / ppm, 1 / ppm);
-        mod.draw(g, pose, {
-          ppm,
-          t: (now - cue.startAt) / 1000,
-          seed: cue.seed + i,
-          sizePx,
-          boost: state.boost ?? 0,
-        });
-        g.restore();
-        drew = true;
+        for (const face of fold.faces) {
+          const loc = faceLocal(face, hit.p);
+          if (!loc) continue;
+          const fr = face.rect;
+          if (
+            loc.x < fr.x - half ||
+            loc.y < fr.y - half ||
+            loc.x > fr.x + fr.w + half ||
+            loc.y > fr.y + fr.h + half
+          )
+            continue;
+          if (
+            loc.x < vp.x - half ||
+            loc.y < vp.y - half ||
+            loc.x > vp.x + vp.w + half ||
+            loc.y > vp.y + vp.h + half
+          )
+            continue;
+          const loc2 = hit2 ? faceLocal(face, hit2.p) : null;
+          const angle = loc2 ? Math.atan2(loc2.y - loc.y, loc2.x - loc.x) : 0;
+          const pose = {
+            x: loc.x,
+            y: loc.y,
+            angle,
+            moving: true,
+            distance: (tMs / 1000) * manifest.speedMps,
+            visible: true,
+          };
+          g.save();
+          g.beginPath();
+          g.rect(fr.x, fr.y, fr.w, fr.h);
+          g.clip();
+          g.globalAlpha = Math.max(0, fade);
+          g.translate(pose.x, pose.y);
+          if (!mod.upright) g.rotate(pose.angle);
+          const sizePx = manifest.sizeM * ppm;
+          g.scale(1 / ppm, 1 / ppm);
+          mod.draw(g, pose, {
+            ppm,
+            t: (now - cue.startAt) / 1000,
+            seed: cue.seed + i,
+            sizePx,
+            boost: state.boost ?? 0,
+          });
+          g.restore();
+          drew = true;
+        }
+        const pose = { x: hit.x, y: hit.y, angle: 0, moving: true, distance: 0, visible: true };
         if (mod.sound && pose.moving && this.soundPrimaryFor(output, outputs, pose)) {
           const k = `${cue.id}:${i}`;
           const last = this.actorSoundAt.get(k) ?? 0;

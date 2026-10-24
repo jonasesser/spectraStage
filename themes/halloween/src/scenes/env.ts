@@ -6,7 +6,7 @@
  * frame. Everything is seeded and deterministic.
  */
 import * as THREE from 'three';
-import { createRng, type ParamValues, type Rng } from '@spectrastage/shared';
+import { createRng, facePoint, type ParamValues, type Rng } from '@spectrastage/shared';
 import { TAU, type DrawState } from '@spectrastage/engine';
 import { glowSprite } from '../shapes.ts';
 import { FBM_GLSL } from './glsl.ts';
@@ -245,6 +245,8 @@ uniform vec3 uCloudD; uniform vec3 uCloudL; uniform vec3 uMoonCol; uniform vec3 
 uniform vec2 uMoon; uniform float uMoonR; uniform float uClouds; uniform float uStars; uniform float uFog;
 uniform float uHorizonY; uniform float uSpeed; uniform float uCloudBand; uniform float uNeon;
 uniform vec3 uVeilA; uniform vec3 uVeilB; uniform vec3 uVeilC;
+uniform float uSky3; uniform vec3 uO; uniform vec3 uAx; uniform vec3 uAy; uniform vec2 uRS; uniform vec3 uC;
+uniform vec3 uMoonDir; uniform float uMoonAng;
 uniform float uWorldOn; uniform vec4 uWR; uniform vec2 uMoonW; uniform float uWrapX; uniform float uWrapW;
 varying vec2 vUv;
 ${FBM_GLSL}
@@ -259,8 +261,93 @@ float fbm4(vec2 p) {
   for (int i = 0; i < 4; i++) { v += a * vnoise(p); p = p * 2.07 + vec2(11.3, 4.7); a *= 0.5; }
   return v / 0.9375;
 }
+float hash31(vec3 p) {
+  p = fract(p * 0.3183099 + 0.1);
+  p *= 17.0;
+  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+float vnoise3(vec3 p) {
+  vec3 i = floor(p);
+  vec3 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(mix(hash31(i), hash31(i + vec3(1, 0, 0)), f.x), mix(hash31(i + vec3(0, 1, 0)), hash31(i + vec3(1, 1, 0)), f.x), f.y),
+    mix(mix(hash31(i + vec3(0, 0, 1)), hash31(i + vec3(1, 0, 1)), f.x), mix(hash31(i + vec3(0, 1, 1)), hash31(i + vec3(1, 1, 1)), f.x), f.y),
+    f.z);
+}
+float fbmD(vec3 p) {
+  float v = 0.0; float a = 0.5;
+  for (int i = 0; i < 4; i++) { v += a * vnoise3(p); p = p * 2.03 + vec3(17.1, 9.2, 4.3); a *= 0.5; }
+  return v / 0.9375;
+}
+/* The sky as seen from the viewer in the folded room: everything is a function of the viewing
+   direction, so walls and ceiling (and all walls with each other) meet without seams. */
+vec3 roomSky(vec2 uv) {
+  vec3 P = uO + uAx * (uv.x * uRS.x) + uAy * ((1.0 - uv.y) * uRS.y);
+  vec3 d = normalize(P - uC);
+  float el = asin(clamp(d.y, -1.0, 1.0));
+  float t = uTime * uSpeed;
+  vec3 col = mix(uHor, uMid, smoothstep(-0.25, 0.45, el));
+  col = mix(col, uTop, smoothstep(0.45, 1.35, el));
+  float ang = acos(clamp(dot(d, uMoonDir), -1.0, 1.0));
+  float md = ang / max(uMoonAng, 1e-3);
+  col += uGlow * (0.42 * exp(-md * 0.9) + 0.22 * exp(-md * 0.28)) * (0.75 + 0.25 * uNeon);
+  // stars
+  vec3 sp = d * 90.0;
+  vec3 cell = floor(sp);
+  float h = hash31(cell + uSeed);
+  if (h > 0.93) {
+    vec3 off = vec3(hash31(cell + 3.1), hash31(cell + 7.7), hash31(cell + 1.3)) - 0.5;
+    float dd = length(fract(sp) - 0.5 - off * 0.6);
+    float tw = 0.55 + 0.45 * sin(t * (0.8 + h * 2.5) + h * 40.0);
+    col += vec3(1.0, 0.97, 0.9) * smoothstep(0.12, 0.0, dd) * tw * (h - 0.93) * 14.0 * uStars * smoothstep(0.0, 0.25, el) * smoothstep(1.4, 3.0, md);
+  }
+  // moon disc
+  if (md < 1.15) {
+    vec3 mu = normalize(cross(uMoonDir, vec3(0.0, 1.0, 0.0)) + 1e-4);
+    vec3 mv = cross(mu, uMoonDir);
+    vec2 q = vec2(dot(d, mu), dot(d, mv)) / uMoonAng;
+    float maria = fbm3(q * 1.8 + 4.0 + uSeed);
+    float crater = smoothstep(0.5, 0.9, fbm3(q * 4.0 + 9.0)) * 0.3;
+    vec3 surf = uMoonCol * (0.8 + 0.26 * smoothstep(0.3, 0.8, maria) - crater * 0.5);
+    surf *= 1.0 - 0.28 * md * md;
+    col = mix(col, surf, smoothstep(1.0, 0.96, md));
+  }
+  // clouds in direction space, lit towards the moon
+  float prox = exp(-md * 0.18);
+  for (int k = 0; k < 2; k++) {
+    float fk = float(k);
+    vec3 cq = d * vec3(2.6 + fk * 1.6, 5.0 + fk * 2.0, 2.6 + fk * 1.6) + vec3(t * (0.02 + fk * 0.012), fk * 3.7, t * 0.01) + uSeed;
+    float cd = fbmD(cq);
+    float band = smoothstep(-0.05, 0.25, el) * (1.0 - smoothstep(0.9, 1.5, el) * 0.4);
+    float c = smoothstep(0.58 - uClouds * 0.2, 0.8 - uClouds * 0.12, cd) * band;
+    if (c > 0.002) {
+      vec3 cc = mix(uCloudD, uCloudL, clamp(0.35 + 0.65 * prox, 0.0, 1.0) * clamp((cd - 0.5) * 3.0 + 0.4, 0.0, 1.0));
+      cc += uMoonCol * smoothstep(0.0, 0.25, c) * (1.0 - smoothstep(0.25, 0.75, c)) * prox * 0.9;
+      col = mix(col, cc, c * (0.82 - fk * 0.12) * mix(0.15, 1.0, smoothstep(0.95, 1.8, md)));
+    }
+  }
+  if (uNeon > 0.5) {
+    vec3 vq = d * vec3(2.0, 3.0, 2.0);
+    vec3 w1 = vec3(fbmD(vq * 1.3 + vec3(t * 0.05, 0.0, 0.0) + uSeed), fbmD(vq * 1.3 + vec3(3.1, t * 0.04, 1.7)), 0.0);
+    float v1 = fbmD(vq + 1.8 * w1 + vec3(t * 0.03, 0.0, 0.0));
+    float v2 = fbmD(vq * 1.6 - 1.3 * w1 + vec3(-t * 0.025, 5.0, 2.0));
+    float skyA = smoothstep(-0.2, 0.15, el);
+    col = mix(col, uVeilA, smoothstep(0.48, 0.78, v1) * skyA * 0.7);
+    col = mix(col, uVeilB, smoothstep(0.5, 0.8, v2) * skyA * 0.65);
+    col += uVeilA * smoothstep(0.03, 0.0, abs(v1 - 0.62)) * 0.2 * skyA;
+    col += uVeilB * smoothstep(0.03, 0.0, abs(v2 - 0.64)) * 0.2 * skyA;
+    col += uVeilC * 0.45 * exp(-md * 0.35);
+    col = max(col, uMid * 0.6);
+  }
+  return min(col, vec3(1.0));
+}
 void main() {
   vec2 uv = vUv;
+  if (uSky3 > 0.5) {
+    gl_FragColor = vec4(roomSky(uv), 1.0);
+    return;
+  }
   float aspect = uRes.x / uRes.y;
   vec2 p = vec2(uv.x * aspect, uv.y);
   // World mode: sky, clouds, stars and the single moon continue across all surfaces.
@@ -384,10 +471,43 @@ export function skyUniforms(s: DrawState, env: EnvPalette, o: SkyOpts, speed = 1
  * World mode: express this surface in shared world units (meters / main wall height) and put the
  * moon over the main surface, so it appears exactly once on the whole stage.
  */
-function worldSky(s: DrawState, o: SkyOpts): Record<string, number | THREE.Vector2 | THREE.Vector4> {
+function worldSky(
+  s: DrawState,
+  o: SkyOpts,
+): Record<string, number | THREE.Vector2 | THREE.Vector3 | THREE.Vector4> {
   const w = s.world;
+  const face = w?.room?.faces.find((f) => f.id === w.self.id);
+  const mainFace = w?.room?.faces.find((f) => f.role === 'main');
+  if (w && face && mainFace) {
+    // 3D sky: computed from the viewing direction in the folded room (one sky for all faces)
+    const C = w.room.center;
+    const mx = mainFace.rect.x + 0.8 * mainFace.rect.w;
+    const my = mainFace.rect.y + 0.2 * mainFace.rect.h;
+    const P = facePoint(mainFace, mx, my);
+    const md = new THREE.Vector3(P[0] - C[0], P[1] - C[1], P[2] - C[2]);
+    const dist = md.length();
+    md.normalize();
+    const moonR = Math.max(0.04, o.moonR > 0.05 ? o.moonR : 0.075);
+    return {
+      uSky3: 1,
+      uWorldOn: 0,
+      uO: new THREE.Vector3(...face.o),
+      uAx: new THREE.Vector3(...face.ax),
+      uAy: new THREE.Vector3(...face.ay),
+      uRS: new THREE.Vector2(face.rect.w, face.rect.h),
+      uC: new THREE.Vector3(...C),
+      uMoonDir: md,
+      uMoonAng: Math.atan((moonR * mainFace.rect.h) / Math.max(0.1, dist)),
+      uSeed: (w.seed % 1000) / 10,
+      uWR: new THREE.Vector4(0, 0, 1, 1),
+      uMoonW: new THREE.Vector2(0, 0),
+      uWrapX: 0,
+      uWrapW: 0,
+    };
+  }
   if (!w)
     return {
+      uSky3: 0,
       uWorldOn: 0,
       uWR: new THREE.Vector4(0, 0, 1, 1),
       uMoonW: new THREE.Vector2(0, 0),
@@ -398,6 +518,7 @@ function worldSky(s: DrawState, o: SkyOpts): Record<string, number | THREE.Vecto
   const ref = Math.max(0.1, main.h);
   const r = w.self.rect;
   return {
+    uSky3: 0,
     uWorldOn: 1,
     uWR: new THREE.Vector4(r.x / ref, r.y / ref, r.w / ref, r.h / ref),
     uMoonW: new THREE.Vector2((main.x + o.moon[0] * main.w) / ref, -(main.y + o.moon[1] * main.h) / ref),

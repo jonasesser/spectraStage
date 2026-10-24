@@ -6,3 +6,4 @@ export * from './playback.ts';
 export * from './reducer.ts';
 export * from './codes.ts';
 export * from './stage.ts';
+export * from './room.ts';

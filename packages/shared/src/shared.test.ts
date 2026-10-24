@@ -11,6 +11,7 @@ import { playlistPosition, activeScene, ambientSchedule, itemCueSchedule } from 
 import type { Playlist, SessionState, Surface } from './schema.ts';
 import { applyCommand, createInitialState, CommandError, type ReducerContext } from './reducer.ts';
 import { createCatalog, type ThemeManifest } from './theme.ts';
+import { dirFromAngles, faceLocal, facePoint, mainAzimuth, roomFold, roomHit } from './room.ts';
 import {
   buildActorRoute,
   routePose,
@@ -472,5 +473,39 @@ describe('complete room', () => {
     expect(f[0]).toEqual({ x: 0, y: 2.5 });
     expect(f[2]).toEqual({ x: 4.5, y: 5 });
     expect(placeNewSurface(base, 'other')[0]).toEqual({ x: 0, y: -2.5 });
+  });
+});
+
+describe('room fold (3D)', () => {
+  const s = (id: string, kind: Surface['kind'], x: number, y: number, w: number, h: number) =>
+    ({
+      id,
+      name: id,
+      kind,
+      intensity: 1,
+      polygon: rectPolygon(x, y, w, h),
+      playback: { mode: 'off' },
+    }) as unknown as Surface;
+  const fold = roomFold([s('g', 'wall', 0, 0, 4, 2.25)]);
+  it('a ray from the center hits the main wall straight ahead, the ceiling above, the floor below', () => {
+    const az = mainAzimuth(fold);
+    expect(roomHit(fold, dirFromAngles(az, 0))!.face.id).toBe('g');
+    expect(roomHit(fold, dirFromAngles(az, 1.5))!.face.id).toBe('virtual:ceiling');
+    expect(roomHit(fold, dirFromAngles(az, -1.5))!.face.id).toBe('virtual:floor');
+  });
+  it('a point on the neighbouring wall unfolds across the corner; the opposite wall is not drawn', () => {
+    const main = fold.faces.find((f) => f.id === 'g')!;
+    const right = fold.faces.find((f) => f.id === 'virtual:wall2')!;
+    const p = facePoint(right, right.rect.x + 0.5, 1);
+    const l = faceLocal(main, p)!;
+    expect(l.x).toBeCloseTo(4.5);
+    expect(l.y).toBeCloseTo(1);
+    const back = fold.faces.find((f) => f.id === 'virtual:wall3')!;
+    expect(faceLocal(main, facePoint(back, back.rect.x + 2, 1))).toBeNull();
+    // ceiling ↔ side wall share an edge in 3D (not in the unfolded plan)
+    const ceil = fold.faces.find((f) => f.role === 'ceiling')!;
+    const q = facePoint(right, right.rect.x + 2, right.rect.y + 0.3);
+    const lc = faceLocal(ceil, q)!;
+    expect(lc.x).toBeGreaterThan(ceil.rect.x + ceil.rect.w);
   });
 });

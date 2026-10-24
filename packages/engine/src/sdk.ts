@@ -6,7 +6,15 @@
  *  - Free every GPU resource in dispose().
  */
 import type * as THREE from 'three';
-import type { ActorPose, BBox, ParamValues, Rng, SurfaceKind, WorldSurface } from '@spectrastage/shared';
+import type {
+  ActorPose,
+  BBox,
+  ParamValues,
+  Rng,
+  RoomFold,
+  SurfaceKind,
+  WorldSurface,
+} from '@spectrastage/shared';
 import type { SoundApi } from './sound.ts';
 import type { DrawState } from './sceneKit.ts';
 
@@ -56,6 +64,8 @@ export interface WorldContext {
    * so anything placed by world x must be periodic (use wrapX / tileable noise).
    */
   wrap: { x: number; w: number } | null;
+  /** The whole stage folded into a 3D room (faces, viewer position) – for the sky and paths. */
+  room: RoomFold;
 }
 
 export interface SceneInstance {

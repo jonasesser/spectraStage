@@ -8,10 +8,9 @@
 import type { SceneContext, SceneModule } from '@spectrastage/engine';
 import { hybridScene, hash01 } from '@spectrastage/engine';
 import { palette } from '../palette.ts';
-import { bat, px } from '../shapes.ts';
 import { speedOf } from './common.ts';
 import { addGlow, envPalette, SKY_FRAG, skyUniforms } from './env.ts';
-import { drawWorldEvents } from './worldEvents.ts';
+import { drawRoomBats, drawWorldEvents } from './worldEvents.ts';
 
 type CeilingKind = 'night' | 'neon' | 'party' | 'magic' | 'monster';
 
@@ -123,15 +122,6 @@ function ceiling(id: string, kind: CeilingKind): SceneModule {
           }
         }
       }
-      const n = kind === 'neon' ? 5 : 3;
-      for (let i = 0; i < n; i++) {
-        const period = 16 + hash01(i * 7 + 2) * 10;
-        const u = ((t / period + hash01(i * 3)) % 1) * 1.3 - 0.15;
-        const ang = hash01(i * 11) * Math.PI * 2;
-        const x = cx + Math.cos(ang) * (u - 0.5) * w * 1.2;
-        const y = cy + Math.sin(ang) * (u - 0.5) * h * 1.2;
-        bat(g, x, y, px(s, 0.45, 0.05, 0.12), Math.sin(t * 15 + i), pal);
-      }
     },
     { shaderScale: 0.5 },
   );
@@ -200,7 +190,11 @@ export function worldScenes(byId: Record<string, SceneModule>): SceneModule[] {
         const inst = mod.create({
           ...ctx,
           params: tag(ctx.params),
-          overlay: (g, s, f) => drawWorldEvents(g, s, palette(s.params), f.time * speedOf(s)),
+          overlay: (g, s, f) => {
+            const pal = palette(s.params);
+            drawRoomBats(g, s, pal, f.time * speedOf(s));
+            drawWorldEvents(g, s, pal, f.time * speedOf(s));
+          },
         });
         return {
           render: (target, frame) => inst.render(target, frame),
