@@ -213,14 +213,36 @@ function Projection({
       loadRuntime: loadThemeRuntime,
       now: () => connRef.current?.clock.now() ?? Date.now(),
       sound: soundRef.current,
-      // Projector pixels are physical pixels; never render above 1:1.
-      maxPixelRatio: 1,
+      // Render in physical projector pixels (Windows scaling 150 % on a 4K beamer = 3840 px).
+      maxPixelRatio: 4,
+      // After a GPU crash (context lost) this tab runs in a safe Full HD mode.
+      maxRenderPixels: gpuSafe() ? 1920 * 1200 : undefined,
     });
+    // GPU context lost and not restored (e.g. overloaded at 4K): reload in safe mode instead of
+    // staying black.
+    let lostTimer = 0;
+    const canvas = canvasRef.current;
+    const onLost = () => {
+      lostTimer = window.setTimeout(() => {
+        try {
+          sessionStorage.setItem('ss-gpu-safe', '1');
+        } catch {
+          /* ignore */
+        }
+        location.reload();
+      }, 3000);
+    };
+    const onRestored = () => window.clearTimeout(lostTimer);
+    canvas.addEventListener('webglcontextlost', onLost);
+    canvas.addEventListener('webglcontextrestored', onRestored);
     rendererRef.current = r;
     r.start();
     // Read-only diagnostics hook (used by end-to-end tests and support).
     (window as unknown as { __spectrastage?: unknown }).__spectrastage = { stats: () => r.stats() };
     return () => {
+      window.clearTimeout(lostTimer);
+      canvas.removeEventListener('webglcontextlost', onLost);
+      canvas.removeEventListener('webglcontextrestored', onRestored);
       r.dispose();
       rendererRef.current = null;
     };
@@ -270,7 +292,7 @@ function Projection({
         clockOffsetMs: Math.round(cs.offsetMs),
         calibrationOk: st.calibrationOk,
       });
-      if (showInfo) force((n) => n + 1);
+      if (showInfo || st.contextLost || st.lastError) force((n) => n + 1);
     }, 5000);
     return () => window.clearInterval(id);
   }, [showInfo]);
@@ -333,6 +355,18 @@ function Projection({
       onDoubleClick={activate}
     >
       <canvas ref={canvasRef} className="projection-canvas" />
+      {phase === 'run' && stats && (stats.contextLost || stats.lastError || output?.resolutionMismatch) && (
+        <div className="projection-problem">
+          {stats.contextLost
+            ? L('Graphics card overloaded – restarting…', 'Grafikkarte überlastet – starte neu …')
+            : output?.resolutionMismatch
+              ? L(
+                  'Picture format changed – confirm it in the app (Projectors).',
+                  'Bildformat geändert – in der App unter „Beamer“ bestätigen.',
+                )
+              : `${L('Render problem', 'Darstellungsproblem')}: ${stats.lastError}`}
+        </div>
+      )}
       {phase === 'pending' && (
         <div className="projection-center">
           <div className="pending-card">
@@ -411,6 +445,14 @@ function Projection({
       )}
     </div>
   );
+}
+
+function gpuSafe(): boolean {
+  try {
+    return sessionStorage.getItem('ss-gpu-safe') === '1';
+  } catch {
+    return false;
+  }
 }
 
 /** Physical screen size in the current orientation (iOS reports portrait dimensions even in landscape). */

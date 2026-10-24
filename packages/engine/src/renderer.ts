@@ -27,6 +27,7 @@ import {
   faceLocal,
   dirFromAngles,
   facePoint,
+  roomRay,
   stageBounds,
   mainAzimuth,
   type RoomFold,
@@ -66,6 +67,8 @@ export interface RendererOptions {
   maxPixelRatio?: number;
   /** Keep the drawing buffer so the canvas can be copied (e.g. as a texture for the 3D room view). */
   readable?: boolean;
+  /** Upper bound for the internal render resolution (default: native up to 4K). */
+  maxRenderPixels?: number;
 }
 
 export interface RendererStats {
@@ -75,6 +78,10 @@ export interface RendererStats {
   width: number;
   height: number;
   blackout: boolean;
+  /** GPU context lost (picture black until restored). */
+  contextLost: boolean;
+  /** Last frame error (rendering problem), if any in the last minute. */
+  lastError: string | null;
 }
 
 const VERT = /* glsl */ `
@@ -168,8 +175,12 @@ void main() {
 const CLIP_CAMERA = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 /** Creature/effect overlays are uploaded at this fraction of the view resolution. */
 const OVERLAY_SCALE = 0.75;
-/** Upper bound for the internal render resolution (≈ 1920×1200); 4K outputs are upscaled. */
-const MAX_RENDER_PIXELS = 1920 * 1200;
+/** Upper bound for the internal render resolution (native 4K); adaptive quality scales down. */
+const MAX_RENDER_PIXELS = 3840 * 2400;
+/** Pixel budget for 2D overlays (creatures, test grid) – they are uploaded to the GPU per frame. */
+const OVERLAY_MAX_PIXELS = 4_200_000;
+/** Pixel budget for the room atlas of a projector in the room (≈ 1.5 × 4K). */
+const ATLAS_MAX_PIXELS = 12_500_000;
 
 function makeRT(w: number, h: number): THREE.WebGLRenderTarget {
   return new THREE.WebGLRenderTarget(w, h, {
@@ -372,6 +383,11 @@ export class StageRenderer {
   private lastFrame = 0;
   private frameTimes: number[] = [];
   private quality = 1;
+  private qualityInit = false;
+  private frameErrors = 0;
+  private lastError: { msg: string; at: number } | null = null;
+  /** GPU limit for texture / render target sides. */
+  private maxTex = 4096;
   private autoCap = false;
   private lumPending = false;
   private lumAt = 0;
@@ -401,6 +417,7 @@ export class StageRenderer {
     });
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     this.renderer.setClearColor(0x000000, 1);
+    this.maxTex = this.renderer.capabilities.maxTextureSize || 4096;
     opts.canvas.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();
       this.contextLost = true;
@@ -530,6 +547,8 @@ export class StageRenderer {
       width: this.width,
       height: this.height,
       blackout: this.blackoutNow,
+      contextLost: this.contextLost,
+      lastError: this.lastError && Date.now() - this.lastError.at < 60_000 ? this.lastError.msg : null,
     };
   }
 
@@ -541,8 +560,16 @@ export class StageRenderer {
       this.raf = requestAnimationFrame(loop);
       try {
         this.frame(t);
+        this.frameErrors = 0;
       } catch (e) {
         console.error('[SpectraStage] frame error', e);
+        this.lastError = { msg: String((e as Error)?.message ?? e).slice(0, 160), at: Date.now() };
+        // Persistent errors (e.g. out of GPU memory at a very high resolution): step down.
+        if (++this.frameErrors >= 10) {
+          this.frameErrors = 0;
+          this.quality = Math.max(0.35, this.quality * 0.7);
+          this.resetLayers();
+        }
       }
     };
     this.raf = requestAnimationFrame(loop);
@@ -643,6 +670,12 @@ export class StageRenderer {
     this.height = h;
     this.renderer.setSize(w, h, false);
     this.maskKey = '';
+    if (!this.qualityInit && !this.opts.preview) {
+      // Start large outputs (4K) at ~QHD and let the adaptive quality climb to native when the
+      // GPU keeps up – a weak GPU then never gets overloaded on the first frames.
+      this.qualityInit = true;
+      this.quality = Math.min(1, Math.max(0.5, Math.sqrt(3_700_000 / (w * h))));
+    }
     return true;
   }
 
@@ -739,67 +772,47 @@ export class StageRenderer {
       return;
     }
 
-    // Projector in the room (pose): the whole room is rendered as an atlas and then seen from
-    // the projector; otherwise the classic flat viewport of the unfolded stage.
+    // Projector in the room (pose): the room sides this projector reaches are rendered as an
+    // atlas (in stage coordinates) and then seen from the projector; otherwise the classic flat
+    // viewport of the unfolded stage.
     const pose = this.opts.preview ? null : (profile.pose ?? null);
-    const roomSurfaces = pose ? completeRoom(state.surfaces) : null;
-    const vp = pose ? stageBounds(roomSurfaces!) : profile.viewport;
-    // Internal resolution: capped to ~Full HD (4K projectors get upscaled soft content) × adaptive quality.
+    // Internal resolution: native up to 4K × adaptive quality (weak GPUs scale down).
     const perf = output?.performance ?? 'auto';
-    const cap = Math.min(1, Math.sqrt(MAX_RENDER_PIXELS / Math.max(1, this.width * this.height)));
+    const cap = Math.min(
+      1,
+      Math.sqrt((this.opts.maxRenderPixels ?? MAX_RENDER_PIXELS) / Math.max(1, this.width * this.height)),
+    );
     const q = this.quality * cap * (perf === 'eco' ? 0.7 : 1);
     const ow = Math.max(2, Math.round(this.width * q));
     const oh = Math.max(2, Math.round(this.height * q));
+    let vp: Viewport = profile.viewport;
     let vw = ow;
     let vh = oh;
+    let seen: Set<string> | null = null;
     if (pose) {
-      // atlas: about one output width per room side
-      const unitW = (this.worldFor(state).fold.unit * 16) / 9;
-      vw = Math.min(4096, Math.round((ow * vp.w) / unitW));
-      vh = Math.min(4096, Math.round((vw * vp.h) / vp.w));
-      vw = Math.round((vh * vp.w) / vp.h);
+      const atlas = this.poseAtlas(state, pose, ow, oh);
+      vp = atlas.vp;
+      vw = atlas.w;
+      vh = atlas.h;
+      seen = atlas.seen;
     }
     if (this.viewRT.width !== vw || this.viewRT.height !== vh) {
       this.viewRT.setSize(vw, vh);
-      this.actorOverlay.resize(
-        Math.max(2, Math.round(vw * OVERLAY_SCALE)),
-        Math.max(2, Math.round(vh * OVERLAY_SCALE)),
-      );
+      // 2D overlays are uploaded every frame they change: keep them within a pixel budget
+      const os = Math.min(OVERLAY_SCALE, Math.sqrt(OVERLAY_MAX_PIXELS / (vw * vh)));
+      this.actorOverlay.resize(Math.max(2, Math.round(vw * os)), Math.max(2, Math.round(vh * os)));
       this.actorMaterial.uniforms.map!.value = this.actorOverlay.texture;
-      this.viewOverlay.resize(vw, vh);
+      const vs = Math.min(1, Math.sqrt(OVERLAY_MAX_PIXELS / (vw * vh)));
+      this.viewOverlay.resize(Math.max(2, Math.round(vw * vs)), Math.max(2, Math.round(vh * vs)));
       this.viewOverlayMaterial.uniforms.map!.value = this.viewOverlay.texture;
     }
     const ppmView = vw / vp.w;
 
     // 1) Surface layers
-    let visible = (roomSurfaces ?? state.surfaces).filter((s) => bboxIntersects(polygonBBox(s.polygon), vp));
-    if (pose) {
-      // only render the room sides this projector actually reaches
-      const fold = this.worldFor(state).fold;
-      this.setPoseCamera(pose, ow / oh);
-      const frustum = new THREE.Frustum().setFromProjectionMatrix(
-        new THREE.Matrix4().multiplyMatrices(
-          this.poseCamera.projectionMatrix,
-          this.poseCamera.matrixWorldInverse,
-        ),
-      );
-      const seen = new Set(
-        fold.faces
-          .filter((f) => {
-            const box = new THREE.Box3();
-            for (const [x, y] of [
-              [f.rect.x, f.rect.y],
-              [f.rect.x + f.rect.w, f.rect.y],
-              [f.rect.x, f.rect.y + f.rect.h],
-              [f.rect.x + f.rect.w, f.rect.y + f.rect.h],
-            ] as const)
-              box.expandByPoint(new THREE.Vector3(...facePoint(f, x, y)));
-            return frustum.intersectsBox(box.expandByScalar(0.05));
-          })
-          .map((f) => f.id),
-      );
-      visible = visible.filter((s) => seen.has(s.id));
-    }
+    let visible = (pose ? completeRoom(state.surfaces) : state.surfaces).filter((s) =>
+      bboxIntersects(polygonBBox(s.polygon), vp),
+    );
+    if (seen) visible = visible.filter((s) => seen.has(s.id));
     const outputs = state.outputs;
     const world = this.worldFor(state);
     for (const s of visible) this.renderSurface(s, state, now, ppmView, dtMs, output, outputs, world);
@@ -827,8 +840,8 @@ export class StageRenderer {
       if (testMode === 'grid')
         drawStageGrid(
           g,
-          vw,
-          vh,
+          this.viewOverlay.canvas.width,
+          this.viewOverlay.canvas.height,
           vp,
           state,
           pose ? null : output,
@@ -836,7 +849,8 @@ export class StageRenderer {
           now,
           !pose,
         );
-      if (identify && this.identify) drawIdentify(g, vw, vh, this.identify.label);
+      if (identify && this.identify)
+        drawIdentify(g, this.viewOverlay.canvas.width, this.viewOverlay.canvas.height, this.identify.label);
       this.viewOverlay.upload();
       const prev = r.autoClear;
       r.autoClear = false;
@@ -992,6 +1006,86 @@ export class StageRenderer {
     return primaryOutputAt(outputs, p)?.id === output.id;
   }
 
+  /**
+   * Atlas for a projector in the room: only the room sides inside its frustum, at the pixel
+   * density the projector actually puts on them (sharp at 4K), within a pixel budget.
+   */
+  private atlasCache: { key: string; vp: Viewport; ppm: number; seen: Set<string> } | null = null;
+  private poseAtlas(
+    state: SessionState,
+    pose: NonNullable<Profile['pose']>,
+    ow: number,
+    oh: number,
+  ): { vp: Viewport; w: number; h: number; seen: Set<string> } {
+    const world = this.worldFor(state);
+    const fold = world.fold;
+    const key = `${world.key}|${JSON.stringify(pose)}|${ow}x${oh}`;
+    if (this.atlasCache?.key !== key) {
+      this.setPoseCamera(pose, ow / oh);
+      const cam = this.poseCamera;
+      const v = new THREE.Vector3();
+      const toPx = (p: [number, number, number]): [number, number] | null => {
+        v.set(...p).applyMatrix4(cam.matrixWorldInverse);
+        if (v.z > -0.05) return null; // behind the projector
+        v.applyMatrix4(cam.projectionMatrix);
+        return [((v.x + 1) / 2) * ow, ((1 - v.y) / 2) * oh];
+      };
+      // Which room sides the picture lands on: cast a grid of rays through the projector image.
+      const seen = new Set<string>();
+      const dens: number[] = [];
+      let x0 = Infinity;
+      let y0 = Infinity;
+      let x1 = -Infinity;
+      let y1 = -Infinity;
+      const NX = 40;
+      const NY = 24;
+      for (let j = 0; j <= NY; j++) {
+        for (let i = 0; i <= NX; i++) {
+          v.set((i / NX) * 2 - 1, 1 - (j / NY) * 2, 0.5)
+            .unproject(cam)
+            .sub(cam.position)
+            .normalize();
+          const hit = roomRay(fold, pose.pos, [v.x, v.y, v.z]);
+          if (!hit) continue;
+          const f = hit.face;
+          if (!seen.has(f.id)) {
+            seen.add(f.id);
+            x0 = Math.min(x0, f.rect.x);
+            y0 = Math.min(y0, f.rect.y);
+            x1 = Math.max(x1, f.rect.x + f.rect.w);
+            y1 = Math.max(y1, f.rect.y + f.rect.h);
+          }
+          // local pixel density (projector px per meter) on the wall at this point
+          const a = toPx(hit.p);
+          const d = 0.05;
+          const bx = toPx(facePoint(f, hit.x + d, hit.y));
+          const by = toPx(facePoint(f, hit.x, hit.y + d));
+          if (a && bx && by)
+            dens.push(
+              Math.max(Math.hypot(bx[0] - a[0], bx[1] - a[1]), Math.hypot(by[0] - a[0], by[1] - a[1])) / d,
+            );
+        }
+      }
+      dens.sort((a, b) => a - b);
+      const ppm = dens.length ? dens[Math.floor(dens.length * 0.9)]! : ow / 4;
+      const vp = seen.size ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : world.bounds;
+      this.atlasCache = { key, vp, ppm, seen };
+    }
+    const { vp, seen } = this.atlasCache;
+    const maxSide = Math.min(this.maxTex, 8192);
+    const ppm = Math.min(
+      this.atlasCache.ppm,
+      ow / 0.25,
+      Math.sqrt(ATLAS_MAX_PIXELS / (vp.w * vp.h)),
+      maxSide / vp.w,
+      maxSide / vp.h,
+    );
+    // quantised so small aiming moves do not reallocate the atlas every frame
+    const w = Math.max(64, Math.min(maxSide, Math.ceil((vp.w * ppm) / 64) * 64));
+    const h = Math.max(64, Math.min(maxSide, Math.ceil((vp.h * ppm) / 64) * 64));
+    return { vp, w, h, seen };
+  }
+
   private setPoseCamera(pose: NonNullable<Profile['pose']>, aspect: number): void {
     const cam = this.poseCamera;
     cam.aspect = aspect;
@@ -1110,7 +1204,7 @@ export class StageRenderer {
     }
     layer.lastUsed = performance.now();
     const b = polygonBBox(s.polygon);
-    const maxDim = 2048 * this.quality;
+    const maxDim = Math.min(this.maxTex, 4096) * this.quality;
     let lw = Math.max(16, Math.round(b.w * ppmView));
     let lh = Math.max(16, Math.round(b.h * ppmView));
     const f = Math.min(1, maxDim / Math.max(lw, lh));

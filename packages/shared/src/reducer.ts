@@ -894,6 +894,17 @@ export function applyReportedResolution(
   // (e.g. 16:9 → 16:10 or 4:3). Small differences (rounding, scaling) are tolerated.
   const refAspect = p.referenceResolution.w / p.referenceResolution.h;
   const mismatch = Math.abs(w / h - refAspect) / refAspect > 0.03;
+  // Nothing calibrated yet (corners untouched): just take the new format instead of going black.
+  const untouched =
+    JSON.stringify(p.corners) === JSON.stringify(UNIT_QUAD) &&
+    !p.mesh &&
+    !p.fold &&
+    p.crop.every((c) => c === 0);
+  if (mismatch && untouched) {
+    p.referenceResolution = { w, h };
+    o.resolutionMismatch = null;
+    return true;
+  }
   if (mismatch && (o.resolutionMismatch?.w !== w || o.resolutionMismatch?.h !== h)) {
     o.resolutionMismatch = { w, h };
     return true;

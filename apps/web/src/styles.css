@@ -1072,3 +1072,16 @@ body,
   background: #05040c;
   border: 1px solid #2a2550;
 }
+
+.projection-problem {
+  position: fixed;
+  left: 50%;
+  bottom: 3vh;
+  transform: translateX(-50%);
+  padding: 0.5em 1em;
+  border-radius: 0.6em;
+  background: rgba(0, 0, 0, 0.75);
+  color: #ffb347;
+  font-size: clamp(14px, 1.4vw, 28px);
+  pointer-events: none;
+}
