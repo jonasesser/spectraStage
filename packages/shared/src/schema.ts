@@ -561,6 +561,16 @@ export const CommandSchema = z.discriminatedUnion('t', [
     outputId: id,
     walls: z.array(z.enum(['vorne', 'rechts', 'hinten', 'links', 'boden', 'decke'])).max(6),
   }),
+  /**
+   * How the projector is mounted (instead of setting it on the projector): front (table),
+   * ceiling (upside down = turned 180°), rear (behind a screen = mirrored left/right),
+   * ceiling + rear (= mirrored top/bottom).
+   */
+  z.object({
+    t: z.literal('output.setMount'),
+    outputId: id,
+    mount: z.enum(['front', 'ceiling', 'rear', 'ceilingRear']),
+  }),
   z.object({
     t: z.literal('output.setZoom'),
     outputId: id,

@@ -294,9 +294,14 @@ export function MeasureWizard({
   const nudge = (dx: number, dy: number) => {
     if (!anchor) return;
     const k = fine ? 0.0006 : 0.004;
-    move(anchor.u + dx * k, anchor.v + dy * k * aspect, 'drag');
+    move(anchor.u + sx * dx * k, anchor.v + sy * dy * k * aspect, 'drag');
   };
   const scale = () => (fine ? 0.06 : 0.35) / (padRef.current?.clientWidth || 300);
+  // the cross lives in the projector's own picture; a turned or mirrored mount turns the
+  // directions on the wall – keep "drag right = cross goes right on the wall"
+  const turned = profile.rotation === 180;
+  const sx = turned !== profile.flipX ? -1 : 1;
+  const sy = turned !== profile.flipY ? -1 : 1;
   const next = () => {
     if (!target) return;
     send(anchors, 'full');
@@ -377,14 +382,14 @@ export function MeasureWizard({
               const d = dragRef.current;
               if (!d) return;
               const k = scale();
-              move(d.u + (e.clientX - d.x) * k, d.v + (e.clientY - d.y) * k * aspect, 'drag');
+              move(d.u + sx * (e.clientX - d.x) * k, d.v + sy * (e.clientY - d.y) * k * aspect, 'drag');
             }}
             onPointerUp={(e) => {
               const d = dragRef.current;
               dragRef.current = null;
               if (!d) return;
               const k = scale();
-              move(d.u + (e.clientX - d.x) * k, d.v + (e.clientY - d.y) * k * aspect, 'now');
+              move(d.u + sx * (e.clientX - d.x) * k, d.v + sy * (e.clientY - d.y) * k * aspect, 'now');
             }}
             onPointerCancel={() => (dragRef.current = null)}
           >

@@ -9,7 +9,7 @@ import {
 } from './homography.ts';
 import { playlistPosition, activeScene, ambientSchedule, itemCueSchedule } from './playback.ts';
 import type { Playlist, SessionState, Surface } from './schema.ts';
-import { applyCommand, createInitialState, CommandError, type ReducerContext } from './reducer.ts';
+import { applyCommand, createInitialState, CommandError, mountOf, type ReducerContext } from './reducer.ts';
 import { createCatalog, type ThemeManifest } from './theme.ts';
 import {
   aimPose,
@@ -425,6 +425,17 @@ describe('reducer', () => {
     for (const o of s.outputs) {
       const pr = o.profiles[0]!;
       expect(poseErrorPx(pr.pose!, 16 / 9, pr.anchors!)!).toBeLessThan(1);
+    }
+  });
+  it('sets the mounting of a projector from the app', () => {
+    let s = base();
+    const c1 = ctx();
+    s = applyCommand(s, { t: 'surface.create', name: 'Wall', kind: 'wall' }, c1).state;
+    s = applyCommand(s, { t: 'output.create', name: 'B' }, c1).state;
+    const id = s.outputs[0]!.id;
+    for (const m of ['ceiling', 'rear', 'ceilingRear', 'front'] as const) {
+      s = applyCommand(s, { t: 'output.setMount', outputId: id, mount: m }, c1).state;
+      expect(mountOf(s.outputs[0]!.profiles[0]!)).toBe(m);
     }
   });
   it('enforces owner-only commands', () => {

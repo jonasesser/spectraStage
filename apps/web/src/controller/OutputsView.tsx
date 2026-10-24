@@ -16,6 +16,7 @@ import { Light, outputHealth, Sheet, Slider, kindLabel } from './ui.tsx';
 import { CalibrationEditor } from './CalibrationEditor.tsx';
 import { MeasureWizard } from './MeasureWizard.tsx';
 import { WallPicker } from './WallPicker.tsx';
+import { MountPicker } from './MountPicker.tsx';
 import { ZoomSliders } from './ZoomSliders.tsx';
 import { StagePreview } from './Preview.tsx';
 
@@ -368,6 +369,11 @@ function OutputCard({
           {output.blackout ? L('Resume', 'Fortsetzen') : L('Blackout', 'Blackout')}
         </button>
       </div>
+      {details && (
+        <div style={{ marginTop: '0.75rem' }}>
+          <MountPicker output={output} L={L} />
+        </div>
+      )}
       {profile.pose && (
         <div style={{ marginTop: '0.75rem' }}>
           <WallPicker output={output} state={state} L={L} />

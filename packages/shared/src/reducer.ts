@@ -787,6 +787,14 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       if (/^Beamer( |$)/.test(o.name) || /^Projector/.test(o.name)) o.name = wallsName(walls);
       return res(`${o.name}: covers ${walls.join(', ')}`);
     }
+    case 'output.setMount': {
+      const o = requireOutput(state, cmd.outputId);
+      const prof = activeProfile(o);
+      prof.rotation = cmd.mount === 'ceiling' ? 180 : 0;
+      prof.flipX = cmd.mount === 'rear';
+      prof.flipY = cmd.mount === 'ceilingRear';
+      return res(`${o.name} mounted ${cmd.mount}`);
+    }
     case 'output.setZoom': {
       const o = requireOutput(state, cmd.outputId);
       activeProfile(o).zoom = cmd.zoom;
@@ -1101,4 +1109,15 @@ export function applyReportedResolution(
     return true;
   }
   return false;
+}
+
+/** Mount of a projector from its picture orientation (see output.setMount). */
+export function mountOf(
+  p: Pick<Profile, 'rotation' | 'flipX' | 'flipY'>,
+): 'front' | 'ceiling' | 'rear' | 'ceilingRear' | 'other' {
+  if (p.rotation === 0 && !p.flipX && !p.flipY) return 'front';
+  if (p.rotation === 180 && !p.flipX && !p.flipY) return 'ceiling';
+  if (p.rotation === 0 && p.flipX && !p.flipY) return 'rear';
+  if (p.rotation === 0 && !p.flipX && p.flipY) return 'ceilingRear';
+  return 'other';
 }
