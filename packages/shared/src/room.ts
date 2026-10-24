@@ -277,10 +277,29 @@ export type RoomArrangement = 'sides' | 'threeWalls' | 'threeWallsPlus' | 'wallF
 export function arrangementPoses(
   surfaces: readonly Surface[],
   layout: RoomArrangement,
-): { name: string; faceId: string | null; pose: Pose }[] {
+): { name: string; faceId: string | null; pose: Pose; walls?: RoomWall[] }[] {
   const fold = roomFold(surfaces);
   const main = fold.faces.find((f) => f.role === 'main');
   if (!main) return [];
+  if (boxFrame(fold)) {
+    // a box room: every slot is a set of sides the projector covers completely
+    const sets: RoomWall[][] =
+      layout === 'mainOnly'
+        ? [['vorne']]
+        : layout === 'threeWalls'
+          ? [['links', 'vorne', 'rechts']]
+          : layout === 'threeWallsPlus'
+            ? [['links', 'vorne', 'rechts'], ['boden'], ['decke']]
+            : layout === 'wallFloor'
+              ? [['vorne', 'boden']]
+              : [['vorne'], ['rechts'], ['hinten'], ['links'], ['boden'], ['decke']];
+    const out: { name: string; faceId: string | null; pose: Pose; walls: RoomWall[] }[] = [];
+    for (const walls of sets) {
+      const pose = poseForWalls(fold, walls);
+      if (pose) out.push({ name: wallsName(walls), faceId: null, pose, walls });
+    }
+    if (out.length === sets.length) return out;
+  }
   const h = main.rect.h;
   const c = facePoint(main, main.rect.x + main.rect.w / 2, main.rect.y + h / 2);
   const back = roomRay(fold, add(c, main.n, 0.01), main.n);
@@ -406,14 +425,14 @@ export interface RoomCorner {
  * to measure where a projector really stands. Sorted: main wall first, bottom before top.
  */
 export function roomCorners(fold: RoomFold): RoomCorner[] {
-  const sideNames = ['Wand rechts', 'Rückwand', 'Wand links', 'Wand 5', 'Wand 6'];
+  const sideNames = ['Rechts', 'Hinten', 'Links', 'Wand 5', 'Wand 6'];
   let side = 0;
   const names = new Map<string, string>();
   for (const f of fold.faces) {
     names.set(
       f.id,
       f.role === 'main'
-        ? 'Hauptwand'
+        ? 'Vorne'
         : f.role === 'side'
           ? (sideNames[side++] ?? 'Wand')
           : f.role === 'ground'
@@ -465,12 +484,181 @@ export function roomCorners(fold: RoomFold): RoomCorner[] {
       return { p: e.p, walls, low };
     })
     .sort((a, b) => az(a.p) - az(b.p) || Number(b.low) - Number(a.low));
-  return corners.map((c, i) => ({
-    id: c.p.map((v) => v.toFixed(2)).join(','),
-    n: i + 1,
-    p: c.p,
-    label: `${c.walls.join(' / ')} – ${c.low ? 'unten' : 'oben'}`,
-  }));
+  const box = boxFrame(fold);
+  return corners.map((c, i) => {
+    const key = box ? boxKey(box, c.p) : null;
+    return {
+      // box rooms: a name that stays the same when the room size changes (vorne-links-unten …)
+      id: key ?? c.p.map((v) => v.toFixed(2)).join(','),
+      n: i + 1,
+      p: c.p,
+      label: key ? key.split('-').join(' ') : `${c.walls.join(' / ')} – ${c.low ? 'unten' : 'oben'}`,
+    };
+  });
+}
+
+/** The room as a box: floor corner at the left of the main wall, axes and size. */
+export interface BoxFrame {
+  /** Floor point below the left end of the main wall. */
+  o: V3;
+  /** Along the main wall (to the right), into the room, up. */
+  ax: V3;
+  n: V3;
+  w: number;
+  d: number;
+  h: number;
+}
+
+/** Box frame of a room with 4 walls at right angles (null for other layouts). */
+export function boxFrame(fold: RoomFold): BoxFrame | null {
+  const walls = fold.faces.filter((f) => f.role === 'main' || f.role === 'side');
+  const main = fold.faces.find((f) => f.role === 'main');
+  if (!main || walls.length !== 4) return null;
+  const side = walls.find((f) => f !== main && Math.abs(dot(f.n, main.ax)) > 0.99);
+  if (!side) return null;
+  return {
+    o: [main.o[0], 0, main.o[2]],
+    ax: main.ax,
+    n: main.n,
+    w: main.rect.w,
+    d: side.rect.w,
+    h: main.rect.h,
+  };
+}
+
+function boxKey(b: BoxFrame, p: V3): string | null {
+  const r = sub(p, b.o);
+  const x = dot(r, b.ax) / b.w;
+  const z = dot(r, b.n) / b.d;
+  const y = p[1] / b.h;
+  const near = (v: number) => Math.abs(v) < 0.02 || Math.abs(v - 1) < 0.02;
+  if (!near(x) || !near(y) || !near(z)) return null;
+  return `${z < 0.5 ? 'vorne' : 'hinten'}-${x < 0.5 ? 'links' : 'rechts'}-${y < 0.5 ? 'unten' : 'oben'}`;
+}
+
+/** Room point of a box corner key for a box of the given size (same frame as `b`). */
+export function boxCorner(b: BoxFrame, key: string, w: number, d: number, h: number): V3 | null {
+  const [zk, xk, yk] = key.split('-');
+  if (!zk || !xk || !yk) return null;
+  const x = xk === 'rechts' ? w : 0;
+  const z = zk === 'hinten' ? d : 0;
+  const y = yk === 'oben' ? h : 0;
+  return [b.o[0] + b.ax[0] * x + b.n[0] * z, y, b.o[2] + b.ax[2] * x + b.n[2] * z];
+}
+
+type Measured = { p: V3; q?: V3 | undefined; u: number; v: number };
+
+const poseFromX = (x: readonly number[], k = 0): Pose => ({
+  pos: [x[k]!, x[k + 1]!, x[k + 2]!],
+  yaw: x[k + 3]!,
+  pitch: Math.max(-1.55, Math.min(1.55, x[k + 4]!)),
+  roll: Math.atan2(Math.sin(x[k + 5]!), Math.cos(x[k + 5]!)),
+  fov: Math.max(6, Math.min(149, (Math.atan(Math.exp(x[k + 6]!)) * 360) / Math.PI)),
+  shiftX: Math.max(-2.9, Math.min(2.9, x[k + 7]!)),
+  shiftY: Math.max(-2.9, Math.min(2.9, x[k + 8]!)),
+});
+const xFromPose = (p: Pose): number[] => [
+  ...p.pos,
+  p.yaw,
+  p.pitch,
+  p.roll,
+  Math.log(Math.tan((p.fov * Math.PI) / 360)),
+  p.shiftX ?? 0,
+  p.shiftY ?? 0,
+];
+
+/** Residuals (NDC) of measured points for a pose; a corner gives 2, an edge point 1 (+ 0). */
+function pushResiduals(r: number[], p: Pose, aspect: number, pts: readonly Measured[]): void {
+  for (const m of pts) {
+    const ox = m.u * 2 - 1;
+    const oy = 1 - m.v * 2;
+    if (m.q) {
+      const d = edgeDistance(p, aspect, m.p, m.q, ox, oy);
+      r.push(d ?? 10, 0);
+      continue;
+    }
+    const q = projectPose(p, aspect, m.p);
+    if (!q) r.push(10, 10);
+    else r.push(q[0] - ox, q[1] - oy);
+  }
+}
+
+/** Levenberg–Marquardt with a numeric Jacobian. */
+function minimizeLM(resid: (x: number[]) => number[], x0: number[], maxIt = 200): { x: number[]; c: number } {
+  const cost = (r: number[]) => r.reduce((a, b) => a + b * b, 0);
+  let x = [...x0];
+  let r = resid(x);
+  let c = cost(r);
+  let lambda = 1e-3;
+  const n = x.length;
+  for (let it = 0; it < maxIt && c > 1e-14; it++) {
+    const J: number[][] = [];
+    for (let k = 0; k < n; k++) {
+      const h = 1e-6 * Math.max(1, Math.abs(x[k]!));
+      const xp = [...x];
+      xp[k]! += h;
+      const rp = resid(xp);
+      J.push(rp.map((v, i) => (v - r[i]!) / h));
+    }
+    const A: number[][] = [];
+    const g: number[] = [];
+    for (let a = 0; a < n; a++) {
+      A.push([]);
+      let sg = 0;
+      for (let i = 0; i < r.length; i++) sg += J[a]![i]! * r[i]!;
+      g.push(-sg);
+      for (let b = 0; b < n; b++) {
+        let t = 0;
+        if (b < a) t = A[b]![a]!;
+        else for (let i = 0; i < r.length; i++) t += J[a]![i]! * J[b]![i]!;
+        A[a]!.push(t);
+      }
+    }
+    let improved = false;
+    for (let tries = 0; tries < 8; tries++) {
+      const M = A.map((row, a) => row.map((v, b) => (a === b ? v * (1 + lambda) + 1e-12 : v)));
+      const d = solveLinear(M, [...g]);
+      if (!d) {
+        lambda *= 10;
+        continue;
+      }
+      const xn = x.map((v, k) => v + d[k]!);
+      const rn = resid(xn);
+      const cn = cost(rn);
+      if (cn < c) {
+        const rel = (c - cn) / Math.max(c, 1e-18);
+        x = xn;
+        r = rn;
+        c = cn;
+        lambda = Math.max(1e-9, lambda / 5);
+        improved = true;
+        if (rel < 1e-10) it = maxIt;
+        break;
+      }
+      lambda *= 10;
+    }
+    if (!improved) break;
+  }
+  return { x, c };
+}
+
+/** Remaining error in pixels (1920 px wide picture) of measured points for a pose. */
+export function poseErrorPx(p: Pose, aspect: number, pts: readonly Measured[]): number | null {
+  let e = 0;
+  for (const m of pts) {
+    const ox = m.u * 2 - 1;
+    const oy = 1 - m.v * 2;
+    if (m.q) {
+      const d = edgeDistance(p, aspect, m.p, m.q, ox, oy);
+      if (d === null) return null;
+      e += (d * 960) ** 2;
+      continue;
+    }
+    const q = projectPose(p, aspect, m.p);
+    if (!q) return null;
+    e += ((q[0] - ox) * 960) ** 2 + ((q[1] - oy) * (960 / aspect)) ** 2;
+  }
+  return pts.length ? Math.sqrt(e / pts.length) : 0;
 }
 
 /**
@@ -482,105 +670,19 @@ export function roomCorners(fold: RoomFold): RoomCorner[] {
 export function solvePose(
   start: Pose,
   aspect: number,
-  pts: readonly { p: V3; q?: V3 | undefined; u: number; v: number }[],
+  pts: readonly Measured[],
   fold?: RoomFold,
+  quick = false,
 ): { pose: Pose; errPx: number } | null {
   // a corner gives 2 equations, a point on an edge 1; 7 unknowns (+ lens shift, kept small)
   if (measureCount(pts) < 7) return null;
-  const obs = pts.map((q) => [q.u * 2 - 1, 1 - q.v * 2] as const);
-  const toPose = (x: number[]): Pose => ({
-    pos: [x[0]!, x[1]!, x[2]!],
-    yaw: x[3]!,
-    pitch: Math.max(-1.55, Math.min(1.55, x[4]!)),
-    roll: Math.atan2(Math.sin(x[5]!), Math.cos(x[5]!)),
-    fov: Math.max(6, Math.min(149, (Math.atan(Math.exp(x[6]!)) * 360) / Math.PI)),
-    shiftX: Math.max(-2.9, Math.min(2.9, x[7]!)),
-    shiftY: Math.max(-2.9, Math.min(2.9, x[8]!)),
-  });
-  const fromPose = (p: Pose): number[] => [
-    ...p.pos,
-    p.yaw,
-    p.pitch,
-    p.roll,
-    Math.log(Math.tan((p.fov * Math.PI) / 360)),
-    p.shiftX ?? 0,
-    p.shiftY ?? 0,
-  ];
   // keep the lens shift small only while few points are measured (a flat wall cannot tell it apart)
   const SHIFT_PRIOR = measureCount(pts) >= 10 ? 0.002 : 0.03;
   const resid = (x: number[]): number[] => {
-    const p = toPose(x);
     const r: number[] = [];
-    obs.forEach(([ox, oy], i) => {
-      const m = pts[i]!;
-      if (m.q) {
-        const d = edgeDistance(p, aspect, m.p, m.q, ox, oy);
-        r.push(d ?? 10, 0);
-        return;
-      }
-      const q = projectPose(p, aspect, m.p);
-      if (!q) r.push(10, 10);
-      else r.push(q[0] - ox, q[1] - oy);
-    });
+    pushResiduals(r, poseFromX(x), aspect, pts);
     r.push(SHIFT_PRIOR * x[7]!, SHIFT_PRIOR * x[8]!);
     return r;
-  };
-  const cost = (r: number[]) => r.reduce((a, b) => a + b * b, 0);
-  const lm = (x0: number[]): { x: number[]; c: number } => {
-    let x = [...x0];
-    let r = resid(x);
-    let c = cost(r);
-    let lambda = 1e-3;
-    const n = x.length;
-    for (let it = 0; it < 200 && c > 1e-14; it++) {
-      const J: number[][] = [];
-      for (let k = 0; k < n; k++) {
-        const h = 1e-6 * Math.max(1, Math.abs(x[k]!));
-        const xp = [...x];
-        xp[k]! += h;
-        const rp = resid(xp);
-        J.push(rp.map((v, i) => (v - r[i]!) / h));
-      }
-      // normal equations (JᵀJ + λ diag) δ = −Jᵀr
-      const A: number[][] = [];
-      const g: number[] = [];
-      for (let a = 0; a < n; a++) {
-        A.push([]);
-        let s = 0;
-        for (let i = 0; i < r.length; i++) s += J[a]![i]! * r[i]!;
-        g.push(-s);
-        for (let b = 0; b < n; b++) {
-          let t = 0;
-          for (let i = 0; i < r.length; i++) t += J[a]![i]! * J[b]![i]!;
-          A[a]!.push(t);
-        }
-      }
-      let improved = false;
-      for (let tries = 0; tries < 8; tries++) {
-        const M = A.map((row, a) => row.map((v, b) => (a === b ? v * (1 + lambda) + 1e-12 : v)));
-        const d = solveLinear(M, [...g]);
-        if (!d) {
-          lambda *= 10;
-          continue;
-        }
-        const xn = x.map((v, k) => v + d[k]!);
-        const rn = resid(xn);
-        const cn = cost(rn);
-        if (cn < c) {
-          x = xn;
-          r = rn;
-          const rel = (c - cn) / Math.max(c, 1e-18);
-          c = cn;
-          lambda = Math.max(1e-9, lambda / 5);
-          improved = true;
-          if (rel < 1e-10) it = 1e9;
-          break;
-        }
-        lambda *= 10;
-      }
-      if (!improved) break;
-    }
-    return { x, c };
   };
   // start poses: the current one, plus a few standing points aimed at the measured points
   const starts: Pose[] = [start];
@@ -597,27 +699,120 @@ export function solvePose(
       }
     }
   }
-  let best: { x: number[]; c: number } | null = null;
-  for (const s of starts) {
-    const res = lm(fromPose(s));
-    if (!best || res.c < best.c) best = res;
-  }
-  if (!best) return null;
-  const pose = toPose(best.x);
-  let e = 0;
-  for (let i = 0; i < pts.length; i++) {
-    const m = pts[i]!;
-    if (m.q) {
-      const d = edgeDistance(pose, aspect, m.p, m.q, obs[i]![0], obs[i]![1]);
-      if (d === null) return null;
-      e += (d * 960) ** 2;
-      continue;
+  // quick (while a marker is dragged): refine the current pose only
+  let best: { x: number[]; c: number } | null = minimizeLM(resid, xFromPose(start), quick ? 25 : 200);
+  if (!quick && best.c > 1e-8) {
+    const tries = [best, ...starts.slice(1).map((s0) => minimizeLM(resid, xFromPose(s0), 60))];
+    tries.sort((a, b) => a.c - b.c);
+    // finish the two most promising
+    for (const t of tries.slice(0, 2)) {
+      const res = minimizeLM(resid, t.x, 200);
+      if (res.c < best.c) best = res;
     }
-    const q = projectPose(pose, aspect, m.p);
-    if (!q) return null;
-    e += ((q[0] - obs[i]![0]) * 960) ** 2 + ((q[1] - obs[i]![1]) * (960 / aspect)) ** 2;
   }
-  return { pose, errPx: Math.sqrt(e / pts.length) };
+  const pose = poseFromX(best.x);
+  const errPx = poseErrorPx(pose, aspect, pts);
+  return errPx === null ? null : { pose, errPx };
+}
+
+/** A measured point named by box corner keys (c|key or e|keyA|keyB|n) instead of coordinates. */
+function boxPoints(b: BoxFrame, c: string, w: number, d: number, h: number): { p: V3; q?: V3 } | null {
+  const parts = c.split('|');
+  if (parts[0] === 'c' && parts[1]) {
+    const p = boxCorner(b, parts[1], w, d, h);
+    return p ? { p } : null;
+  }
+  if (parts[0] === 'e' && parts[1] && parts[2]) {
+    const p = boxCorner(b, parts[1], w, d, h);
+    const q = boxCorner(b, parts[2], w, d, h);
+    return p && q ? { p, q } : null;
+  }
+  return null;
+}
+
+export interface RoomSolveInput {
+  fold: RoomFold;
+  /** Whether width/depth of the room may be adjusted (room built around one main wall). */
+  sizeFree: boolean;
+  projectors: { id: string; pose: Pose; aspect: number; anchors: readonly (Measured & { c: string })[] }[];
+  /** Live dragging: only refine the poses, keep the room size. */
+  quick?: boolean;
+}
+
+/**
+ * Joint solve over all projectors: their poses and – when the points over-determine them – the
+ * width and depth of the room (height fixed: the absolute scale cannot be seen). Nobody has to
+ * measure the room: what fits the measured corners and edges is the room.
+ */
+export function solveRoom(input: RoomSolveInput): {
+  poses: Record<string, { pose: Pose; errPx: number }>;
+  size: { w: number; d: number } | null;
+} {
+  const out: Record<string, { pose: Pose; errPx: number }> = {};
+  // 1) each projector on its own (also gives good start values)
+  for (const pr of input.projectors) {
+    const r = solvePose(pr.pose, pr.aspect, pr.anchors, input.fold, input.quick);
+    if (r) out[pr.id] = r;
+  }
+  const box = input.sizeFree && !input.quick ? boxFrame(input.fold) : null;
+  const solved = input.projectors.filter((pr) => out[pr.id]);
+  const extra = solved.reduce((n, pr) => n + measureCount(pr.anchors) - 7, 0);
+  if (!box || !solved.length || extra < 2) return { poses: out, size: null };
+  const h = box.h;
+  const usesBox = solved.some((pr) => pr.anchors.some((a) => boxPoints(box, a.c, box.w, box.d, h)));
+  if (!usesBox) return { poses: out, size: null };
+  // 2) together with the room size
+  const resid = (x: number[]): number[] => {
+    const w = Math.exp(x[0]!);
+    const d = Math.exp(x[1]!);
+    const r: number[] = [];
+    solved.forEach((pr, k) => {
+      const pose = poseFromX(x, 2 + k * 9);
+      const pts = pr.anchors.map((a) => {
+        const bp = boxPoints(box, a.c, w, d, h);
+        return bp ? { ...a, p: bp.p, q: bp.q } : a;
+      });
+      pushResiduals(r, pose, pr.aspect, pts);
+      r.push(0.01 * x[2 + k * 9 + 7]!, 0.01 * x[2 + k * 9 + 8]!);
+    });
+    // a gentle pull towards the current size keeps an unseen direction where it is
+    r.push(0.003 * (x[0]! - Math.log(box.w)), 0.003 * (x[1]! - Math.log(box.d)));
+    return r;
+  };
+  // alternate: projectors alone (with several start poses) for the current size, then all
+  // together with the size – a projector that started badly does not trap the joint solve
+  let w = box.w;
+  let d = box.d;
+  let res: { x: number[]; c: number } | null = null;
+  for (let round = 0; round < 2; round++) {
+    for (const pr of solved) {
+      const pts = pr.anchors.map((a) => {
+        const bp = boxPoints(box, a.c, w, d, h);
+        return bp ? { ...a, p: bp.p, q: bp.q } : a;
+      });
+      const r1 = solvePose(out[pr.id]!.pose, pr.aspect, pts, input.fold);
+      if (r1) out[pr.id] = r1;
+    }
+    const x0 = [Math.log(w), Math.log(d), ...solved.flatMap((pr) => xFromPose(out[pr.id]!.pose))];
+    res = minimizeLM(resid, x0, 120);
+    w = Math.exp(res.x[0]!);
+    d = Math.exp(res.x[1]!);
+    solved.forEach((pr, k) => {
+      out[pr.id] = { pose: poseFromX(res!.x, 2 + k * 9), errPx: out[pr.id]!.errPx };
+    });
+  }
+  if (!res) return { poses: out, size: null };
+  if (!(w > 0.3 && w < 60 && d > 0.3 && d < 60)) return { poses: out, size: null };
+  solved.forEach((pr, k) => {
+    const pose = poseFromX(res.x, 2 + k * 9);
+    const pts = pr.anchors.map((a) => {
+      const bp = boxPoints(box, a.c, w, d, h);
+      return bp ? { ...a, p: bp.p, q: bp.q } : a;
+    });
+    const e = poseErrorPx(pose, pr.aspect, pts);
+    if (e !== null) out[pr.id] = { pose, errPx: e };
+  });
+  return { poses: out, size: { w, d } };
 }
 
 /** Number of equations measured points give (corner 2, point on an edge 1). */
@@ -630,9 +825,15 @@ export function measureCount(pts: readonly { q?: V3 | undefined }[]): number {
  * room edge a–b (only the part in front of the projector counts).
  */
 export function edgeDistance(p: Pose, aspect: number, a: V3, b: V3, ox: number, oy: number): number | null {
-  let first: [number, number] | null = null;
-  let last: [number, number] | null = null;
-  for (let i = 0; i <= 24; i++) {
+  let first: [number, number] | null = projectPose(p, aspect, a);
+  let last: [number, number] | null = first ? projectPose(p, aspect, b) : null;
+  // part of the edge behind the projector: use the part in front of it
+  const sample = !first || !last;
+  if (sample) {
+    first = null;
+    last = null;
+  }
+  for (let i = 0; i <= 24 && sample; i++) {
     const t = i / 24;
     const q = projectPose(p, aspect, [
       a[0] + (b[0] - a[0]) * t,
@@ -729,14 +930,14 @@ export interface RoomEdge {
 }
 
 function faceNames(fold: RoomFold): Map<string, string> {
-  const sideNames = ['Wand rechts', 'Rückwand', 'Wand links', 'Wand 5', 'Wand 6'];
+  const sideNames = ['Rechts', 'Hinten', 'Links', 'Wand 5', 'Wand 6'];
   let side = 0;
   const names = new Map<string, string>();
   for (const f of fold.faces)
     names.set(
       f.id,
       f.role === 'main'
-        ? 'Hauptwand'
+        ? 'Vorne'
         : f.role === 'side'
           ? (sideNames[side++] ?? 'Wand')
           : f.role === 'ground'
@@ -784,9 +985,179 @@ export function roomEdges(fold: RoomFold): RoomEdge[] {
           const f = pl.faces.find((x) => onFace(x, mid)) ?? pl.faces[0]!;
           return names.get(f.id)!;
         })
-        .sort((x, y) => (x === 'Hauptwand' ? -1 : y === 'Hauptwand' ? 1 : 0))
+        .sort((x, y) => (x === 'Vorne' ? -1 : y === 'Vorne' ? 1 : 0))
         .join(' / ');
       edges.push({ id: `${corners[i]!.id}|${corners[j]!.id}`, a, b, label });
     }
   return edges;
+}
+
+/** The six fixed sides of the room. */
+export const ROOM_WALLS = ['vorne', 'rechts', 'hinten', 'links', 'boden', 'decke'] as const;
+export type RoomWall = (typeof ROOM_WALLS)[number];
+export const ROOM_WALL_LABEL: Record<RoomWall, string> = {
+  vorne: 'Vorne',
+  rechts: 'Rechts',
+  hinten: 'Hinten',
+  links: 'Links',
+  boden: 'Boden',
+  decke: 'Decke',
+};
+
+/** The sides a box corner key (vorne-links-unten) belongs to. */
+export function cornerWalls(key: string): RoomWall[] {
+  return key
+    .split('-')
+    .map((k) => (k === 'unten' ? 'boden' : k === 'oben' ? 'decke' : k))
+    .filter((k): k is RoomWall => (ROOM_WALLS as readonly string[]).includes(k));
+}
+
+/** The sides a measured point touches (corner: 3, edge: 2), from its id (c|key or e|a|b|n). */
+export function anchorWalls(id: string): RoomWall[] {
+  const p = id.split('|');
+  if (p[0] === 'c' && p[1]) return cornerWalls(p[1]);
+  if (p[0] === 'e' && p[1] && p[2]) {
+    const b = new Set(cornerWalls(p[2]));
+    return cornerWalls(p[1]).filter((w) => b.has(w));
+  }
+  return [];
+}
+
+/**
+ * A projector pose for the chosen sides of the room: the transitions between the chosen sides
+ * (or all corners of a single side) must be in the picture; among the standing points all over
+ * the room the one that shows most of the chosen sides wins (then the narrowest picture).
+ * Returns null if the sides cannot be lit by one projector (e.g. front and back wall).
+ */
+export function poseForWalls(fold: RoomFold, walls: readonly RoomWall[], aspect = 16 / 9): Pose | null {
+  const b = boxFrame(fold);
+  if (!b || !walls.length) return null;
+  const keys: string[] = [];
+  for (const zk of ['vorne', 'hinten'])
+    for (const xk of ['links', 'rechts']) for (const yk of ['unten', 'oben']) keys.push(`${zk}-${xk}-${yk}`);
+  const sel = (k: string) => cornerWalls(k).filter((w) => walls.includes(w)).length;
+  const required = keys.filter((k) => (walls.length === 1 ? sel(k) >= 1 : sel(k) >= 2));
+  if (!required.length) return null;
+  const P = (k: string) => boxCorner(b, k, b.w, b.d, b.h)!;
+  const need = required.map(P);
+  // sample points on every chosen side, to measure how much of it the picture shows
+  const samples: { wall: RoomWall; p: V3 }[] = [];
+  for (const w of walls) {
+    const ks = keys.filter((k) => cornerWalls(k).includes(w)).map(P);
+    // the 4 corners form a rectangle: a0 + s·(a1 − a0) + t·(a2 − a0)
+    const [a0, ...rest] = ks;
+    const far = rest.reduce((m, q) => (Math.hypot(...sub(q, a0!)) > Math.hypot(...sub(m, a0!)) ? q : m));
+    const sides = rest.filter((q) => q !== far);
+    for (let i = 0; i <= 5; i++)
+      for (let j = 0; j <= 5; j++) {
+        const s1 = i / 5;
+        const t1 = j / 5;
+        samples.push({
+          wall: w,
+          p: add(add(a0!, sub(sides[0]!, a0!), s1), sub(sides[1]!, a0!), t1),
+        });
+      }
+  }
+  const at = (fx: number, fy: number, fz: number): V3 => [
+    b.o[0] + b.ax[0] * b.w * fx + b.n[0] * b.d * fz,
+    b.h * fy,
+    b.o[2] + b.ax[2] * b.w * fx + b.n[2] * b.d * fz,
+  ];
+  let best: { pose: Pose; cover: number; fov: number } | null = null;
+  for (const fx of [0.1, 0.3, 0.5, 0.7, 0.9])
+    for (const fz of [0.05, 0.25, 0.5, 0.75, 0.95])
+      for (const fy of [0.2, 0.5, 0.85]) {
+        const from = at(fx, fy, fz);
+        const m: V3 = [0, 0, 0];
+        for (const p of need) {
+          const d = sub(p, from);
+          const l = Math.hypot(...d) || 1;
+          for (let k = 0; k < 3; k++) m[k]! += d[k]! / l;
+        }
+        if (Math.hypot(...m) < 0.2 * need.length) continue;
+        const aim = aimPose(from, add(from, m), 90);
+        let tx = 0;
+        let ok = true;
+        const R = poseDirFrame(aim);
+        for (const p of need) {
+          const d = sub(p, from);
+          const z = -dot(d, R.f);
+          if (z < 0.05) {
+            ok = false;
+            break;
+          }
+          tx = Math.max(tx, Math.abs(dot(d, R.r)) / z, (Math.abs(dot(d, R.u)) / z) * aspect);
+        }
+        if (!ok) continue;
+        // open the picture a bit more (up to 150°) when that shows more of the chosen sides
+        const fov0 = (2 * Math.atan(tx * 1.04) * 180) / Math.PI;
+        if (fov0 > 150) continue;
+        for (const fov of [fov0, Math.min(150, fov0 + 15), Math.min(150, fov0 + 30)]) {
+          const pose = { ...aim, fov };
+          const perWall = new Map<RoomWall, number>();
+          for (const sm of samples) {
+            const q = projectPose(pose, aspect, sm.p);
+            if (q && Math.abs(q[0]) <= 1.001 && Math.abs(q[1]) <= 1.001)
+              perWall.set(sm.wall, (perWall.get(sm.wall) ?? 0) + 1);
+          }
+          // every chosen side must show up; then: as much of them as possible
+          const each = walls.map((w) => (perWall.get(w) ?? 0) / 36);
+          if (Math.min(...each) < 0.15) continue;
+          const cover = each.reduce((a, c) => a + c, 0) / walls.length;
+          if (!best || cover > best.cover + 0.02 || (cover > best.cover - 0.02 && fov < best.fov - 0.5))
+            best = { pose, cover, fov };
+        }
+      }
+  return best?.pose ?? null;
+}
+
+/** Forward (into the picture, negated: points have −z), right and up vectors of a pose. */
+function poseDirFrame(p: Pose): { f: V3; r: V3; u: V3 } {
+  const c = poseRay(p, 1, 0, 0);
+  const e = 1e-3;
+  const rx = poseRay({ ...p, fov: 90 }, 1, e, 0);
+  const uy = poseRay({ ...p, fov: 90 }, 1, 0, e);
+  const r = sub(rx, c);
+  const u = sub(uy, c);
+  const nr = Math.hypot(...r) || 1;
+  const nu = Math.hypot(...u) || 1;
+  // f is the direction the picture goes; points in front have dot(d, f) > 0 → use −f as "z"
+  return {
+    f: [-c[0], -c[1], -c[2]],
+    r: [r[0] / nr, r[1] / nr, r[2] / nr],
+    u: [u[0] / nu, u[1] / nu, u[2] / nu],
+  };
+}
+
+/** Projector name from the sides it covers, e.g. "Beamer Links + Vorne + Rechts". */
+export function wallsName(walls: readonly RoomWall[]): string {
+  return `Beamer ${walls.map((w) => ROOM_WALL_LABEL[w]).join(' + ')}`;
+}
+
+/** Which sides of the room a pose lights noticeably (for projectors set up before sides were chosen). */
+export function wallsOfPose(fold: RoomFold, pose: Pose, aspect = 16 / 9): RoomWall[] {
+  const b = boxFrame(fold);
+  if (!b) return [];
+  const out: RoomWall[] = [];
+  const keys: string[] = [];
+  for (const zk of ['vorne', 'hinten'])
+    for (const xk of ['links', 'rechts']) for (const yk of ['unten', 'oben']) keys.push(`${zk}-${xk}-${yk}`);
+  for (const w of ROOM_WALLS) {
+    const ks = keys.filter((k) => cornerWalls(k).includes(w)).map((k) => boxCorner(b, k, b.w, b.d, b.h)!);
+    const [a0, ...rest] = ks;
+    const far = rest.reduce((m, q) => (Math.hypot(...sub(q, a0!)) > Math.hypot(...sub(m, a0!)) ? q : m));
+    const sides = rest.filter((q) => q !== far);
+    let n = 0;
+    for (let i = 0; i <= 5; i++)
+      for (let j = 0; j <= 5; j++) {
+        const q = projectPose(
+          pose,
+          aspect,
+          add(add(a0!, sub(sides[0]!, a0!), i / 5), sub(sides[1]!, a0!), j / 5),
+        );
+        if (q && Math.abs(q[0]) <= 1 && Math.abs(q[1]) <= 1) n++;
+      }
+    if (n / 36 >= 0.15) out.push(w);
+  }
+  return out;
 }

@@ -5,7 +5,6 @@ import {
   polygonBBox,
   stageBounds,
   worldLayout,
-  tidyRoom,
   type Output,
   type SessionState,
   type Surface,
@@ -453,7 +452,12 @@ export function StageEditor() {
       </div>
       <div className="stack">
         <RoomPanel state={state} L={L} />
-        <AddSurface L={L} />
+        <details className="panel">
+          <summary className="small">
+            {L('Special cases: add own surfaces', 'Sonderfälle: eigene Flächen anlegen')}
+          </summary>
+          <AddSurface L={L} />
+        </details>
         {selSurface && (
           <SurfacePanel
             key={selSurface.id}
@@ -494,23 +498,50 @@ function roleLabel(r: 'main' | 'side' | 'ground' | 'ceiling', L: Tr): string {
 /** Room mode: walls all the way around – the world wraps from the last wall to the first. */
 function RoomPanel({ state, L }: { state: SessionState; L: Tr }) {
   const store = useStore();
-  const tidy = async () => {
-    const polys = tidyRoom(state.surfaces);
-    for (const [id, polygon] of Object.entries(polys))
-      await store.send({ t: 'surface.update', surfaceId: id, polygon });
+  const lay = worldLayout(state.surfaces);
+  const mainId = lay.find((x) => x.role === 'main')?.id;
+  const extra = state.surfaces.filter((x) => x.id !== mainId);
+  const reset = async () => {
+    if (
+      !window.confirm(
+        L(
+          `Keep only the main wall and remove ${extra.length} other surface(s)? The app adds the other 5 sides itself.`,
+          `Nur die Hauptwand behalten und ${extra.length} weitere Fläche(n) entfernen? Die anderen 5 Seiten ergänzt die App selbst.`,
+        ),
+      )
+    )
+      return;
+    for (const x of extra) await store.send({ t: 'surface.delete', surfaceId: x.id });
   };
   return (
     <div className="panel stack">
-      <strong>{L('One world, all around', 'Eine Welt, rundherum')}</strong>
-      <p className="muted small" style={{ margin: 0 }}>
-        {L(
-          'The world is always a complete room: main wall, three more walls, floor and ceiling. Your surfaces are the parts a projector shows; sides without a projector are filled in virtually (visible in the 3D room). New surfaces get the size of the main wall – walls go to the right in the order they go around, the floor below the main wall, the ceiling above it.',
-          'Die Welt ist immer ein kompletter Raum: Hauptwand, drei weitere Wände, Boden und Decke. Deine Flächen sind die Teile, die ein Beamer zeigt; Seiten ohne Beamer werden virtuell ergänzt (sichtbar im 3D-Raum). Neue Flächen bekommen die Größe der Hauptwand – Wände rechts daneben in der Reihenfolge rundherum, Boden unter der Hauptwand, Decke darüber.',
-        )}
-      </p>
-      <button className="btn small" onClick={tidy}>
-        📐 {L('Same size as the main wall & tidy up', 'Alle gleich groß wie die Hauptwand & ordnen')}
-      </button>
+      <strong>{L('The room: 6 fixed sides', 'Der Raum: 6 feste Seiten')}</strong>
+      <ol className="small" style={{ margin: 0, paddingLeft: '1.2rem' }}>
+        <li>
+          {L(
+            'Front, right, back, left, floor and ceiling are always there – nothing to add or measure.',
+            'Vorne, Rechts, Hinten, Links, Boden und Decke sind immer da – nichts anlegen, nichts ausmessen.',
+          )}
+        </li>
+        <li>
+          {L(
+            'Projectors tab: choose for each projector which sides it lights.',
+            'Reiter „Beamer“: pro Beamer wählen, welche Seiten er bestrahlt.',
+          )}
+        </li>
+        <li>
+          {L(
+            '“Calibrate”: move the crosses onto the real corners and edges, step by step – the app finds the size of the room and where the projector stands by itself.',
+            '„Kalibrieren“: Schritt für Schritt die Kreuze auf die echten Ecken und Kanten schieben – Raumgröße und Standort findet die App selbst.',
+          )}
+        </li>
+      </ol>
+      {extra.length > 0 && (
+        <button className="btn small" onClick={() => void reset()}>
+          🧹 {L('Reset to the 6 fixed sides', 'Auf die 6 festen Seiten zurücksetzen')} ({extra.length}{' '}
+          {L('extra surfaces', 'zusätzliche Flächen')})
+        </button>
+      )}
     </div>
   );
 }

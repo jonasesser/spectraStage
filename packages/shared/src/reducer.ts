@@ -16,8 +16,26 @@ import type { PlaylistTemplate, SurfaceKind, ThemeCatalog, ThemeManifest } from 
 import { sanitizeParams } from './theme.ts';
 import { isConvexQuad, UNIT_QUAD } from './homography.ts';
 import { playlistPosition } from './playback.ts';
-import { activeProfile, actorCueDuration, fitViewport, placeNewSurface, polygonBBox } from './stage.ts';
-import { arrangementPoses, poseForSurface, poseTarget, roomFold, solvePose } from './room.ts';
+import {
+  activeProfile,
+  actorCueDuration,
+  fitViewport,
+  placeNewSurface,
+  polygonBBox,
+  worldLayout,
+} from './stage.ts';
+import {
+  arrangementPoses,
+  boxCorner,
+  boxFrame,
+  poseForSurface,
+  poseForWalls,
+  poseTarget,
+  roomFold,
+  solveRoom,
+  wallsName,
+  type RoomWall,
+} from './room.ts';
 
 export class CommandError extends Error {
   constructor(
@@ -250,6 +268,54 @@ export function createOutput(
  * One planned projector per side of the room (main wall, the three other walls, floor, ceiling)
  * for every side that no projector points at yet. Returns how many were created.
  */
+/**
+ * After a measurement: solve all projectors with measured points together, and – when the room
+ * is built around a single main wall – also its width and depth, which are then written to the
+ * main wall (the walls the app adds around it follow).
+ */
+export function solveMeasuredRoom(state: SessionState, quickFor: string | null = null): void {
+  const fold = roomFold(state.surfaces);
+  const lay = worldLayout(state.surfaces);
+  const walls = lay.filter((w) => w.role === 'main' || w.role === 'side');
+  const mainId = walls.find((w) => w.role === 'main')?.id;
+  const main = state.surfaces.find((s) => s.id === mainId);
+  const projectors = state.outputs
+    .filter((o) => !quickFor || o.id === quickFor)
+    .map((o) => {
+      const prof = activeProfile(o);
+      const ref = prof.referenceResolution;
+      const start = prof.pose ?? poseForSurface(state.surfaces, null, new Set());
+      return start && prof.anchors?.length
+        ? { id: o.id, pose: start, aspect: ref ? ref.w / ref.h : 16 / 9, anchors: prof.anchors }
+        : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => !!x);
+  if (!projectors.length) return;
+  const r = solveRoom({ fold, sizeFree: !!main && walls.length === 1, projectors, quick: !!quickFor });
+  for (const o of state.outputs) {
+    const sol = r.poses[o.id];
+    if (sol) activeProfile(o).pose = sol.pose;
+  }
+  if (r.size && main) {
+    const b = polygonBBox(main.polygon);
+    const k = r.size.w / b.w;
+    main.polygon = main.polygon.map((pt) => ({ x: b.x + (pt.x - b.x) * k, y: pt.y }));
+    main.roomDepth = r.size.d;
+    // keep the stored room points of all measurements in step with the new size
+    const box = boxFrame(roomFold(state.surfaces));
+    if (box)
+      for (const o of state.outputs) {
+        const prof = activeProfile(o);
+        prof.anchors = prof.anchors?.map((a) => {
+          const parts = a.c.split('|');
+          const p = parts[1] ? boxCorner(box, parts[1], box.w, box.d, box.h) : null;
+          const q = parts[0] === 'e' && parts[2] ? boxCorner(box, parts[2], box.w, box.d, box.h) : null;
+          return p ? { ...a, p, ...(q ? { q } : {}) } : a;
+        });
+      }
+  }
+}
+
 export function planRoomOutputs(state: SessionState, ctx: ReducerContext): number {
   const fold = roomFold(state.surfaces);
   const covered = new Set<string>();
@@ -259,9 +325,9 @@ export function planRoomOutputs(state: SessionState, ctx: ReducerContext): numbe
     if (f) covered.add(f);
   }
   const sideNames = [
-    { en: 'right wall', de: 'Wand rechts' },
-    { en: 'back wall', de: 'Rückwand' },
-    { en: 'left wall', de: 'Wand links' },
+    { en: 'right', de: 'Rechts' },
+    { en: 'back', de: 'Hinten' },
+    { en: 'left', de: 'Links' },
   ];
   let n = 0;
   const order = ['main', 'side', 'ground', 'ceiling'];
@@ -270,7 +336,7 @@ export function planRoomOutputs(state: SessionState, ctx: ReducerContext): numbe
   for (const f of faces) {
     const label =
       f.role === 'main'
-        ? 'Hauptwand'
+        ? 'Vorne'
         : f.role === 'ground'
           ? 'Boden'
           : f.role === 'ceiling'
@@ -285,6 +351,15 @@ export function planRoomOutputs(state: SessionState, ctx: ReducerContext): numbe
       ctx,
     );
     activeProfile(o).pose = poseForSurface(state.surfaces, f.id, new Set());
+    const wall: RoomWall | null =
+      f.role === 'main'
+        ? 'vorne'
+        : f.role === 'ground'
+          ? 'boden'
+          : f.role === 'ceiling'
+            ? 'decke'
+            : ((['rechts', 'hinten', 'links'] as const)[(side - 1) % 3] ?? null);
+    if (wall) activeProfile(o).walls = [wall];
     o.testPattern = { mode: 'off', until: 0 };
     covered.add(f.id);
     n++;
@@ -657,17 +732,25 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
     }
     case 'output.setAnchors': {
       const o = requireOutput(state, cmd.outputId);
+      activeProfile(o).anchors = cmd.anchors;
+      solveMeasuredRoom(state, cmd.quick ? o.id : null);
+      return res(`${o.name}: ${cmd.anchors.length} points measured`);
+    }
+    case 'output.setWalls': {
+      const o = requireOutput(state, cmd.outputId);
       const prof = activeProfile(o);
-      prof.anchors = cmd.anchors;
-      {
-        const ref = prof.referenceResolution;
-        const aspect = ref ? ref.w / ref.h : 16 / 9;
-        const fold = roomFold(state.surfaces);
-        const start = prof.pose ?? poseForSurface(state.surfaces, null, new Set());
-        const r = start ? solvePose(start, aspect, cmd.anchors, fold) : null;
-        if (r) prof.pose = r.pose;
-      }
-      return res(`${o.name}: ${cmd.anchors.length} corners measured`);
+      const order = ['links', 'vorne', 'rechts', 'hinten', 'boden', 'decke'];
+      const walls = [...new Set(cmd.walls)].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+      prof.walls = walls;
+      if (!walls.length) return res(`${o.name}: no sides`);
+      const ref = prof.referenceResolution;
+      const pose = poseForWalls(roomFold(state.surfaces), walls, ref ? ref.w / ref.h : 16 / 9);
+      if (!pose) return res(`${o.name}: these sides cannot be covered by one projector`);
+      prof.pose = pose;
+      // the projector is set up anew: earlier measurements no longer belong to it
+      prof.anchors = [];
+      if (/^Beamer( |$)/.test(o.name) || /^Projector/.test(o.name)) o.name = wallsName(walls);
+      return res(`${o.name}: covers ${walls.join(', ')}`);
     }
     case 'output.align': {
       const o = requireOutput(state, cmd.outputId);
@@ -708,6 +791,8 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
         if (slot) {
           o.name = slot.name;
           activeProfile(o).pose = slot.pose;
+          if (slot.walls) activeProfile(o).walls = slot.walls;
+          activeProfile(o).anchors = [];
         } else if (!live(o)) {
           state.outputs = state.outputs.filter((x) => x.id !== o.id);
         }
@@ -717,6 +802,7 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
         const f = fold.faces.find((x) => x.id === slot.faceId);
         const o = createOutput(state, slot.name, f ? { ...f.rect } : { x: 0, y: 0, w: 4, h: 2.25 }, ctx);
         activeProfile(o).pose = slot.pose;
+        if (slot.walls) activeProfile(o).walls = slot.walls;
         o.testPattern = { mode: 'off', until: 0 };
       }
       return res(`${slots.length} projectors arranged`);

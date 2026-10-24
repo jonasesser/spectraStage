@@ -126,10 +126,14 @@ export function completeRoom(surfaces: readonly Surface[]): Surface[] {
       playback: structuredClone(mainS.playback),
     } as Surface);
   const walls = lay.filter((x) => x.role === 'main' || x.role === 'side');
+  // room depth = width of the walls next to the main wall (measured depth for added walls)
+  const depth = walls.find((w) => w.role === 'side')?.rect.w ?? mainS.roomDepth ?? m.w;
   let right = Math.max(...walls.map((w) => w.rect.x + w.rect.w));
   for (let i = walls.length; i < 4; i++) {
-    add(`wall${i + 1}`, 'wall', 'side', { x: right, y: m.y, w: m.w, h: m.h });
-    right += m.w;
+    // right and left walls are as wide as the room is deep, the back wall like the main wall
+    const w = i % 2 === 1 ? depth : m.w;
+    add(`wall${i + 1}`, 'wall', 'side', { x: right, y: m.y, w, h: m.h });
+    right += w;
   }
   const bottom = m.y + m.h;
   const hasFloor = lay.some(
@@ -139,8 +143,6 @@ export function completeRoom(surfaces: readonly Surface[]): Surface[] {
       x.rect.x + x.rect.w > m.x &&
       Math.abs(x.rect.y - bottom) < 0.6,
   );
-  // room depth = width of the walls next to the main wall
-  const depth = walls.find((w) => w.role === 'side')?.rect.w ?? m.w;
   if (!hasFloor) add('floor', 'floor', 'ground', { x: m.x, y: bottom, w: m.w, h: depth });
   else {
     // the projected floor is shallower than the room: fill the rest of the floor virtually

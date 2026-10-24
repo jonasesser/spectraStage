@@ -88,11 +88,15 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
 
 - **Quick setup**: 6 projectors (one per side), 1 projector for 3 walls, 3 walls + floor + ceiling,
   1 projector wall + floor, main wall only. Connected projectors are re-aimed, planned ones replaced.
-- **📐 Measure corners**: the projector shows the room edges and numbered room corners as the app
-  thinks they lie. Pick a corner (number in the 3D view or the chip), move the orange cross with
-  the touchpad/arrows until it sits on the real corner. From 4 corners the app computes position,
-  aim, zoom, rotation and lens shift of the projector (Levenberg–Marquardt); the glowing edges then
-  lie on the real edges. More corners (also on other walls) = more precise; accuracy is shown in px.
+- **The room has 6 fixed sides** (front, right, back, left, floor, ceiling) – nothing to add or measure.
+  Choose per projector which sides it lights (Projectors tab); it is set up to cover them
+  (opposite sides are refused – that needs a second projector).
+- **Calibrate** (projectors in the 3D room) opens the guided measuring: step by step the projector
+  highlights a room corner or a room edge (orange) and shows a cross; move it from the phone onto
+  the real corner/edge, “fits – next” or “not visible – skip”. A corner gives 2 equations, a point
+  on an edge 1; from 7 the projector is computed. All projectors are solved together and – when the
+  room is built around one main wall – also the room's width and depth (height fixed), so nobody
+  enters dimensions. Dragging refines quickly, “next” runs the full solve.
 - **📦 Objects**: add a box or a pillar; while it is selected every projector shows its yellow
   outline – drag it on the floor in the 3D view, nudge and size it until the outline sits on the real
   object. Looks: glow, fire flicker, spooky colours, glowing edges, dark. Objects hide the walls

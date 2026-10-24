@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   activeProfile,
+  anchorWalls,
   measureCount,
   projectPose,
   roomCorners,
   roomEdges,
   roomFold,
+  wallsOfPose,
   type Anchor,
   type Output,
   type Pose,
@@ -14,6 +16,7 @@ import {
 } from '@spectrastage/shared';
 import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
+import { WallPicker } from './WallPicker.tsx';
 
 interface Target {
   id: string;
@@ -113,7 +116,9 @@ export function MeasureWizard({
   const timer = useRef(0);
   const pending = useRef<Anchor[] | null>(null);
 
-  const send = (list: Anchor[], final: boolean) => {
+  /** drag: throttled, fast pose refine · now: immediately, fast · full: immediately, full solve. */
+  const send = (list: Anchor[], how: 'drag' | 'now' | 'full') => {
+    const final = how !== 'drag';
     setDraft(list);
     pending.current = list;
     const flush = () => {
@@ -121,9 +126,11 @@ export function MeasureWizard({
       const l = pending.current;
       if (!l) return;
       pending.current = null;
-      void store.send({ t: 'output.setAnchors', outputId: output.id, anchors: l }).finally(() => {
-        if (!pending.current) setDraft(null);
-      });
+      void store
+        .send({ t: 'output.setAnchors', outputId: output.id, anchors: l, quick: how !== 'full' })
+        .finally(() => {
+          if (!pending.current) setDraft(null);
+        });
     };
     if (final) {
       window.clearTimeout(timer.current);
@@ -131,7 +138,11 @@ export function MeasureWizard({
     } else if (!timer.current) timer.current = window.setTimeout(flush, 90);
   };
 
-  const targets = pose ? targetsFor(state, pose, aspect, L) : [];
+  const walls = profile.walls ?? (pose ? wallsOfPose(roomFold(state.surfaces), pose, aspect) : []);
+  // only what belongs to the sides this projector lights (if chosen)
+  const targets = (pose ? targetsFor(state, pose, aspect, L) : []).filter(
+    (t) => !walls.length || anchorWalls(t.id).some((w) => walls.includes(w)),
+  );
   const current = targets.find((t) => !history.includes(t.id) && !skipped.has(t.id)) ?? null;
   const [active, setActive] = useState<string | null>(null);
   const target = targets.find((t) => t.id === active) ?? current;
@@ -153,7 +164,7 @@ export function MeasureWizard({
         ...anchors,
         { c: target.id, p: target.p, ...(target.q ? { q: target.q } : {}), u: target.u, v: target.v },
       ],
-      true,
+      'now',
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target?.id]);
@@ -168,23 +179,23 @@ export function MeasureWizard({
       </p>
     );
 
-  const move = (u: number, v: number, final: boolean) => {
+  const move = (u: number, v: number, how: 'drag' | 'now' | 'full') => {
     if (!target) return;
     const c = (x: number) => Math.min(1.2, Math.max(-0.2, x));
     send(
       anchors.map((a) => (a.c === target.id ? { ...a, u: c(u), v: c(v) } : a)),
-      final,
+      how,
     );
   };
   const nudge = (dx: number, dy: number) => {
     if (!anchor) return;
     const k = fine ? 0.0006 : 0.004;
-    move(anchor.u + dx * k, anchor.v + dy * k * aspect, true);
+    move(anchor.u + dx * k, anchor.v + dy * k * aspect, 'drag');
   };
   const scale = () => (fine ? 0.06 : 0.35) / (padRef.current?.clientWidth || 300);
   const next = () => {
     if (!target) return;
-    send(anchors, true);
+    send(anchors, 'full');
     setHistory((h) => [...h.filter((x) => x !== target.id), target.id]);
     setActive(null);
   };
@@ -192,7 +203,7 @@ export function MeasureWizard({
     if (!target) return;
     send(
       anchors.filter((a) => a.c !== target.id),
-      true,
+      'full',
     );
     setSkipped((s) => new Set(s).add(target.id));
     setActive(null);
@@ -205,7 +216,7 @@ export function MeasureWizard({
   };
   const restart = () => {
     if (!window.confirm(L('Remove all measured points?', 'Alle gemessenen Punkte entfernen?'))) return;
-    send([], true);
+    send([], 'full');
     setHistory([]);
     setSkipped(new Set());
     setActive(null);
@@ -230,6 +241,7 @@ export function MeasureWizard({
   return (
     <div className="panel stack">
       <strong>📐 {L('Measure projector', 'Beamer einmessen')}</strong>
+      <WallPicker output={output} state={state} L={L} />
       {target ? (
         <>
           <div className="muted small">
@@ -259,14 +271,14 @@ export function MeasureWizard({
               const d = dragRef.current;
               if (!d) return;
               const k = scale();
-              move(d.u + (e.clientX - d.x) * k, d.v + (e.clientY - d.y) * k * aspect, false);
+              move(d.u + (e.clientX - d.x) * k, d.v + (e.clientY - d.y) * k * aspect, 'drag');
             }}
             onPointerUp={(e) => {
               const d = dragRef.current;
               dragRef.current = null;
               if (!d) return;
               const k = scale();
-              move(d.u + (e.clientX - d.x) * k, d.v + (e.clientY - d.y) * k * aspect, true);
+              move(d.u + (e.clientX - d.x) * k, d.v + (e.clientY - d.y) * k * aspect, 'now');
             }}
             onPointerCancel={() => (dragRef.current = null)}
           >
@@ -317,7 +329,7 @@ export function MeasureWizard({
             )
           : `${L('Projector computed', 'Beamer berechnet')} · ${anchors.length} ${L('points', 'Punkte')}${
               err !== null ? ` · ${L('accuracy', 'Genauigkeit')} ±${Math.round(err)} px` : ''
-            }`}
+            } · ${L('more points = more precise, “Done” any time', 'mehr Punkte = genauer, „Fertig“ jederzeit')}`}
       </div>
       <div className="row">
         {anchors.length > 0 && (

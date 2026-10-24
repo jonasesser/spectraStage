@@ -132,8 +132,13 @@ export const ProfileSchema = z.object({
     .optional(),
   masks: z.array(MaskSchema).max(24),
   pose: PoseSchema.nullable().optional(),
-  /** Measured room corners → the pose is computed from them (≥ 4). */
-  anchors: z.array(AnchorSchema).max(24).optional(),
+  /** Sides of the room this projector covers (chosen by the user; the pose is set to cover them). */
+  walls: z
+    .array(z.enum(['vorne', 'rechts', 'hinten', 'links', 'boden', 'decke']))
+    .max(6)
+    .optional(),
+  /** Measured room corners and edge points → the pose is computed from them. */
+  anchors: z.array(AnchorSchema).max(40).optional(),
   updatedAt: z.number(),
 });
 export type Profile = z.infer<typeof ProfileSchema>;
@@ -251,6 +256,8 @@ export const SurfaceSchema = z.object({
   intensity: unit,
   /** Which part of a world scene this surface shows (auto = by stage position). */
   role: z.enum(['auto', 'main', 'side', 'ground', 'ceiling']).optional(),
+  /** Main wall only: depth of the room (m) for the walls the app adds around it (from measuring). */
+  roomDepth: z.number().min(0.3).max(60).optional(),
 });
 export type Surface = z.infer<typeof SurfaceSchema>;
 
@@ -522,7 +529,19 @@ export const CommandSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('output.setViewport'), outputId: id, viewport: ViewportSchema }),
   z.object({ t: z.literal('output.setPose'), outputId: id, pose: PoseSchema.nullable() }),
   /** Measured corners; with ≥ 4 the pose is solved from them. */
-  z.object({ t: z.literal('output.setAnchors'), outputId: id, anchors: z.array(AnchorSchema).max(24) }),
+  z.object({
+    t: z.literal('output.setAnchors'),
+    outputId: id,
+    anchors: z.array(AnchorSchema).max(40),
+    /** While a marker is dragged: only refine the pose (fast), the full solve follows on release. */
+    quick: z.boolean().optional(),
+  }),
+  /** Choose which sides of the room a projector covers; it is set up to cover them. */
+  z.object({
+    t: z.literal('output.setWalls'),
+    outputId: id,
+    walls: z.array(z.enum(['vorne', 'rechts', 'hinten', 'links', 'boden', 'decke'])).max(6),
+  }),
   /** Start/stop corner measuring on the projector (sel = highlighted corner). */
   z.object({
     t: z.literal('output.align'),

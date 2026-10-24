@@ -53,7 +53,7 @@ test('anonymous show: pair two projectors, play scenes, effects, creatures, blac
   await approve(phone, 'Garage'); // attaches to the planned projector of the main wall
   await approve(phone, 'Hauswand', 'Wand');
   await expect(garage.getByText(/Warte auf Freigabe/)).toBeHidden({ timeout: 10_000 });
-  await expect(phone.locator('section.panel h2', { hasText: '📽 Beamer Hauptwand' })).toBeVisible();
+  await expect(phone.locator('section.panel h2', { hasText: '📽 Beamer Vorne' })).toBeVisible();
   await expect(phone.locator('section.panel h2', { hasText: '📽 Hauswand' })).toBeVisible();
 
   // turn the test pattern of the new projector off and let scenes play

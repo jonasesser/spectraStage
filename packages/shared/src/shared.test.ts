@@ -19,6 +19,11 @@ import {
   roomCorners,
   roomEdges,
   solvePose,
+  boxCorner,
+  boxFrame,
+  poseForWalls,
+  cornerWalls,
+  poseErrorPx,
   type V3,
   dirFromAngles,
   faceLocal,
@@ -41,6 +46,7 @@ import {
   completeRoom,
   placeNewSurface,
   tidyRoom,
+  polygonBBox,
 } from './stage.ts';
 import { normalizeCode, isValidCode, formatCode } from './codes.ts';
 
@@ -307,6 +313,60 @@ describe('reducer', () => {
       const q = projectPose(pose, 16 / 9, a.p)!;
       expect((q[0] + 1) / 2).toBeCloseTo(a.u, 3);
       expect((1 - q[1]) / 2).toBeCloseTo(a.v, 3);
+    }
+  });
+  it('measuring finds the room size by itself (nobody enters dimensions)', () => {
+    let s = base();
+    const c1 = ctx();
+    s = applyCommand(s, { t: 'surface.create', name: 'Wall', kind: 'wall' }, c1).state;
+    s = applyCommand(s, { t: 'output.create', name: 'A' }, c1).state;
+    s = applyCommand(s, { t: 'output.create', name: 'B' }, c1).state;
+    const fold0 = roomFold(s.surfaces);
+    const box = boxFrame(fold0)!;
+    expect(box).not.toBeNull();
+    const [W, D, H] = [box.w * 1.2, box.w * 0.7, box.h];
+    const corners = roomCorners(fold0);
+    const edges = roomEdges(fold0);
+    const truths = [
+      { ...aimPose([W * 0.5, H * 0.8, D * 0.95], [W * 0.5, H * 0.45, 0], 116, 0.01), shiftY: 0.15 },
+      aimPose([W * 0.2, H * 0.7, D * 0.3], [W, H * 0.4, D * 0.7], 95, -0.02),
+    ];
+    const inImg = (q: [number, number] | null) => !!q && Math.abs(q[0]) < 0.97 && Math.abs(q[1]) < 0.97;
+    truths.forEach((truth, k) => {
+      const anchors: { c: string; p: V3; q?: V3; u: number; v: number }[] = [];
+      for (const c of corners) {
+        const P = boxCorner(box, c.id, W, D, H)!;
+        const q = projectPose(truth, 16 / 9, P);
+        if (inImg(q)) anchors.push({ c: `c|${c.id}`, p: c.p, u: (q![0] + 1) / 2, v: (1 - q![1]) / 2 });
+      }
+      for (const e of edges) {
+        const [ka, kb] = e.id.split('|');
+        const A = boxCorner(box, ka!, W, D, H)!;
+        const B = boxCorner(box, kb!, W, D, H)!;
+        for (const [n, t] of [
+          ['A', 0.3],
+          ['B', 0.7],
+        ] as const) {
+          const q = projectPose(truth, 16 / 9, [
+            A[0] + (B[0] - A[0]) * t,
+            A[1] + (B[1] - A[1]) * t,
+            A[2] + (B[2] - A[2]) * t,
+          ]);
+          if (inImg(q))
+            anchors.push({ c: `e|${e.id}|${n}`, p: e.a, q: e.b, u: (q![0] + 1) / 2, v: (1 - q![1]) / 2 });
+        }
+      }
+      s = applyCommand(s, { t: 'output.setAnchors', outputId: s.outputs[k]!.id, anchors }, c1).state;
+    });
+    const main = s.surfaces[0]!;
+    const b = polygonBBox(main.polygon);
+    // width and depth come out of the measurements (no dimensions entered); the picture fit is
+    // what matters, so a few percent are fine
+    expect(Math.abs(b.w - W) / W).toBeLessThan(0.05);
+    expect(Math.abs(main.roomDepth! - D) / D).toBeLessThan(0.05);
+    for (const o of s.outputs) {
+      const pr = o.profiles[0]!;
+      expect(poseErrorPx(pr.pose!, 16 / 9, pr.anchors!)!).toBeLessThan(1);
     }
   });
   it('enforces owner-only commands', () => {
@@ -588,7 +648,7 @@ describe('corner measuring (projector pose from room corners)', () => {
   const corners = roomCorners(fold);
   it('finds the 8 corners of the room', () => {
     expect(corners).toHaveLength(8);
-    expect(corners[0]!.label).toContain('Hauptwand');
+    expect(corners[0]!.label).toBe('vorne links unten');
   });
   it('projectPose and poseRay are inverse', () => {
     const p = { ...aimPose([2, 1.5, 3], [2, 1, 0], 70, 0.1), shiftX: 0.1, shiftY: -0.4 };
@@ -614,7 +674,7 @@ describe('corner measuring (projector pose from room corners)', () => {
   it('finds the 12 edges of the room', () => {
     const e = roomEdges(fold);
     expect(e).toHaveLength(12);
-    expect(e.some((x) => x.label === 'Hauptwand / Boden')).toBe(true);
+    expect(e.some((x) => x.label === 'Vorne / Boden')).toBe(true);
   });
   it('five sides from one projector: visible corners plus points on the edges', () => {
     // projector at the back wall, sees main wall, both side walls, floor and ceiling
@@ -655,6 +715,22 @@ describe('corner measuring (projector pose from room corners)', () => {
       const b = projectPose(r.pose, 16 / 9, P)!;
       expect(Math.hypot(a[0] - b[0], a[1] - b[1]) * 960).toBeLessThan(3);
     }
+  });
+  it('a projector is set up to cover the sides chosen for it', () => {
+    const b = boxFrame(fold)!;
+    for (const walls of [['vorne'], ['links', 'vorne', 'rechts'], ['vorne', 'boden'], ['decke']] as const) {
+      const pose = poseForWalls(fold, walls)!;
+      expect(pose).not.toBeNull();
+      for (const c of corners) {
+        const n = cornerWalls(c.id).filter((w) => (walls as readonly string[]).includes(w)).length;
+        // transitions between chosen sides (or all corners of a single side) are in the picture
+        if (walls.length === 1 ? n < 1 : n < 2) continue;
+        const q = projectPose(pose, 16 / 9, boxCorner(b, c.id, b.w, b.d, b.h)!)!;
+        expect(Math.abs(q[0])).toBeLessThanOrEqual(1.0001);
+        expect(Math.abs(q[1])).toBeLessThanOrEqual(1.0001);
+      }
+    }
+    expect(poseForWalls(fold, ['vorne', 'hinten'])).toBeNull();
   });
   it('a single wall (4 coplanar corners) still lines up exactly', () => {
     const truth = aimPose([1.5, 1.0, 3.0], [2.1, 1.2, 0], 60, -0.05);

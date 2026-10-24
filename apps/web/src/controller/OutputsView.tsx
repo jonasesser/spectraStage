@@ -15,6 +15,7 @@ import { useShow, useStore } from './store.ts';
 import { Light, outputHealth, Sheet, Slider, kindLabel } from './ui.tsx';
 import { CalibrationEditor } from './CalibrationEditor.tsx';
 import { MeasureWizard } from './MeasureWizard.tsx';
+import { WallPicker } from './WallPicker.tsx';
 import { StagePreview } from './Preview.tsx';
 
 export function OutputsView() {
@@ -366,6 +367,11 @@ function OutputCard({
           {output.blackout ? L('Resume', 'Fortsetzen') : L('Blackout', 'Blackout')}
         </button>
       </div>
+      {profile.pose && (
+        <div style={{ marginTop: '0.75rem' }}>
+          <WallPicker output={output} state={state} L={L} />
+        </div>
+      )}
       {output.resolutionMismatch && (
         <div className="safety-note" style={{ marginTop: '0.75rem' }}>
           {L('The projector reports a new resolution', 'Der Beamer meldet eine neue Auflösung')} (
