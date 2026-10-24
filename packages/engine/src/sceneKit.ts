@@ -230,6 +230,11 @@ class KitScene implements SceneInstance {
       g.setTransform(s, 0, 0, s, 0, 0);
       g.save();
       this.opts.draw(g, this.state, frame);
+      if (this.ctx.overlay) {
+        g.save();
+        this.ctx.overlay(g, this.state, frame);
+        g.restore();
+      }
       g.restore();
       this.canvas.texture.needsUpdate = true;
       r.render(this.canvas.scene, CAMERA);

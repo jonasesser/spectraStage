@@ -142,26 +142,6 @@ const worldManifests: SceneManifest[] = [
     ['#1a0f3a', '#d24dff'],
   ),
   world(
-    'magicWorld',
-    ['Magic World', 'Zauberwelt'],
-    [
-      'A spirit portal on the main wall, pumpkin magic and ghosts around it, a magic path on the ground.',
-      'Geisterportal auf der Hauptwand, Kürbiszauber und Geister rundherum, Zauberweg am Boden.',
-    ],
-    '🔮',
-    ['#14062e', '#7dffd8'],
-  ),
-  world(
-    'monsterWorld',
-    ['Monster House', 'Monsterhaus'],
-    [
-      'Monsters peek out of the windows on the main wall, graveyard around it, tiny ghosts on the ground.',
-      'Monster gucken aus den Fenstern der Hauptwand, Friedhof rundherum, Mini-Geister am Boden.',
-    ],
-    '👹',
-    ['#1a1030', '#ffb347'],
-  ),
-  world(
     'neonWorld',
     ['Neon World (dusk)', 'Neonwelt (Dämmerung)'],
     [
@@ -573,9 +553,8 @@ export const halloweenManifest: ThemeManifest = {
       description: L('Pumpkin magic and a tiny ghost parade.', 'Kürbiszauber und eine Mini-Geisterparade.'),
       icon: '🪄',
       assignments: {
-        wall: { sceneId: 'magicWorld' },
-        floor: { sceneId: 'magicWorld' },
-        other: { sceneId: 'magicWorld' },
+        wall: { sceneId: 'pumpkinMagic' },
+        floor: { sceneId: 'tinyGhostParade' },
       },
       ambientActors: ['ghost', 'blackCat'],
     },
@@ -643,16 +622,10 @@ export const halloweenManifest: ThemeManifest = {
           transition: { type: 'fadeBlack', durationMs: 3000 },
         },
         {
-          sceneId: 'magicWorld',
+          sceneId: 'spookWorld',
           durationSec: 150,
           transition: { type: 'crossfade', durationMs: 3500 },
-          ambient: { effectIds: ['magicCircle', 'sparkles', 'ghostWave'], minGapSec: 20, maxGapSec: 40 },
-        },
-        {
-          sceneId: 'monsterWorld',
-          durationSec: 150,
-          transition: { type: 'crossfade', durationMs: 3500 },
-          ambient: { effectIds: ['windowKnock', 'boo', 'footprintChase'], minGapSec: 20, maxGapSec: 40 },
+          ambient: { effectIds: ['ghostWave', 'boo', 'gentleLightning'], minGapSec: 20, maxGapSec: 45 },
         },
         {
           sceneId: 'quietWorld',

@@ -8,6 +8,7 @@
 import type * as THREE from 'three';
 import type { ActorPose, BBox, ParamValues, Rng, SurfaceKind, WorldSurface } from '@spectrastage/shared';
 import type { SoundApi } from './sound.ts';
+import type { DrawState } from './sceneKit.ts';
 
 export interface FrameInfo {
   /** Seconds since the scene instance started (show-time based, may be negative before start). */
@@ -31,6 +32,11 @@ export interface SceneContext {
   quality: number;
   /** Where this surface sits in the shared stage world (all surfaces). */
   world?: WorldContext;
+  /**
+   * Extra Canvas2D layer drawn on top of the scene (canvas-based scenes) – used by worlds for
+   * events that cross surfaces, e.g. a cat jumping out of the house onto the driveway.
+   */
+  overlay?: (g: CanvasRenderingContext2D, s: DrawState, f: FrameInfo) => void;
 }
 
 /**

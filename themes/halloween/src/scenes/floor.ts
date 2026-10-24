@@ -11,7 +11,7 @@ import {
 } from '@spectrastage/engine';
 import type { DrawState, SceneModule } from '@spectrastage/engine';
 import { palette } from '../palette.ts';
-import { footprint, ghost, glowAt, glowSprite, pumpkin, px, spider, star } from '../shapes.ts';
+import { footprint, ghost, glowAt, pumpkin, px, spider, star } from '../shapes.ts';
 import { countOf, densityOf, mod, speedOf } from './common.ts';
 import { FBM_GLSL } from './glsl.ts';
 import { envPalette, FLOOR_FRAG, floorUniforms, paintLeaf } from './env.ts';
@@ -28,28 +28,6 @@ function wander(s: DrawState, u: number, id: number, margin = 0.08): { x: number
 function stopGo(k: number): number {
   const i = Math.floor(k);
   return i + smoothstep(0, 0.7, k - i);
-}
-
-function fogBlobs(
-  g: CanvasRenderingContext2D,
-  s: DrawState,
-  t: number,
-  color: string,
-  n: number,
-  alpha: number,
-): void {
-  const m = Math.min(s.w, s.h);
-  const sprite = glowSprite(color, 0.15);
-  g.save();
-  g.globalCompositeOperation = 'lighter';
-  for (let i = 0; i < n; i++) {
-    const r = m * (0.25 + 0.3 * hash01(i * 7 + s.seed));
-    const x = s.w * (-0.1 + 1.2 * mod(hash01(i * 3 + s.seed) + t * (0.006 + 0.01 * hash01(i)), 1));
-    const y = s.h * (0.1 + 0.8 * noise1(t * 0.03 + i * 4, s.seed + 3));
-    g.globalAlpha = alpha * (0.6 + 0.4 * Math.sin(t * 0.3 + i));
-    g.drawImage(sprite, x - r * 1.4, y - r, r * 2.8, r * 2);
-  }
-  g.restore();
 }
 
 function web(
@@ -98,16 +76,24 @@ const spidersAndFog: SceneModule = hybridScene(
   (s) => {
     const pal = palette(s.params);
     const env = envPalette(s.params);
-    return floorUniforms(env.fog, pal.accent, pal.accent, pal.secondary, 1.3 * densityOf(s), 0.8, speedOf(s));
+    // Less is more: thin ground haze, one web, a few spiders.
+    return floorUniforms(
+      env.fog,
+      pal.accent,
+      pal.accent,
+      pal.secondary,
+      0.5 * densityOf(s),
+      0.35,
+      speedOf(s),
+    );
   },
   (g, s, f) => {
     const pal = palette(s.params);
     const t = f.time * speedOf(s);
     const { w, h } = s;
     const m = Math.min(w, h);
-    web(g, 0, 0, m * 0.45, 0, Math.PI / 2, pal.ghost);
-    web(g, w, h, m * 0.4, Math.PI, Math.PI * 1.5, pal.ghost);
-    const n = countOf(s, 7, 3, 18);
+    web(g, 0, 0, m * 0.38, 0, Math.PI / 2, pal.ghost);
+    const n = countOf(s, 3, 1, 7);
     const size = px(s, 0.45, 0.06, 0.16);
     for (let i = 0; i < n; i++) {
       const v = 0.25 + 0.2 * hash01(i + s.seed);
@@ -122,8 +108,6 @@ const spidersAndFog: SceneModule = hybridScene(
       spider(g, size * (0.8 + 0.4 * hash01(i * 3)), k * 9, pal);
       g.restore();
     }
-    // fog in front, softer
-    fogBlobs(g, s, t + 100, pal.accent, countOf(s, 4, 2, 8), 0.14);
   },
   { shaderScale: 0.5 },
 );

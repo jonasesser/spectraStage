@@ -11,6 +11,7 @@ import { palette } from '../palette.ts';
 import { bat, px } from '../shapes.ts';
 import { speedOf } from './common.ts';
 import { envPalette, SKY_FRAG, skyUniforms } from './env.ts';
+import { drawWorldEvents } from './worldEvents.ts';
 
 /** Night sky seen from below – stars, drifting clouds, a few bats. For a ceiling. */
 export const nightSky: SceneModule = hybridScene(
@@ -47,36 +48,11 @@ export interface WorldParts {
 }
 
 export const WORLDS: Record<string, WorldParts> = {
-  spookWorld: {
-    main: 'hauntedHouse',
-    side: ['moonlitGraveyard', 'ghostParty', 'pumpkinMagic'],
-    ground: ['spidersAndFog'],
-  },
-  partyWorld: {
-    main: 'skeletonDisco',
-    side: ['ghostParty', 'pumpkinMagic'],
-    ground: ['pumpkinTrail'],
-  },
-  magicWorld: {
-    main: 'spiritPortal',
-    side: ['pumpkinMagic', 'ghostParty'],
-    ground: ['magicPath'],
-  },
-  monsterWorld: {
-    main: 'monsterWindows',
-    side: ['moonlitGraveyard', 'ghostParty'],
-    ground: ['tinyGhostParade'],
-  },
-  neonWorld: {
-    main: 'neonManor',
-    side: ['neonPumpkinPatch', 'neonParty'],
-    ground: ['neonFog'],
-  },
-  quietWorld: {
-    main: 'moonlitGraveyard',
-    side: ['ghostParty'],
-    ground: ['swirlingMist'],
-  },
+  // Walls are one continuous panorama (see panorama.ts); ground and ceiling are their own planes.
+  spookWorld: { main: 'spookPanorama', side: ['spookPanorama'], ground: ['spidersAndFog'] },
+  partyWorld: { main: 'partyPanorama', side: ['partyPanorama'], ground: ['pumpkinTrail'] },
+  neonWorld: { main: 'neonPanorama', side: ['neonPanorama'], ground: ['neonFog'] },
+  quietWorld: { main: 'quietPanorama', side: ['quietPanorama'], ground: ['ghostFootprints'] },
 };
 
 /** Which part scene a surface plays inside a world. */
@@ -97,7 +73,19 @@ export function worldScenes(byId: Record<string, SceneModule>): SceneModule[] {
       id,
       create: (ctx) => {
         const mod = byId[partFor(parts, ctx)] ?? main!;
-        return mod.create(ctx);
+        // Parts learn which world they belong to (for world events that cross surfaces).
+        const tag = (p: SceneContext['params']) => ({ ...p, worldId: id });
+        const inst = mod.create({
+          ...ctx,
+          params: tag(ctx.params),
+          overlay: (g, s, f) => drawWorldEvents(g, s, palette(s.params), f.time * speedOf(s)),
+        });
+        return {
+          render: (target, frame) => inst.render(target, frame),
+          resize: (w, h, ppm) => inst.resize(w, h, ppm),
+          setParams: (p) => inst.setParams(tag(p)),
+          dispose: () => inst.dispose(),
+        };
       },
       ambientSound: main?.ambientSound,
     } satisfies SceneModule;
