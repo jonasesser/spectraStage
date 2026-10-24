@@ -16,6 +16,9 @@ import {
   dancePose,
   footprint,
   fuzzySpider,
+  cat,
+  glowAt,
+  glowEllipse,
   leaf,
   pawPrint,
   ghost,
@@ -262,6 +265,46 @@ function mixHexHex(a: string, b: string, t: number): string {
   return '#' + m.map((v) => v.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * Neon ghost like in the reference: half transparent, lavender, with a strong glow and a
+ * glowing veil trailing behind it.
+ */
+function neonGhost(
+  g: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  t: number,
+  face: GhostFace,
+  mirror: boolean,
+) {
+  const back = mirror ? 1 : -1;
+  for (let k = 0; k < 3; k++) {
+    const ox = x + back * size * (0.35 + k * 0.32);
+    const oy = y + size * (0.15 + k * 0.06) + Math.sin(t * 2 + k) * size * 0.05;
+    glowEllipse(
+      g,
+      ox,
+      oy,
+      size * (0.55 - k * 0.1),
+      size * (0.28 - k * 0.05),
+      k % 2 ? '#d04dff' : '#a9b8ff',
+      0.45 - k * 0.1,
+    );
+  }
+  glowAt(g, x, y, size * 1.2, '#b98cff', 0.35);
+  ghost(g, x, y, size, {
+    color: '#e6dcff',
+    t,
+    alpha: 0.72,
+    face,
+    wave: Math.sin(t * 2) * 0.6,
+    glow: 2.4,
+    mirror,
+    blush: '#ff9ac8',
+  });
+}
+
 /** Neon: purple glow at the bottom of the walls = where the glowing floor begins. */
 const NEON_SEAM = '#3a1468';
 
@@ -289,15 +332,7 @@ function drawBigCast(
     const Y = top + dy * U + Math.sin(t * 0.8 + i) * U * 0.04;
     const size = U * 0.3 * k;
     if (!visible(X, Y, size)) return;
-    ghost(g, px(F, X), py(F, Y), size * F.ppm, {
-      color: pal.ghost,
-      t: t + i,
-      face: FACES[i % 4],
-      wave: Math.sin(t * 2 + i) * 0.6,
-      glow: 1.4,
-      mirror: dx > 0,
-      blush: '#ff9ac8',
-    });
+    neonGhost(g, px(F, X), py(F, Y), size * F.ppm, t + i, FACES[i % 4]!, dx > 0);
   });
   const beat = (t * 108) / 60;
   [-0.62, -0.32, 0.36, 0.66].forEach((dx, i) => {
@@ -514,6 +549,43 @@ function paintStatic(s: DrawState, F: Frame, env: EnvPalette, o: PanoOpts): Stat
     g.closePath();
     g.fill();
 
+    // --- neon: glowing green vines along the ground (world-continuous)
+    if (env.neon) {
+      for (const k of [0, 1]) {
+        const vy = (X: number) =>
+          F.groundY + U * (0.045 + k * 0.05) + U * 0.02 * ridge(F, X, 30 + k, U * 0.5);
+        const n2 = Math.max(24, Math.round(w / 8));
+        g.lineCap = 'round';
+        for (const [lw, col] of [
+          [0.022, 'rgba(125,255,77,0.25)'],
+          [0.008, '#7dff4d'],
+        ] as const) {
+          g.strokeStyle = col;
+          g.lineWidth = Math.max(1, U * lw * F.ppm);
+          g.beginPath();
+          for (let i = 0; i <= n2; i++) {
+            const X = r.x + (r.w * i) / n2;
+            if (i === 0) g.moveTo(px(F, X), py(F, vy(X)));
+            else g.lineTo(px(F, X), py(F, vy(X)));
+          }
+          g.stroke();
+        }
+        // curls
+        cells(F, U * 0.35, left, right, (idx, X) => {
+          if (h01(F, idx, 90 + k) > 0.6) return;
+          const cx = px(F, X);
+          const cy = py(F, vy(X));
+          const rr = U * 0.025 * F.ppm;
+          g.strokeStyle = '#9dff6a';
+          g.lineWidth = Math.max(1, U * 0.005 * F.ppm);
+          g.beginPath();
+          g.arc(cx, cy - rr, rr, Math.PI / 2, Math.PI / 2 + Math.PI * 1.6);
+          g.stroke();
+          addGlow(g, cx, cy - rr, rr * 3, '#7dff4d', 0.25);
+        });
+      }
+    }
+
     // --- graves in the lawn
     if (o.graves > 0) {
       const kinds: StoneKind[] = ['round', 'cross', 'square', 'round', 'obelisk'];
@@ -643,9 +715,10 @@ function worldFog(
   alpha: number,
   salt: number,
   speed: number,
+  color = env.fog,
 ) {
   for (let k = 0; k < 2; k++) {
-    const tex = fogTexture(env.fog, salt + k * 31);
+    const tex = fogTexture(color, salt + k * 31);
     const want = F.U * (3 + k * 2);
     const tw = F.wrap ? F.P / Math.max(1, Math.round(F.P / want)) : want;
     const off = mod(t * speed * F.U * (0.05 + k * 0.035), tw);
@@ -784,6 +857,16 @@ function panoDraw(o: PanoOpts) {
           (env.neon ? 0.38 : 0.24) * flick * breathe,
         );
         addGlow(g, x + win.w / 2, y + win.h * 0.55, win.w * 0.7, env.winCore, 0.12 * flick * breathe);
+        if (o.big && win.shape !== 'round' && hash01(i * 29 + F.seed) < 0.35) {
+          // black cat silhouette sitting in the lit window
+          g.save();
+          winPath(g, x, y, win.w, win.h, win.shape);
+          g.clip();
+          g.translate(x + win.w / 2, y + win.h * 0.82);
+          cat(g, Math.min(win.w, win.h) * 0.8, 0, false, t + i, pal);
+          g.restore();
+          return;
+        }
         if (win.shape === 'round' || hash01(i * 13 + F.seed) > (o.monsters ? 0.75 : 0.4)) return;
         const period = 8 + hash01(F.seed + i * 31) * 10;
         const ph = mod(t / period + hash01(F.seed + i * 17), 1);
@@ -912,8 +995,15 @@ function panoDraw(o: PanoOpts) {
     }
 
     // fog drifting across all walls
-    worldFog(g, F, env, F.groundY + U * 0.01, 0.1, t, 0.28, F.seed + 3, 0.6);
-    worldFog(g, F, env, r.y + U * 0.97, 0.08, t + 40, 0.15, F.seed + 7, 1);
+    if (env.neon) {
+      // glowing neon veils over the ground: green and magenta
+      worldFog(g, F, env, F.groundY + U * 0.02, 0.16, t, 0.35, F.seed + 3, 0.6, '#7dff4d');
+      worldFog(g, F, env, F.groundY - U * 0.04, 0.2, t + 20, 0.4, F.seed + 5, 0.4, '#d04dff');
+      worldFog(g, F, env, r.y + U * 0.97, 0.1, t + 40, 0.35, F.seed + 7, 1, '#ff8a2e');
+    } else {
+      worldFog(g, F, env, F.groundY + U * 0.01, 0.1, t, 0.28, F.seed + 3, 0.6);
+      worldFog(g, F, env, r.y + U * 0.97, 0.08, t + 40, 0.15, F.seed + 7, 1);
+    }
 
     // free-flying ghosts – they cross from one wall onto the next
     const ng = Math.round((F.P / U) * 0.22 * o.ghosts * d);
@@ -925,14 +1015,25 @@ function panoDraw(o: PanoOpts) {
       const Y = F.hzY - U * (0.2 + 0.25 * hash01(i * 17)) + Math.sin(t * (0.8 + hash01(i)) + i) * U * 0.04;
       for (const X of copies(X0)) {
         if (!visible(X, Y, size)) continue;
-        ghost(g, px(F, X), py(F, Y), size * F.ppm, {
-          color: pal.ghost,
-          t: t + i,
-          alpha: 0.85,
-          face: FACES[(i + Math.floor(t / 5)) % FACES.length],
-          wave: Math.sin(t * 5 + i) * 0.7,
-          mirror: dir < 0,
-        });
+        if (env.neon)
+          neonGhost(
+            g,
+            px(F, X),
+            py(F, Y),
+            size * F.ppm,
+            t + i,
+            FACES[(i + Math.floor(t / 5)) % FACES.length]!,
+            dir < 0,
+          );
+        else
+          ghost(g, px(F, X), py(F, Y), size * F.ppm, {
+            color: pal.ghost,
+            t: t + i,
+            alpha: 0.85,
+            face: FACES[(i + Math.floor(t / 5)) % FACES.length],
+            wave: Math.sin(t * 5 + i) * 0.7,
+            mirror: dir < 0,
+          });
       }
     }
   };
@@ -944,7 +1045,12 @@ export function panoramaScene(id: string, o: PanoOpts): SceneModule {
     SKY_FRAG,
     (s) => {
       const env = o.neon ? envPalette({ ...s.params, mood: 'neon' }) : envPalette(s.params);
-      return skyUniforms(s, env, { moon: [0.8, 0.2], moonR: 0.075, horizonY: 0.25, clouds: 0.9 }, speedOf(s));
+      return skyUniforms(
+        s,
+        env,
+        { moon: [0.8, 0.2], moonR: env.neon ? 0.12 : 0.075, horizonY: 0.25, clouds: 0.9 },
+        speedOf(s),
+      );
     },
     panoDraw(o),
     { ambientSound: (snd) => snd.ambience('wind', 0.035), shaderScale: 0.5 },
@@ -1169,6 +1275,20 @@ export const neonGround: SceneModule = hybridScene(
     top.addColorStop(1, 'rgba(58,20,104,0)');
     g.fillStyle = top;
     g.fillRect(0, 0, s.w, s.h * 0.12);
+    // drifting neon veils over the floor: green and orange patches like in the reference
+    for (let i = 0; i < 5; i++) {
+      const X = r.x + r.w * (0.5 + 0.45 * Math.sin(t * (0.04 + 0.01 * i) + i * 2.3));
+      const Y = r.y + r.h * (0.5 + 0.45 * Math.cos(t * (0.035 + 0.008 * i) + i * 1.7));
+      glowEllipse(
+        g,
+        px(F, X),
+        py(F, Y),
+        r.w * 0.22 * F.ppm,
+        r.h * 0.12 * F.ppm,
+        i % 2 ? '#ff8a2e' : '#5dff6a',
+        0.22,
+      );
+    }
     // paw-print trails from the door across the floor (world meters)
     const end = r.y + r.h;
     for (let k = 0; k < 2; k++) {
@@ -1207,14 +1327,10 @@ export const neonGround: SceneModule = hybridScene(
       const u = mod(t / (12 + i * 3) + i * 0.37, 1);
       const X = r.x + r.w * (0.2 + 0.6 * noise1(t * 0.05 + i * 9, F.seed));
       const Y = r.y + r.h * (0.25 + 0.5 * noise1(t * 0.05 + i * 9 + 40, F.seed)) - u * 0.2;
-      ghost(g, px(F, X), py(F, Y), 0.5 * F.ppm, {
-        color: pal.ghost,
-        t: t + i,
-        alpha: Math.sin(u * Math.PI),
-        face: FACES[i],
-        glow: 1.5,
-        blush: '#ff9ac8',
-      });
+      g.save();
+      g.globalAlpha = Math.sin(u * Math.PI);
+      neonGhost(g, px(F, X), py(F, Y), 0.5 * F.ppm, t + i, FACES[i]!, i % 2 === 0);
+      g.restore();
       const sx = r.x + r.w * (0.1 + 0.8 * noise1(t * 0.03 + i * 10, F.seed + 5));
       const sy = r.y + r.h * (0.15 + 0.75 * noise1(t * 0.03 + i * 10 + 50, F.seed + 6));
       const sx2 = r.x + r.w * (0.1 + 0.8 * noise1(t * 0.03 + i * 10 + 0.05, F.seed + 5));

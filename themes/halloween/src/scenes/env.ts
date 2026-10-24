@@ -244,6 +244,7 @@ uniform vec3 uTop; uniform vec3 uMid; uniform vec3 uHor;
 uniform vec3 uCloudD; uniform vec3 uCloudL; uniform vec3 uMoonCol; uniform vec3 uGlow; uniform vec3 uFogCol;
 uniform vec2 uMoon; uniform float uMoonR; uniform float uClouds; uniform float uStars; uniform float uFog;
 uniform float uHorizonY; uniform float uSpeed; uniform float uCloudBand; uniform float uNeon;
+uniform vec3 uVeilA; uniform vec3 uVeilB; uniform vec3 uVeilC;
 uniform float uWorldOn; uniform vec4 uWR; uniform vec2 uMoonW; uniform float uWrapX; uniform float uWrapW;
 varying vec2 vUv;
 ${FBM_GLSL}
@@ -329,6 +330,29 @@ void main() {
       col = mix(col, cc, c * (0.82 - fk * 0.12) * mix(0.15, 1.0, smoothstep(0.95, 1.8, md)));
     }
   }
+  // --- neon veils (blacklight look): big swirling green / magenta curtains and an orange
+  //     glow around the moon, in world coordinates so they flow across all walls
+  if (uNeon > 0.5) {
+    vec2 vq = vec2(p.x * 0.8, p.y * 1.4);
+    vec2 w1 = vec2(fbm3(vq * 1.3 + vec2(t * 0.05, 0.0) + uSeed), fbm3(vq * 1.3 + vec2(3.1, t * 0.04)));
+    float v1 = fbm4(vq + 1.8 * w1 + vec2(t * 0.03, 0.0));
+    float v2 = fbm4(vq * 1.6 - 1.3 * w1 + vec2(-t * 0.025, 5.0));
+    if (seam > 0.0) {
+      v1 = mix(v1, fbm4(vq - vec2(uWrapW * 0.8, 0.0) + 1.8 * w1 + vec2(t * 0.03, 0.0)), seam);
+      v2 = mix(v2, fbm4((vq - vec2(uWrapW * 0.8, 0.0)) * 1.6 - 1.3 * w1 + vec2(-t * 0.025, 5.0)), seam);
+    }
+    float sky = smoothstep(uHorizonY - 0.05, uHorizonY + 0.25, uv.y);
+    float a1 = smoothstep(0.48, 0.78, v1) * sky;
+    float a2 = smoothstep(0.5, 0.8, v2) * sky;
+    col = mix(col, uVeilA, a1 * 0.7);
+    col = mix(col, uVeilB, a2 * 0.65);
+    // bright filament edges
+    col += uVeilA * smoothstep(0.03, 0.0, abs(v1 - 0.62)) * 0.2 * sky;
+    col += uVeilB * smoothstep(0.03, 0.0, abs(v2 - 0.64)) * 0.2 * sky;
+    // orange moon glow washing over the sky
+    col += uVeilC * 0.45 * exp(-md * 0.35);
+    col = max(col, uMid * 0.6);
+  }
   // --- ground fog band
   if (uFog > 0.0) {
     vec2 fq = vec2(p.x * 1.6 + t * 0.03, uv.y * 7.0 - t * 0.01) + uSeed;
@@ -402,6 +426,9 @@ function skyBase(s: DrawState, env: EnvPalette, o: SkyOpts, speed = 1) {
     uCloudBand: o.cloudBand ?? 0.55,
     uSpeed: speed,
     uNeon: env.neon ? 1 : 0,
+    uVeilA: v3('#5dff6a'),
+    uVeilB: v3('#d04dff'),
+    uVeilC: v3('#ff8a2e'),
   };
 }
 
