@@ -446,9 +446,39 @@ export function Room3D({
         >
           ＋ {L('Plan projector', 'Beamer planen')}
         </button>
-        <button className="btn small" onClick={() => store.send({ t: 'output.planRoom' })}>
-          🧊 {L('One projector per room side', 'Je Raumseite ein Beamer')}
-        </button>
+      </div>
+      <div className="row">
+        <span className="muted small">{L('Quick setup:', 'Schnell-Aufstellung:')}</span>
+        {(
+          [
+            ['sides', '🧊 ' + L('6 projectors, one per side', '6 Beamer, je Seite einer')],
+            ['threeWalls', '↔️ ' + L('1 projector, 3 walls', '1 Beamer für 3 Wände')],
+            ['threeWallsPlus', '↔️ ' + L('3 walls + floor + ceiling', '3 Wände + Boden + Decke')],
+            ['wallFloor', '📐 ' + L('1 projector, wall + floor', '1 Beamer Wand + Boden')],
+            ['mainOnly', '🏠 ' + L('Main wall only', 'Nur Hauptwand')],
+          ] as const
+        ).map(([layout, label]) => (
+          <button
+            key={layout}
+            className="btn small"
+            onClick={() => {
+              if (
+                state.outputs.length &&
+                !window.confirm(
+                  L(
+                    'Replace the planned projectors with this setup? Connected projectors are re-aimed.',
+                    'Geplante Beamer durch diese Aufstellung ersetzen? Verbundene Beamer werden neu ausgerichtet.',
+                  ),
+                )
+              )
+                return;
+              drafts.current = {};
+              store.send({ t: 'output.arrange', layout });
+            }}
+          >
+            {label}
+          </button>
+        ))}
       </div>
       <div className="row" role="tablist">
         {(
@@ -483,7 +513,19 @@ export function Room3D({
       )}
       {sel && selPose && (
         <div className="panel stack" onPointerUp={commit} onKeyUp={commit}>
-          <strong>📽 {sel.name}</strong>
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <strong>📽 {sel.name}</strong>
+            <button
+              className="btn small danger"
+              onClick={() => {
+                if (!window.confirm(L(`Remove ${sel.name}?`, `${sel.name} entfernen?`))) return;
+                delete drafts.current[sel.id];
+                store.send({ t: 'output.delete', outputId: sel.id });
+              }}
+            >
+              🗑 {L('Remove', 'Entfernen')}
+            </button>
+          </div>
           <Slider
             label={L('Picture size (zoom)', 'Bildgröße (Zoom)')}
             value={selPose.fov}

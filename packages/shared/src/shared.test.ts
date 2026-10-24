@@ -11,7 +11,17 @@ import { playlistPosition, activeScene, ambientSchedule, itemCueSchedule } from 
 import type { Playlist, SessionState, Surface } from './schema.ts';
 import { applyCommand, createInitialState, CommandError, type ReducerContext } from './reducer.ts';
 import { createCatalog, type ThemeManifest } from './theme.ts';
-import { dirFromAngles, faceLocal, facePoint, mainAzimuth, roomFold, roomHit } from './room.ts';
+import {
+  arrangementPoses,
+  dirFromAngles,
+  faceLocal,
+  facePoint,
+  mainAzimuth,
+  poseDir,
+  roomFold,
+  roomHit,
+  roomRay,
+} from './room.ts';
 import {
   buildActorRoute,
   routePose,
@@ -507,5 +517,33 @@ describe('room fold (3D)', () => {
     const q = facePoint(right, right.rect.x + 2, right.rect.y + 0.3);
     const lc = faceLocal(ceil, q)!;
     expect(lc.x).toBeGreaterThan(ceil.rect.x + ceil.rect.w);
+  });
+});
+
+describe('projector setups', () => {
+  const wall = {
+    id: 'g',
+    name: 'g',
+    kind: 'wall',
+    intensity: 1,
+    polygon: rectPolygon(0, 0, 4, 2.25),
+    playback: { mode: 'off' },
+  } as unknown as Surface;
+  it('one wide projector reaches the main wall and both side walls', () => {
+    const [slot] = arrangementPoses([wall], 'threeWalls');
+    const fold = roomFold([wall]);
+    const hit = new Set<string>();
+    const p = slot!.pose;
+    for (const k of [-1, 0, 1]) {
+      const yaw = p.yaw + (k * 0.95 * p.fov * Math.PI) / 360;
+      const d = poseDir({ ...p, yaw });
+      const h = roomRay(fold, p.pos, d);
+      if (h) hit.add(h.face.role);
+    }
+    expect(hit.has('main')).toBe(true);
+    expect(hit.has('side')).toBe(true);
+  });
+  it('per side setup gives 6 projectors', () => {
+    expect(arrangementPoses([wall], 'sides')).toHaveLength(6);
   });
 });

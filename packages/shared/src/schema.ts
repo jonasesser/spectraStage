@@ -441,6 +441,11 @@ export const CommandSchema = z.discriminatedUnion('t', [
   /** Plan one projector per room side (main wall, 3 walls, floor, ceiling) for sides without one. */
   z.object({ t: z.literal('output.planRoom') }),
   z.object({ t: z.literal('output.delete'), outputId: id }),
+  /** Switch to a ready-made projector setup; planned projectors are replaced, connected ones re-aimed. */
+  z.object({
+    t: z.literal('output.arrange'),
+    layout: z.enum(['sides', 'threeWalls', 'threeWallsPlus', 'wallFloor', 'mainOnly']),
+  }),
 
   z.object({ t: z.literal('preset.apply'), themeId: id, presetId: id, surfaceIds: surfaceIds.optional() }),
   z.object({ t: z.literal('playlist.save'), playlist: PlaylistSchema }),

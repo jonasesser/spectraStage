@@ -17,7 +17,7 @@ import { sanitizeParams } from './theme.ts';
 import { isConvexQuad, UNIT_QUAD } from './homography.ts';
 import { playlistPosition } from './playback.ts';
 import { activeProfile, actorCueDuration, fitViewport, placeNewSurface, polygonBBox } from './stage.ts';
-import { poseForSurface, poseTarget, roomFold } from './room.ts';
+import { arrangementPoses, poseForSurface, poseTarget, roomFold } from './room.ts';
 
 export class CommandError extends Error {
   constructor(
@@ -635,6 +635,30 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       const o = requireOutput(state, cmd.outputId);
       activeProfile(o).viewport = cmd.viewport;
       return res(`${o.name} placed`);
+    }
+    case 'output.arrange': {
+      const slots = arrangementPoses(state.surfaces, cmd.layout);
+      const live = (o: Output) => state.devices.some((d) => d.outputId === o.id && d.status === 'approved');
+      // connected projectors take the first slots, then planned ones; the rest of the planned go
+      const ordered = [...state.outputs.filter(live), ...state.outputs.filter((o) => !live(o))];
+      const fold = roomFold(state.surfaces);
+      ordered.forEach((o, i) => {
+        const slot = slots[i];
+        if (slot) {
+          o.name = slot.name;
+          activeProfile(o).pose = slot.pose;
+        } else if (!live(o)) {
+          state.outputs = state.outputs.filter((x) => x.id !== o.id);
+        }
+      });
+      for (const slot of slots.slice(ordered.length)) {
+        if (state.outputs.length >= LIMITS.outputs) break;
+        const f = fold.faces.find((x) => x.id === slot.faceId);
+        const o = createOutput(state, slot.name, f ? { ...f.rect } : { x: 0, y: 0, w: 4, h: 2.25 }, ctx);
+        activeProfile(o).pose = slot.pose;
+        o.testPattern = { mode: 'off', until: 0 };
+      }
+      return res(`${slots.length} projectors arranged`);
     }
     case 'output.delete': {
       requireOutput(state, cmd.outputId);

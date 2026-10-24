@@ -265,3 +265,69 @@ export function poseForSurface(
 export function poseTarget(fold: RoomFold, p: Pose): string | null {
   return roomRay(fold, p.pos, poseDir(p))?.face.id ?? null;
 }
+
+export type RoomArrangement = 'sides' | 'threeWalls' | 'threeWallsPlus' | 'wallFloor' | 'mainOnly';
+
+/**
+ * Ready-made projector setups for the room (names in German, the show language): one per room
+ * side, a single wide projector that covers the main wall and both side walls, the same plus
+ * floor and ceiling, one projector for main wall + floor across the bottom corner, or just the
+ * main wall.
+ */
+export function arrangementPoses(
+  surfaces: readonly Surface[],
+  layout: RoomArrangement,
+): { name: string; faceId: string | null; pose: Pose }[] {
+  const fold = roomFold(surfaces);
+  const main = fold.faces.find((f) => f.role === 'main');
+  if (!main) return [];
+  const h = main.rect.h;
+  const c = facePoint(main, main.rect.x + main.rect.w / 2, main.rect.y + h / 2);
+  const back = roomRay(fold, add(c, main.n, 0.01), main.n);
+  const depth = back ? Math.hypot(...sub(back.p, c)) : 4;
+  const one = (role: RoomFace['role']) =>
+    fold.faces.find((f) => f.role === role && f.id !== 'virtual:floorRest');
+  const forFace = (f: RoomFace | undefined, name: string) => {
+    const pose = f ? poseForSurface(surfaces, f.id, new Set()) : null;
+    return pose ? [{ name, faceId: f!.id, pose }] : [];
+  };
+  // stands just in front of the back wall, slightly below the ceiling, looking at the main wall
+  const rear = (k: number): V3 => {
+    const p = add(c, main.n, Math.max(1, depth - 0.3) * k);
+    return [p[0], Math.min(h - 0.3, Math.max(1.2, h * 0.75)), p[2]];
+  };
+  const threeWalls = () => {
+    const from = rear(1);
+    return { name: 'Beamer 3 Wände', faceId: null, pose: aimPose(from, c, 112) };
+  };
+  switch (layout) {
+    case 'mainOnly':
+      return forFace(main, 'Beamer Hauptwand');
+    case 'threeWalls':
+      return [threeWalls()];
+    case 'threeWallsPlus':
+      return [
+        threeWalls(),
+        ...forFace(one('ground'), 'Beamer Boden'),
+        ...forFace(one('ceiling'), 'Beamer Decke'),
+      ];
+    case 'wallFloor': {
+      // aim at the bottom edge of the main wall from high up in the middle of the room
+      const from = rear(0.6);
+      from[1] = Math.max(from[1], h - 0.2);
+      const edge = facePoint(main, main.rect.x + main.rect.w / 2, main.rect.y + h * 0.85);
+      return [{ name: 'Beamer Wand + Boden', faceId: null, pose: aimPose(from, edge, 95) }];
+    }
+    case 'sides':
+    default: {
+      const sideNames = ['Wand rechts', 'Rückwand', 'Wand links'];
+      const out: { name: string; faceId: string | null; pose: Pose }[] = [];
+      out.push(...forFace(main, 'Beamer Hauptwand'));
+      fold.faces
+        .filter((f) => f.role === 'side')
+        .forEach((f, i) => out.push(...forFace(f, `Beamer ${sideNames[i % 3]}`)));
+      out.push(...forFace(one('ground'), 'Beamer Boden'), ...forFace(one('ceiling'), 'Beamer Decke'));
+      return out;
+    }
+  }
+}
