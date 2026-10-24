@@ -17,6 +17,7 @@ import { sanitizeParams } from './theme.ts';
 import { isConvexQuad, UNIT_QUAD } from './homography.ts';
 import { playlistPosition } from './playback.ts';
 import { activeProfile, actorCueDuration, fitViewport, placeNewSurface, polygonBBox } from './stage.ts';
+import { poseForSurface, poseTarget, roomFold } from './room.ts';
 
 export class CommandError extends Error {
   constructor(
@@ -243,6 +244,52 @@ export function createOutput(
   };
   state.outputs.push(output);
   return output;
+}
+
+/**
+ * One planned projector per side of the room (main wall, the three other walls, floor, ceiling)
+ * for every side that no projector points at yet. Returns how many were created.
+ */
+export function planRoomOutputs(state: SessionState, ctx: ReducerContext): number {
+  const fold = roomFold(state.surfaces);
+  const covered = new Set<string>();
+  for (const x of state.outputs) {
+    const p = activeProfile(x).pose;
+    const f = p ? poseTarget(fold, p) : null;
+    if (f) covered.add(f);
+  }
+  const sideNames = [
+    { en: 'right wall', de: 'Wand rechts' },
+    { en: 'back wall', de: 'Rückwand' },
+    { en: 'left wall', de: 'Wand links' },
+  ];
+  let n = 0;
+  const order = ['main', 'side', 'ground', 'ceiling'];
+  const faces = [...fold.faces].sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role));
+  let side = 0;
+  for (const f of faces) {
+    const label =
+      f.role === 'main'
+        ? 'Hauptwand'
+        : f.role === 'ground'
+          ? 'Boden'
+          : f.role === 'ceiling'
+            ? 'Decke'
+            : sideNames[side++ % 3]!.de;
+    if (covered.has(f.id) || state.outputs.length >= LIMITS.outputs) continue;
+    if (f.id === 'virtual:floorRest') continue;
+    const o = createOutput(
+      state,
+      `Beamer ${label}`,
+      { x: f.rect.x, y: f.rect.y, w: f.rect.w, h: f.rect.h },
+      ctx,
+    );
+    activeProfile(o).pose = poseForSurface(state.surfaces, f.id, new Set());
+    o.testPattern = { mode: 'off', until: 0 };
+    covered.add(f.id);
+    n++;
+  }
+  return n;
 }
 
 export function createInitialState(
@@ -561,6 +608,29 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       o.resolutionMismatch = null;
       return res(`${o.name} resolution accepted`);
     }
+    case 'output.setPose': {
+      const o = requireOutput(state, cmd.outputId);
+      activeProfile(o).pose = cmd.pose;
+      return res(`${o.name} aimed`);
+    }
+    case 'output.create': {
+      // aim at the first room side that no projector covers yet (main wall, floor, sides, ceiling)
+      const fold = roomFold(state.surfaces);
+      const covered = new Set<string>();
+      for (const x of state.outputs) {
+        const p = activeProfile(x).pose;
+        const f = p ? poseTarget(fold, p) : null;
+        if (f) covered.add(f);
+      }
+      const o = createOutput(state, cmd.name, { x: 0, y: 0, w: 4, h: 2.25 }, ctx);
+      const pose = poseForSurface(state.surfaces, null, covered);
+      if (pose) activeProfile(o).pose = pose;
+      return res(`${o.name} planned`);
+    }
+    case 'output.planRoom': {
+      const n = planRoomOutputs(state, ctx);
+      return res(`${n} projectors planned`);
+    }
     case 'output.setViewport': {
       const o = requireOutput(state, cmd.outputId);
       activeProfile(o).viewport = cmd.viewport;
@@ -725,7 +795,10 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
             ctx,
           );
         const vp = fitViewport(polygonBBox(surface.polygon), DEFAULT_ASPECT);
-        outputId = createOutput(state, spec.name, vp, ctx).id;
+        const out = createOutput(state, spec.name, vp, ctx);
+        // the projector in the room points at its surface
+        activeProfile(out).pose = poseForSurface(state.surfaces, surface.id, new Set());
+        outputId = out.id;
       }
       for (const other of state.devices) if (other.outputId === outputId) other.outputId = null;
       d.status = 'approved';

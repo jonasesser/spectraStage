@@ -5,21 +5,46 @@ import { loadThemeRuntime } from '@spectrastage/catalog/runtime';
 import { StageRenderer } from '@spectrastage/engine';
 import {
   activeProfile,
+  aimPose,
   completeRoom,
+  poseDir,
+  poseForSurface,
+  roomFold,
+  roomRay,
   stageBounds,
   type Output,
+  type Pose,
   type SessionState,
-  type Viewport,
+  type V3,
 } from '@spectrastage/shared';
 import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
 import { roomGeometry } from './roomGeometry.ts';
+import { Slider } from './ui.tsx';
+
+type Mode = 'look' | 'aim' | 'place';
+
+function outputAspect(o: Output): number {
+  const r = activeProfile(o).referenceResolution;
+  return r ? r.w / r.h : 16 / 9;
+}
+
+/** Room direction of image coordinate (u, v ∈ -1..1) of a projector. */
+function imageRay(p: Pose, aspect: number, u: number, v: number): V3 {
+  const tx = Math.tan((p.fov * Math.PI) / 360);
+  const ty = tx / aspect;
+  const o = new THREE.Object3D();
+  o.rotation.set(p.pitch, -p.yaw, p.roll, 'YXZ');
+  o.updateMatrixWorld();
+  const d = new THREE.Vector3(u * tx, v * ty, -1).applyQuaternion(o.quaternion).normalize();
+  return [d.x, d.y, d.z];
+}
 
 /**
- * 3D room view: stand in the middle of the stage world like with VR glasses, look around by
- * dragging (or by moving the phone), and place the projector frames directly on the walls.
- * Internally it is the same unfolded stage – a frame that spans two touching walls simply wraps
- * around the corner.
+ * 3D room view: stand in the room like with VR glasses and look around (drag or move the
+ * phone). Every projector is an object in the room: choose one, tap where it should point, set
+ * its size and rotation, move its standing position – its light cone and the outline of its
+ * picture on walls, floor and ceiling (also across corners) are shown live.
  */
 export function Room3D({
   state,
@@ -38,27 +63,36 @@ export function Room3D({
   stateRef.current = state;
   const selRef = useRef(selected);
   selRef.current = selected;
-  const draftRef = useRef<Record<string, Viewport>>({});
+  const [mode, setMode] = useState<Mode>('aim');
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const drafts = useRef<Record<string, Pose>>({});
+  const [, force] = useState(0);
   const [gyro, setGyro] = useState(false);
   const gyroRef = useRef<{ on: boolean; a0: number | null; yaw0: number }>({ on: false, a0: null, yaw0: 0 });
 
-  const layoutKey = JSON.stringify([
-    state.room ?? false,
-    state.surfaces.map((s) => [s.id, s.kind, s.role ?? 'auto', s.polygon]),
-  ]);
+  const layoutKey = JSON.stringify(state.surfaces.map((s) => [s.id, s.kind, s.role ?? 'auto', s.polygon]));
+  const poseOf = (o: Output): Pose | null => drafts.current[o.id] ?? activeProfile(o).pose ?? null;
+  const sendPose = (id: string) => {
+    const p = drafts.current[id];
+    if (p)
+      void store.send({ t: 'output.setPose', outputId: id, pose: p }).finally(() => {
+        delete drafts.current[id];
+      });
+  };
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const st = stateRef.current;
     if (!st.surfaces.length) return;
-    // the complete room: real surfaces + virtual faces for the sides without a projector
     const all = completeRoom(st.surfaces);
     const withRoom = (x: SessionState): SessionState => ({ ...x, surfaces: completeRoom(x.surfaces) });
     const b = stageBounds(all);
-    // --- live stage picture (same engine as the projectors), rendered off-screen
-    const TW = 1536;
-    const TH = Math.max(64, Math.min(1536, Math.round((TW * b.h) / b.w)));
+    const fold = roomFold(all, false);
+    // --- live stage picture, rendered off-screen and wrapped onto the room
+    const TW = 2048;
+    const TH = Math.max(64, Math.min(2048, Math.round((TW * b.h) / b.w)));
     const src = document.createElement('canvas');
     Object.assign(src.style, {
       position: 'fixed',
@@ -80,6 +114,7 @@ export function Room3D({
     stage.setPreviewViewport({ x: b.x, y: b.y, w: b.w, h: b.h });
     stage.setState(withRoom(st), null);
     stage.start();
+    // copy the WebGL picture into a 2D canvas each frame (reliable texture source everywhere)
     const comp = document.createElement('canvas');
     comp.width = TW;
     comp.height = TH;
@@ -88,19 +123,15 @@ export function Room3D({
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 4;
 
-    // --- 3D room
     const canvas = document.createElement('canvas');
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
-    canvas.style.touchAction = 'none';
-    canvas.style.display = 'block';
+    Object.assign(canvas.style, { width: '100%', height: '100%', touchAction: 'none', display: 'block' });
     host.appendChild(canvas);
     const r3 = new THREE.WebGLRenderer({ canvas, antialias: true });
     r3.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     const scene = new THREE.Scene();
     scene.background = new THREE.Color('#05040c');
     const cam = new THREE.PerspectiveCamera(75, 1, 0.05, 200);
-    const geo = roomGeometry(all, true);
+    const geo = roomGeometry(all);
     cam.position.set(...geo.camera);
     const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
     const meshes: THREE.Mesh[] = [];
@@ -128,21 +159,78 @@ export function Room3D({
       g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
       g.setIndex(idx);
       const m = new THREE.Mesh(g, mat);
-      m.userData.surfaceId = s.id;
       scene.add(m);
       meshes.push(m);
     }
-    // faint floor grid so the viewer has orientation where nothing is projected
-    const grid = new THREE.GridHelper(40, 40, 0x2a2550, 0x15122c);
-    grid.position.y = -0.001;
-    scene.add(grid);
 
-    // --- view direction (yaw/pitch) and zoom
+    // --- projectors: body, light cone and the outline of their picture in the room
+    const projGroup = new THREE.Group();
+    scene.add(projGroup);
+    const buildProjectors = () => {
+      for (const c of [...projGroup.children]) {
+        projGroup.remove(c);
+        (c as THREE.Mesh).geometry?.dispose();
+      }
+      for (const o of stateRef.current.outputs) {
+        const p = poseOf(o);
+        if (!p) continue;
+        const sel = o.id === selRef.current;
+        const color = sel ? 0xffb347 : 0xffffff;
+        const aspect = outputAspect(o);
+        const pts: THREE.Vector3[] = [];
+        const corners: THREE.Vector3[] = [];
+        const n = 24;
+        const border: [number, number][] = [];
+        for (let i = 0; i < n; i++) border.push([-1 + (2 * i) / n, 1]);
+        for (let i = 0; i < n; i++) border.push([1, 1 - (2 * i) / n]);
+        for (let i = 0; i < n; i++) border.push([1 - (2 * i) / n, -1]);
+        for (let i = 0; i < n; i++) border.push([-1, -1 + (2 * i) / n]);
+        border.forEach(([u, v], i) => {
+          const hit = roomRay(fold, p.pos, imageRay(p, aspect, u, v));
+          if (!hit) return;
+          const q = new THREE.Vector3(...hit.p).addScaledVector(new THREE.Vector3(...hit.face.n), 0.01);
+          pts.push(q);
+          if (i % n === 0) corners.push(q);
+        });
+        if (pts.length > 2) {
+          pts.push(pts[0]!.clone());
+          projGroup.add(
+            new THREE.Line(
+              new THREE.BufferGeometry().setFromPoints(pts),
+              new THREE.LineBasicMaterial({ color }),
+            ),
+          );
+        }
+        const origin = new THREE.Vector3(...p.pos);
+        for (const c of corners)
+          projGroup.add(
+            new THREE.Line(
+              new THREE.BufferGeometry().setFromPoints([origin, c]),
+              new THREE.LineBasicMaterial({ color, transparent: true, opacity: sel ? 0.7 : 0.3 }),
+            ),
+          );
+        const body = new THREE.Mesh(
+          new THREE.BoxGeometry(0.22, 0.11, 0.18),
+          new THREE.MeshBasicMaterial({
+            color: sel ? 0xffb347 : 0x9d93d9,
+            transparent: true,
+            opacity: sel ? 0.95 : 0.55,
+          }),
+        );
+        body.position.copy(origin);
+        body.rotation.set(p.pitch, -p.yaw, 0, 'YXZ');
+        body.userData.outputId = o.id;
+        projGroup.add(body);
+      }
+    };
+    let lastKey = '';
+
+    // --- view direction and zoom
     const look = new THREE.Vector3(...geo.lookAt).sub(cam.position);
     let yaw = Math.atan2(look.x, -look.z);
     let pitch = Math.atan2(look.y, Math.hypot(look.x, look.z));
     const applyView = () => {
-      pitch = Math.max(-1.45, Math.min(1.45, pitch));
+      pitch = Math.max(-1.5, Math.min(1.5, pitch));
       const dir = new THREE.Vector3(
         Math.sin(yaw) * Math.cos(pitch),
         Math.sin(pitch),
@@ -151,7 +239,6 @@ export function Room3D({
       cam.lookAt(cam.position.clone().add(dir));
     };
     applyView();
-
     const resize = () => {
       const w = host.clientWidth || 300;
       const h = host.clientHeight || 300;
@@ -163,50 +250,37 @@ export function Room3D({
     ro.observe(host);
     resize();
 
-    // --- frames of the projectors, drawn into the stage picture
-    const vpOf = (o: Output) => draftRef.current[o.id] ?? activeProfile(o).viewport;
-    const toC = (x: number, y: number): [number, number] => [((x - b.x) / b.w) * TW, ((y - b.y) / b.h) * TH];
-    const ppm = TW / b.w;
-    const drawFrames = () => {
-      for (const o of stateRef.current.outputs) {
-        const vp = vpOf(o);
-        const [x, y] = toC(vp.x, vp.y);
-        const sel = o.id === selRef.current;
-        cg.strokeStyle = sel ? '#ffb347' : 'rgba(255,255,255,0.85)';
-        cg.lineWidth = Math.max(2, ppm * (sel ? 0.05 : 0.03));
-        cg.setLineDash(sel ? [] : [ppm * 0.15, ppm * 0.1]);
-        cg.strokeRect(x, y, vp.w * ppm, vp.h * ppm);
-        cg.setLineDash([]);
-        cg.fillStyle = sel ? '#ffb347' : '#ffffff';
-        cg.font = `bold ${Math.round(ppm * 0.22)}px sans-serif`;
-        cg.fillText(`📽 ${o.name}`, x + ppm * 0.1, y + ppm * 0.3);
-        // resize handle bottom-right
-        cg.beginPath();
-        cg.arc(x + vp.w * ppm, y + vp.h * ppm, ppm * (sel ? 0.16 : 0.1), 0, Math.PI * 2);
-        cg.fill();
-      }
-    };
-
-    // --- interaction: drag frames, look around, pinch / wheel zoom
+    // --- interaction
     const ray = new THREE.Raycaster();
-    const hitStage = (cx: number, cy: number): { x: number; y: number } | null => {
+    const pick = (cx: number, cy: number, objs: THREE.Object3D[]) => {
       const rect = canvas.getBoundingClientRect();
-      const ndc = new THREE.Vector2(
-        ((cx - rect.left) / rect.width) * 2 - 1,
-        -((cy - rect.top) / rect.height) * 2 + 1,
+      ray.setFromCamera(
+        new THREE.Vector2(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1),
+        cam,
       );
-      ray.setFromCamera(ndc, cam);
-      const hit = ray.intersectObjects(meshes, false)[0];
-      if (!hit?.uv) return null;
-      return { x: b.x + hit.uv.x * b.w, y: b.y + (1 - hit.uv.y) * b.h };
+      return ray.intersectObjects(objs, false)[0] ?? null;
     };
     type Drag =
-      | { kind: 'look'; x: number; y: number; yaw: number; pitch: number }
-      | { kind: 'move'; id: string; start: { x: number; y: number }; orig: Viewport }
-      | { kind: 'resize'; id: string; orig: Viewport; aspect: number };
+      { kind: 'look'; x: number; y: number; yaw: number; pitch: number } | { kind: 'edit'; id: string };
     let drag: Drag | null = null;
     const pts = new Map<number, { x: number; y: number }>();
     let pinch0: { d: number; fov: number } | null = null;
+    const editAt = (id: string, cx: number, cy: number) => {
+      const hit = pick(cx, cy, meshes);
+      const o = stateRef.current.outputs.find((x) => x.id === id);
+      if (!hit || !o) return;
+      const p = poseOf(o) ?? poseForSurface(stateRef.current.surfaces, null, new Set());
+      if (!p) return;
+      const target: V3 = [hit.point.x, hit.point.y, hit.point.z];
+      if (modeRef.current === 'aim') drafts.current[id] = aimPose(p.pos, target, p.fov, p.roll);
+      else {
+        // new standing position on the floor (height kept), still aiming at the same spot
+        const cur = roomRay(fold, p.pos, poseDir(p));
+        const pos: V3 = [hit.point.x, p.pos[1], hit.point.z];
+        drafts.current[id] = cur ? aimPose(pos, cur.p, p.fov, p.roll) : { ...p, pos };
+      }
+      force((n) => n + 1);
+    };
     const onDown = (e: PointerEvent) => {
       canvas.setPointerCapture(e.pointerId);
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -216,27 +290,21 @@ export function Room3D({
         drag = null;
         return;
       }
-      const p = hitStage(e.clientX, e.clientY);
-      if (p) {
-        const outs = stateRef.current.outputs;
-        // resize handle first, then frames (selected one wins)
-        const order = [...outs].sort((a) => (a.id === selRef.current ? -1 : 1));
-        for (const o of order) {
-          const vp = vpOf(o);
-          if (Math.hypot(p.x - (vp.x + vp.w), p.y - (vp.y + vp.h)) < 0.35) {
-            onSelect(o.id);
-            drag = { kind: 'resize', id: o.id, orig: vp, aspect: vp.w / vp.h };
-            return;
-          }
-        }
-        for (const o of order) {
-          const vp = vpOf(o);
-          if (p.x >= vp.x && p.x <= vp.x + vp.w && p.y >= vp.y && p.y <= vp.y + vp.h) {
-            onSelect(o.id);
-            drag = { kind: 'move', id: o.id, start: p, orig: vp };
-            return;
-          }
-        }
+      const body = pick(
+        e.clientX,
+        e.clientY,
+        projGroup.children.filter((c) => c.userData.outputId),
+      );
+      if (body) {
+        onSelect(body.object.userData.outputId as string);
+        drag = null;
+        return;
+      }
+      const id = selRef.current;
+      if (id && modeRef.current !== 'look') {
+        drag = { kind: 'edit', id };
+        editAt(id, e.clientX, e.clientY);
+        return;
       }
       drag = { kind: 'look', x: e.clientX, y: e.clientY, yaw, pitch };
     };
@@ -245,8 +313,10 @@ export function Room3D({
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pinch0 && pts.size === 2) {
         const [a, c] = [...pts.values()];
-        const d = Math.hypot(a!.x - c!.x, a!.y - c!.y);
-        cam.fov = Math.max(30, Math.min(100, (pinch0.fov * pinch0.d) / Math.max(1, d)));
+        cam.fov = Math.max(
+          30,
+          Math.min(100, (pinch0.fov * pinch0.d) / Math.max(1, Math.hypot(a!.x - c!.x, a!.y - c!.y))),
+        );
         cam.updateProjectionMatrix();
         return;
       }
@@ -256,33 +326,14 @@ export function Room3D({
         yaw = drag.yaw - (e.clientX - drag.x) * k;
         pitch = drag.pitch + (e.clientY - drag.y) * k;
         applyView();
-        return;
-      }
-      const p = hitStage(e.clientX, e.clientY);
-      if (!p) return;
-      if (drag.kind === 'move') {
-        draftRef.current[drag.id] = {
-          ...drag.orig,
-          x: drag.orig.x + (p.x - drag.start.x),
-          y: drag.orig.y + (p.y - drag.start.y),
-        };
-      } else {
-        const w = Math.max(0.3, p.x - drag.orig.x);
-        draftRef.current[drag.id] = { ...drag.orig, w, h: w / drag.aspect };
-      }
+      } else editAt(drag.id, e.clientX, e.clientY);
     };
     const onUp = (e: PointerEvent) => {
       pts.delete(e.pointerId);
       if (pts.size < 2) pinch0 = null;
       const d = drag;
       drag = null;
-      if (!d || d.kind === 'look') return;
-      const vp = draftRef.current[d.id];
-      if (vp) {
-        void store.send({ t: 'output.setViewport', outputId: d.id, viewport: vp }).finally(() => {
-          delete draftRef.current[d.id];
-        });
-      }
+      if (d?.kind === 'edit') sendPose(d.id);
     };
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -294,8 +345,6 @@ export function Room3D({
     canvas.addEventListener('pointerup', onUp);
     canvas.addEventListener('pointercancel', onUp);
     canvas.addEventListener('wheel', onWheel, { passive: false });
-
-    // --- look around by moving the phone
     const onOrient = (e: DeviceOrientationEvent) => {
       const gr = gyroRef.current;
       if (!gr.on || e.alpha === null || e.beta === null) return;
@@ -312,14 +361,20 @@ export function Room3D({
     let raf = 0;
     const loop = () => {
       raf = requestAnimationFrame(loop);
+      const key = JSON.stringify([
+        selRef.current,
+        stateRef.current.outputs.map((o) => [o.id, poseOf(o), activeProfile(o).referenceResolution]),
+      ]);
+      if (key !== lastKey) {
+        lastKey = key;
+        buildProjectors();
+      }
       cg.drawImage(src, 0, 0, TW, TH);
-      drawFrames();
       tex.needsUpdate = true;
       r3.render(scene, cam);
     };
     loop();
     const updateState = setInterval(() => stage.setState(withRoom(stateRef.current), null), 250);
-
     return () => {
       cancelAnimationFrame(raf);
       clearInterval(updateState);
@@ -330,7 +385,6 @@ export function Room3D({
       tex.dispose();
       mat.dispose();
       meshes.forEach((m) => m.geometry.dispose());
-      grid.geometry.dispose();
       r3.dispose();
       canvas.remove();
     };
@@ -353,20 +407,116 @@ export function Room3D({
     setGyro(next);
   };
 
+  const sel = state.outputs.find((o) => o.id === selected) ?? null;
+  const selPose = sel ? poseOf(sel) : null;
+  const update = (patch: Partial<Pose>) => {
+    if (!sel || !selPose) return;
+    drafts.current[sel.id] = { ...selPose, ...patch };
+    force((n) => n + 1);
+  };
+  const commit = () => {
+    if (sel) sendPose(sel.id);
+  };
+
   if (!state.surfaces.length)
     return <p className="muted">{L('Add surfaces first.', 'Lege zuerst Flächen an.')}</p>;
   return (
     <div className="stack">
-      <div ref={hostRef} className="room3d" />
       <div className="row">
-        <button className={`btn small${gyro ? ' on' : ''}`} onClick={toggleGyro}>
-          📱 {L('Look around by moving the phone', 'Umschauen durch Handy-Bewegen')}
+        {state.outputs.map((o) => (
+          <button
+            key={o.id}
+            className={`chip${o.id === selected ? ' on' : ''}`}
+            onClick={() => onSelect(o.id)}
+          >
+            📽 {o.name}
+            {!state.devices.some((d) => d.outputId === o.id && d.status === 'approved') && (
+              <span className="muted small"> · {L('planned', 'geplant')}</span>
+            )}
+          </button>
+        ))}
+        <button
+          className="btn small"
+          onClick={() =>
+            store.send({
+              t: 'output.create',
+              name: `${L('Projector', 'Beamer')} ${state.outputs.length + 1}`,
+            })
+          }
+        >
+          ＋ {L('Plan projector', 'Beamer planen')}
+        </button>
+        <button className="btn small" onClick={() => store.send({ t: 'output.planRoom' })}>
+          🧊 {L('One projector per room side', 'Je Raumseite ein Beamer')}
         </button>
       </div>
+      <div className="row" role="tablist">
+        {(
+          [
+            ['look', '👀 ' + L('Look around', 'Umschauen')],
+            ['aim', '🎯 ' + L('Aim', 'Ausrichten')],
+            ['place', '📍 ' + L('Position', 'Standort')],
+          ] as [Mode, string][]
+        ).map(([m, label]) => (
+          <button key={m} className={`chip${mode === m ? ' on' : ''}`} onClick={() => setMode(m)}>
+            {label}
+          </button>
+        ))}
+        <button className={`btn small${gyro ? ' on' : ''}`} onClick={toggleGyro}>
+          📱 {L('Move the phone', 'Handy bewegen')}
+        </button>
+      </div>
+      <div ref={hostRef} className="room3d" />
+      {sel && !selPose && (
+        <button
+          className="btn primary"
+          onClick={() =>
+            store.send({
+              t: 'output.setPose',
+              outputId: sel.id,
+              pose: poseForSurface(state.surfaces, null, new Set()),
+            })
+          }
+        >
+          {L('Put this projector into the room', 'Diesen Beamer in den Raum stellen')}
+        </button>
+      )}
+      {sel && selPose && (
+        <div className="panel stack" onPointerUp={commit} onKeyUp={commit}>
+          <strong>📽 {sel.name}</strong>
+          <Slider
+            label={L('Picture size (zoom)', 'Bildgröße (Zoom)')}
+            value={selPose.fov}
+            min={10}
+            max={120}
+            step={0.5}
+            onChange={(v) => update({ fov: v })}
+            format={(v) => `${Math.round(v)}°`}
+          />
+          <Slider
+            label={L('Rotate picture', 'Bild drehen')}
+            value={(selPose.roll * 180) / Math.PI}
+            min={-180}
+            max={180}
+            step={0.5}
+            onChange={(v) => update({ roll: (v * Math.PI) / 180 })}
+            format={(v) => `${Math.round(v)}°`}
+          />
+          <Slider
+            label={L('Mounting height', 'Höhe des Beamers')}
+            value={selPose.pos[1]}
+            min={0}
+            max={4}
+            step={0.05}
+            onChange={(v) => update({ pos: [selPose.pos[0], v, selPose.pos[2]] })}
+            format={(v) => `${v.toFixed(2)} m`}
+          />
+        </div>
+      )}
       <p className="muted small" style={{ margin: 0 }}>
         {L(
-          'Drag to look around, pinch to zoom. Drag a projector frame to move it onto the wall it hits – across corners too; the dot at its corner changes the size.',
-          'Ziehen = umschauen, zwei Finger = zoomen. Einen Beamer-Rahmen ziehen, um ihn auf die Wand zu setzen, die er trifft – auch über Ecken; der Punkt an seiner Ecke ändert die Größe.',
+          'Choose a projector (button or tap its box). 🎯 Aim: tap or drag where its picture should be – walls, floor, ceiling, also across corners. 📍 Position: tap on the floor where it stands. 👀 Look around: drag to look, pinch to zoom. The outline shows exactly what it projects.',
+          'Beamer wählen (Knopf oder auf seinen Kasten tippen). 🎯 Ausrichten: dorthin tippen oder ziehen, wo sein Bild sein soll – Wand, Boden, Decke, auch über Ecken. 📍 Standort: auf den Boden tippen, wo er steht. 👀 Umschauen: ziehen = schauen, zwei Finger = zoomen. Der Umriss zeigt genau, was er projiziert.',
         )}
       </p>
     </div>

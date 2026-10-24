@@ -26,6 +26,8 @@ import {
   roomHit,
   faceLocal,
   dirFromAngles,
+  facePoint,
+  stageBounds,
   mainAzimuth,
   type RoomFold,
   wallRing,
@@ -33,7 +35,6 @@ import {
   type WorldSurface,
   polygonCentroid,
   primaryOutputAt,
-  stageBounds,
   UNIT_QUAD,
   type ActiveScene,
   type ActorCue,
@@ -50,7 +51,7 @@ import { canvasTexture } from './sceneKit.ts';
 import { buildWarpMesh } from './warp.ts';
 import { paintMask, paintMaskOverlay } from './masks.ts';
 import type { SoundEngine } from './sound.ts';
-import { drawRawPattern, drawStageGrid, drawIdentify } from './testPattern.ts';
+import { drawCornerMarkers, drawRawPattern, drawStageGrid, drawIdentify } from './testPattern.ts';
 
 export type RuntimeLoader = (themeId: string) => Promise<ThemeRuntime>;
 
@@ -330,6 +331,19 @@ export class StageRenderer {
   private viewRT: THREE.WebGLRenderTarget;
   private viewScene = new THREE.Scene();
   private viewCamera = new THREE.OrthographicCamera(0, 1, 0, -1, -10, 10);
+  /** Projector-in-room rendering: the stage atlas (viewRT) is wrapped onto the folded room and
+   *  seen from the projector's pose. */
+  private poseRT: THREE.WebGLRenderTarget | null = null;
+  private poseScene = new THREE.Scene();
+  private poseCamera = new THREE.PerspectiveCamera(50, 16 / 9, 0.05, 200);
+  private poseKey = '';
+  private poseMaterial = new THREE.ShaderMaterial({
+    uniforms: { map: { value: null } },
+    vertexShader: VERT,
+    fragmentShader:
+      'uniform sampler2D map; varying vec2 vUv; void main(){ gl_FragColor = vec4(texture2D(map, vUv).rgb, 1.0); }',
+    side: THREE.DoubleSide,
+  });
   private actorOverlay: Overlay2D;
   private actorMaterial: THREE.ShaderMaterial;
   private viewOverlay: Overlay2D;
@@ -725,13 +739,26 @@ export class StageRenderer {
       return;
     }
 
-    const vp = profile.viewport;
+    // Projector in the room (pose): the whole room is rendered as an atlas and then seen from
+    // the projector; otherwise the classic flat viewport of the unfolded stage.
+    const pose = this.opts.preview ? null : (profile.pose ?? null);
+    const roomSurfaces = pose ? completeRoom(state.surfaces) : null;
+    const vp = pose ? stageBounds(roomSurfaces!) : profile.viewport;
     // Internal resolution: capped to ~Full HD (4K projectors get upscaled soft content) × adaptive quality.
     const perf = output?.performance ?? 'auto';
     const cap = Math.min(1, Math.sqrt(MAX_RENDER_PIXELS / Math.max(1, this.width * this.height)));
     const q = this.quality * cap * (perf === 'eco' ? 0.7 : 1);
-    const vw = Math.max(2, Math.round(this.width * q));
-    const vh = Math.max(2, Math.round(this.height * q));
+    const ow = Math.max(2, Math.round(this.width * q));
+    const oh = Math.max(2, Math.round(this.height * q));
+    let vw = ow;
+    let vh = oh;
+    if (pose) {
+      // atlas: about one output width per room side
+      const unitW = (this.worldFor(state).fold.unit * 16) / 9;
+      vw = Math.min(4096, Math.round((ow * vp.w) / unitW));
+      vh = Math.min(4096, Math.round((vw * vp.h) / vp.w));
+      vw = Math.round((vh * vp.w) / vp.h);
+    }
     if (this.viewRT.width !== vw || this.viewRT.height !== vh) {
       this.viewRT.setSize(vw, vh);
       this.actorOverlay.resize(
@@ -745,7 +772,34 @@ export class StageRenderer {
     const ppmView = vw / vp.w;
 
     // 1) Surface layers
-    const visible = state.surfaces.filter((s) => bboxIntersects(polygonBBox(s.polygon), vp));
+    let visible = (roomSurfaces ?? state.surfaces).filter((s) => bboxIntersects(polygonBBox(s.polygon), vp));
+    if (pose) {
+      // only render the room sides this projector actually reaches
+      const fold = this.worldFor(state).fold;
+      this.setPoseCamera(pose, ow / oh);
+      const frustum = new THREE.Frustum().setFromProjectionMatrix(
+        new THREE.Matrix4().multiplyMatrices(
+          this.poseCamera.projectionMatrix,
+          this.poseCamera.matrixWorldInverse,
+        ),
+      );
+      const seen = new Set(
+        fold.faces
+          .filter((f) => {
+            const box = new THREE.Box3();
+            for (const [x, y] of [
+              [f.rect.x, f.rect.y],
+              [f.rect.x + f.rect.w, f.rect.y],
+              [f.rect.x, f.rect.y + f.rect.h],
+              [f.rect.x + f.rect.w, f.rect.y + f.rect.h],
+            ] as const)
+              box.expandByPoint(new THREE.Vector3(...facePoint(f, x, y)));
+            return frustum.intersectsBox(box.expandByScalar(0.05));
+          })
+          .map((f) => f.id),
+      );
+      visible = visible.filter((s) => seen.has(s.id));
+    }
     const outputs = state.outputs;
     const world = this.worldFor(state);
     for (const s of visible) this.renderSurface(s, state, now, ppmView, dtMs, output, outputs, world);
@@ -770,7 +824,18 @@ export class StageRenderer {
     if (testMode === 'grid' || identify) {
       this.viewOverlay.clear();
       const g = this.viewOverlay.g;
-      if (testMode === 'grid') drawStageGrid(g, vw, vh, vp, state, output, this.previewFocus, now);
+      if (testMode === 'grid')
+        drawStageGrid(
+          g,
+          vw,
+          vh,
+          vp,
+          state,
+          pose ? null : output,
+          pose ? null : this.previewFocus,
+          now,
+          !pose,
+        );
       if (identify && this.identify) drawIdentify(g, vw, vh, this.identify.label);
       this.viewOverlay.upload();
       const prev = r.autoClear;
@@ -779,8 +844,15 @@ export class StageRenderer {
       r.autoClear = prev;
     }
 
+    // 3b) Projector in the room: wrap the atlas onto the folded room, look through the projector
+    let viewTex: THREE.Texture = this.viewRT.texture;
+    if (pose) {
+      viewTex = this.renderPose(state, pose, vp, ow, oh, testMode === 'grid', now);
+    }
+
     // 4) Safety limiter (child-safe): limit the rate of brightness increase.
     let limiter = 1;
+    this.limiterTex = viewTex;
     if (state.kidsSafe && !this.opts.preview) limiter = this.updateLimiter(dtMs);
 
     // 5) Final output pass
@@ -802,7 +874,7 @@ export class StageRenderer {
       r.render(this.rawScene, CLIP_CAMERA);
     } else {
       this.updateWarp(profile);
-      this.finalMaterial.uniforms.view!.value = this.viewRT.texture;
+      this.finalMaterial.uniforms.view!.value = viewTex;
       this.finalMaterial.uniforms.mask!.value = this.maskTexture;
       (this.finalMaterial.uniforms.outSize!.value as THREE.Vector2).set(this.width, this.height);
       this.finalMaterial.uniforms.gain!.value = finalGain;
@@ -825,13 +897,15 @@ export class StageRenderer {
     return !!this.identify && this.identify.until > Date.now() && now > 0;
   }
 
+  private limiterTex: THREE.Texture | null = null;
+
   private updateLimiter(dtMs: number): number {
     // Measure the composed view at low resolution every other frame (1 frame latency is fine).
     // Asynchronous readback (no GPU pipeline stall); at most one measurement in flight.
     void dtMs;
     if (!this.lumPending) {
       const r = this.renderer;
-      this.lumMaterial.uniforms.map!.value = this.viewRT.texture;
+      this.lumMaterial.uniforms.map!.value = this.limiterTex;
       r.setRenderTarget(this.lumRT);
       r.render(this.lumScene, CLIP_CAMERA);
       this.lumPending = true;
@@ -916,6 +990,81 @@ export class StageRenderer {
   ): boolean {
     if (!output || this.opts.preview || !this.opts.sound) return false;
     return primaryOutputAt(outputs, p)?.id === output.id;
+  }
+
+  private setPoseCamera(pose: NonNullable<Profile['pose']>, aspect: number): void {
+    const cam = this.poseCamera;
+    cam.aspect = aspect;
+    cam.fov = (2 * Math.atan(Math.tan((pose.fov * Math.PI) / 360) / aspect) * 180) / Math.PI;
+    cam.position.set(...pose.pos);
+    cam.rotation.set(pose.pitch, -pose.yaw, pose.roll, 'YXZ');
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld();
+    cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
+  }
+
+  private renderPose(
+    state: SessionState,
+    pose: NonNullable<Profile['pose']>,
+    vp: Viewport,
+    ow: number,
+    oh: number,
+    markers: boolean,
+    now: number,
+  ): THREE.Texture {
+    const r = this.renderer;
+    if (!this.poseRT) this.poseRT = makeRT(ow, oh);
+    else if (this.poseRT.width !== ow || this.poseRT.height !== oh) this.poseRT.setSize(ow, oh);
+    const fold = this.worldFor(state).fold;
+    const key = JSON.stringify([vp, fold.faces.map((f) => [f.id, f.o, f.ax, f.ay, f.rect])]);
+    if (key !== this.poseKey) {
+      this.poseKey = key;
+      for (const c of [...this.poseScene.children]) {
+        this.poseScene.remove(c);
+        (c as THREE.Mesh).geometry?.dispose();
+      }
+      for (const f of fold.faces) {
+        const pts: [number, number][] = [
+          [f.rect.x, f.rect.y],
+          [f.rect.x + f.rect.w, f.rect.y],
+          [f.rect.x + f.rect.w, f.rect.y + f.rect.h],
+          [f.rect.x, f.rect.y + f.rect.h],
+        ];
+        const pos: number[] = [];
+        const uv: number[] = [];
+        for (const [x, y] of pts) {
+          pos.push(...facePoint(f, x, y));
+          uv.push((x - vp.x) / vp.w, 1 - (y - vp.y) / vp.h);
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+        g.setIndex([0, 3, 1, 1, 3, 2]);
+        const m = new THREE.Mesh(g, this.poseMaterial);
+        m.frustumCulled = false;
+        this.poseScene.add(m);
+      }
+    }
+    this.poseMaterial.uniforms.map!.value = this.viewRT.texture;
+    const cam = this.poseCamera;
+    this.setPoseCamera(pose, ow / oh);
+    r.setRenderTarget(this.poseRT);
+    r.setClearColor(0x000000, 1);
+    r.clear();
+    r.render(this.poseScene, cam);
+    if (markers) {
+      // numbered image corners for the fine adjustment, in the projector's own image
+      this.viewOverlay.resize(ow, oh);
+      this.viewOverlayMaterial.uniforms.map!.value = this.viewOverlay.texture;
+      this.viewOverlay.clear();
+      drawCornerMarkers(this.viewOverlay.g, ow, oh, this.previewFocus, now);
+      this.viewOverlay.upload();
+      const prev = r.autoClear;
+      r.autoClear = false;
+      r.render(this.viewOverlayScene, CLIP_CAMERA);
+      r.autoClear = prev;
+    }
+    return this.poseRT.texture;
   }
 
   private worldCache: WorldInfo | null = null;

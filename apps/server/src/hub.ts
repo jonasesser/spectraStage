@@ -1,5 +1,6 @@
 import type { WebSocket } from 'ws';
 import {
+  planRoomOutputs,
   applyCommand,
   applyReportedResolution,
   CommandError,
@@ -105,6 +106,8 @@ export class Hub {
       newSeed,
     };
     for (const s of theme.starterStage ?? []) createSurface(state, s.name[locale] || s.name.en, s.kind, ctx);
+    // The room comes with one planned projector per side (a PC is connected to one of them later).
+    planRoomOutputs(state, ctx);
     const ownerToken = newToken();
     this.store.tx(() => {
       this.store.insertSession(state, now);

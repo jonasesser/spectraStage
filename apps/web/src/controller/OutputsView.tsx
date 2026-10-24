@@ -146,13 +146,17 @@ function PendingDevice({
     const b = polygonBBox(s.polygon);
     return !state.outputs.some((o) => bboxIntersects(b, activeProfile(o).viewport));
   });
+  // projectors planned in the 3D room that no PC drives yet
+  const planned = state.outputs.filter(
+    (o) => !state.devices.some((d) => d.outputId === o.id && d.status === 'approved'),
+  );
   const [mode, setMode] = useState<'newSurface' | 'existingSurface' | 'existingOutput'>(
-    uncovered.length > 0 ? 'existingSurface' : 'newSurface',
+    planned.length > 0 ? 'existingOutput' : uncovered.length > 0 ? 'existingSurface' : 'newSurface',
   );
   const [name, setName] = useState(device.name);
   const [kind, setKind] = useState<'wall' | 'floor' | 'other'>('wall');
   const [surfaceId, setSurfaceId] = useState(uncovered[0]?.id ?? state.surfaces[0]?.id ?? '');
-  const [outputId, setOutputId] = useState(state.outputs[0]?.id ?? '');
+  const [outputId, setOutputId] = useState(planned[0]?.id ?? state.outputs[0]?.id ?? '');
   const approve = async () => {
     const ok = await store.send(
       mode === 'existingOutput'

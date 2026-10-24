@@ -373,56 +373,58 @@ export function StageEditor() {
                     </g>
                   );
                 })}
-                {state.outputs.map((o) => {
-                  const vp = vpOf(o);
-                  const isSel = selOutput?.id === o.id;
-                  return (
-                    <g key={o.id}>
-                      <rect
-                        x={vp.x}
-                        y={vp.y}
-                        width={vp.w}
-                        height={vp.h}
-                        fill={isSel ? 'rgba(255,255,255,0.06)' : 'transparent'}
-                        stroke={isSel ? '#ffffff' : 'rgba(255,255,255,0.6)'}
-                        strokeWidth={unit * (isSel ? 0.25 : 0.15)}
-                        strokeDasharray={`${unit * 0.8} ${unit * 0.5}`}
-                        style={{ cursor: 'move' }}
-                        onPointerDown={(e) =>
-                          begin(
-                            e,
-                            { kind: 'output', id: o.id, start: toStage(e), orig: vp },
-                            { type: 'output', id: o.id },
-                          )
-                        }
-                      />
-                      <text
-                        x={vp.x + unit * 0.6}
-                        y={vp.y + unit * 1.6}
-                        fontSize={unit * 1.2}
-                        fill="#ffffff"
-                        pointerEvents="none"
-                      >
-                        📽 {o.name}
-                      </text>
-                      {isSel && (
+                {state.outputs
+                  .filter((o) => !activeProfile(o).pose)
+                  .map((o) => {
+                    const vp = vpOf(o);
+                    const isSel = selOutput?.id === o.id;
+                    return (
+                      <g key={o.id}>
                         <rect
-                          className="handle"
-                          x={vp.x + vp.w - unit}
-                          y={vp.y + vp.h - unit}
-                          width={unit * 2}
-                          height={unit * 2}
-                          fill="#fff"
-                          stroke="#14112b"
-                          strokeWidth={unit * 0.15}
+                          x={vp.x}
+                          y={vp.y}
+                          width={vp.w}
+                          height={vp.h}
+                          fill={isSel ? 'rgba(255,255,255,0.06)' : 'transparent'}
+                          stroke={isSel ? '#ffffff' : 'rgba(255,255,255,0.6)'}
+                          strokeWidth={unit * (isSel ? 0.25 : 0.15)}
+                          strokeDasharray={`${unit * 0.8} ${unit * 0.5}`}
+                          style={{ cursor: 'move' }}
                           onPointerDown={(e) =>
-                            begin(e, { kind: 'resize', id: o.id, orig: vp, aspect: outputAspect(o) }, null)
+                            begin(
+                              e,
+                              { kind: 'output', id: o.id, start: toStage(e), orig: vp },
+                              { type: 'output', id: o.id },
+                            )
                           }
                         />
-                      )}
-                    </g>
-                  );
-                })}
+                        <text
+                          x={vp.x + unit * 0.6}
+                          y={vp.y + unit * 1.6}
+                          fontSize={unit * 1.2}
+                          fill="#ffffff"
+                          pointerEvents="none"
+                        >
+                          📽 {o.name}
+                        </text>
+                        {isSel && (
+                          <rect
+                            className="handle"
+                            x={vp.x + vp.w - unit}
+                            y={vp.y + vp.h - unit}
+                            width={unit * 2}
+                            height={unit * 2}
+                            fill="#fff"
+                            stroke="#14112b"
+                            strokeWidth={unit * 0.15}
+                            onPointerDown={(e) =>
+                              begin(e, { kind: 'resize', id: o.id, orig: vp, aspect: outputAspect(o) }, null)
+                            }
+                          />
+                        )}
+                      </g>
+                    );
+                  })}
               </svg>
             </div>
             <div className="editor-tools">
@@ -462,7 +464,9 @@ export function StageEditor() {
             onDeleted={() => setSel(null)}
           />
         )}
-        {selOutput && <OutputPlacement key={selOutput.id} output={selOutput} state={state} L={L} />}
+        {selOutput && !activeProfile(selOutput).pose && (
+          <OutputPlacement key={selOutput.id} output={selOutput} state={state} L={L} />
+        )}
         {!sel && (
           <div className="panel">
             <p className="muted" style={{ margin: 0 }}>

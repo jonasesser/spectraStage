@@ -132,7 +132,9 @@ describe('sessions & pairing', () => {
     expect(owner.secrets.pairingCode).toMatch(/^[A-Z2-9]{8}$/);
     const devices = [];
     for (const n of ['Garage', 'Wall', 'Ground']) devices.push(await pairDevice(owner, n));
-    await owner.wait((m) => m.type === 'snapshot' && m.state.outputs.length === 3);
+    // a new show comes with 6 planned projectors (one per room side) + 3 approved devices
+    await owner.wait((m) => m.type === 'snapshot' && m.state.outputs.length === 9);
+    expect(owner.state!.outputs.filter((o) => o.profiles[0]!.pose).length).toBe(9);
     expect(owner.state!.surfaces).toHaveLength(5); // 2 starter surfaces + 3 new
     expect(owner.state!.devices.every((d) => d.status === 'approved' && d.outputId)).toBe(true);
     for (const d of devices) d.dev.close();

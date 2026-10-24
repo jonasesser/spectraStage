@@ -6,7 +6,7 @@
  *  - the 3D room view in the controller.
  * Room space: x/z on the ground, y up, the viewer stands in `center`.
  */
-import type { Surface } from './schema.ts';
+import type { Pose, Surface } from './schema.ts';
 import { completeRoom, worldLayout, type BBox } from './stage.ts';
 
 export type V3 = [number, number, number];
@@ -168,13 +168,22 @@ export function faceLocal(f: RoomFace, p: V3): { x: number; y: number } | null {
 
 /** Where a ray from the room center in direction d hits the room (face, room point, stage point). */
 export function roomHit(fold: RoomFold, d: V3): { face: RoomFace; p: V3; x: number; y: number } | null {
+  return roomRay(fold, fold.center, d);
+}
+
+/** Where a ray from `origin` (inside the room) in direction d hits the room. */
+export function roomRay(
+  fold: RoomFold,
+  origin: V3,
+  d: V3,
+): { face: RoomFace; p: V3; x: number; y: number } | null {
   let best: { face: RoomFace; p: V3; x: number; y: number; s: number } | null = null;
   for (const f of fold.faces) {
     const den = dot(d, f.n);
     if (den >= -1e-6) continue; // must hit the face from inside
-    const s = dot(sub(f.o, fold.center), f.n) / den;
+    const s = dot(sub(f.o, origin), f.n) / den;
     if (s <= 0 || (best && s >= best.s)) continue;
-    const p = add(fold.center, d, s);
+    const p = add(origin, d, s);
     const r = sub(p, f.o);
     const lx = dot(r, f.ax);
     const ly = dot(r, f.ay);
@@ -196,4 +205,63 @@ export function mainAzimuth(fold: RoomFold): number {
   if (!main) return 0;
   const m = sub(add(main.o, main.ax, main.rect.w / 2), fold.center);
   return Math.atan2(m[0], -m[2]);
+}
+
+/** Projector pose standing at `from`, pointing at `target`, horizontal opening `fov` degrees. */
+export function aimPose(from: V3, target: V3, fov: number, roll = 0): Pose {
+  const d = sub(target, from);
+  return {
+    pos: [...from] as V3,
+    yaw: Math.atan2(d[0], -d[2]),
+    pitch: Math.atan2(d[1], Math.hypot(d[0], d[2])),
+    roll,
+    fov,
+  };
+}
+
+/** Unit view direction of a pose. */
+export function poseDir(p: Pose): V3 {
+  return dirFromAngles(p.yaw, p.pitch);
+}
+
+/**
+ * Default projector pose for a room side: standing in the middle of the room (slightly behind
+ * the viewer for walls, at ceiling/floor for the others), aimed at the center of the face so the
+ * picture just fits its width. Without a surface id, picks the first face not yet in `taken`
+ * (compared by yaw) in the order main wall, floor, side walls, ceiling.
+ */
+export function poseForSurface(
+  surfaces: readonly Surface[],
+  surfaceId: string | null,
+  takenFaces: Set<string>,
+): Pose | null {
+  const fold = roomFold(surfaces);
+  const order = ['main', 'ground', 'side', 'ceiling'];
+  const faces = [...fold.faces].sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role));
+  const pick = (f: RoomFace) => {
+    const c = facePoint(f, f.rect.x + f.rect.w / 2, f.rect.y + f.rect.h / 2);
+    let from: V3;
+    if (f.role === 'ground' || f.role === 'ceiling') {
+      from = [c[0], f.role === 'ground' ? fold.unit * 0.95 : 0.3, c[2]];
+    } else {
+      // stand on the far side of the room so the throw is long enough
+      const depth = Math.max(2, dot(sub(fold.center, c), f.n) * 1.8);
+      const b = add(c, f.n, depth);
+      from = [b[0], fold.center[1], b[2]];
+    }
+    const dist = Math.hypot(...sub(c, from));
+    const fov = (2 * Math.atan(f.rect.w / 2 / Math.max(0.1, dist)) * 180) / Math.PI;
+    return aimPose(from, c, Math.min(120, Math.max(10, fov)));
+  };
+  if (surfaceId) {
+    const f = fold.faces.find((x) => x.id === surfaceId);
+    return f ? pick(f) : null;
+  }
+  const free = faces.find((f) => !takenFaces.has(f.id)) ?? faces[0];
+  return free ? pick(free) : null;
+}
+
+/** The room face a projector's center ray hits (or null). */
+export function poseTarget(fold: RoomFold, p: Pose): string | null {
+  return roomRay(fold, p.pos, poseDir(p))?.face.id ?? null;
 }

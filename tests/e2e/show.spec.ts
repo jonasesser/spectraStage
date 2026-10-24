@@ -50,16 +50,15 @@ test('anonymous show: pair two projectors, play scenes, effects, creatures, blac
   const { phone, code } = await createShow(browser);
   const garage = await openDisplay(browser, code, 'Garage');
   const wall = await openDisplay(browser, code, 'Hauswand');
-  await approve(phone, 'Garage'); // uses the starter surface “Garage”
+  await approve(phone, 'Garage'); // attaches to the planned projector of the main wall
   await approve(phone, 'Hauswand', 'Wand');
   await expect(garage.getByText(/Warte auf Freigabe/)).toBeHidden({ timeout: 10_000 });
-  await expect(phone.locator('section.panel h2', { hasText: '📽 Garage' })).toBeVisible();
+  await expect(phone.locator('section.panel h2', { hasText: '📽 Beamer Hauptwand' })).toBeVisible();
   await expect(phone.locator('section.panel h2', { hasText: '📽 Hauswand' })).toBeVisible();
 
-  // turn test pattern off on both outputs and let scenes play
+  // turn the test pattern of the new projector off and let scenes play
+  // (planned projectors start without test pattern)
   const offButtons = phone.getByRole('button', { name: /Testbild aus/ });
-  await expect(offButtons).toHaveCount(2);
-  await offButtons.first().click();
   await expect(offButtons).toHaveCount(1);
   await offButtons.first().click();
   await expect(offButtons).toHaveCount(0);

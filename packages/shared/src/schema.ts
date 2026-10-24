@@ -58,6 +58,21 @@ export const ViewportSchema = z.object({
 });
 export type Viewport = z.infer<typeof ViewportSchema>;
 
+/**
+ * Projector in the 3D room: where it stands and where it points. When set, the output renders
+ * what this projector throws onto walls, floor and ceiling (also across corners).
+ * yaw: around the vertical axis (0 = room -z), pitch: up positive, roll: image rotation;
+ * fov: horizontal opening angle in degrees.
+ */
+export const PoseSchema = z.object({
+  pos: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]),
+  yaw: z.number().finite(),
+  pitch: z.number().min(-1.6).max(1.6),
+  roll: z.number().min(-3.2).max(3.2),
+  fov: z.number().min(5).max(150),
+});
+export type Pose = z.infer<typeof PoseSchema>;
+
 export const ProfileSchema = z.object({
   id,
   name,
@@ -97,6 +112,7 @@ export const ProfileSchema = z.object({
     ])
     .optional(),
   masks: z.array(MaskSchema).max(24),
+  pose: PoseSchema.nullable().optional(),
   updatedAt: z.number(),
 });
 export type Profile = z.infer<typeof ProfileSchema>;
@@ -419,6 +435,11 @@ export const CommandSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('output.deleteProfile'), outputId: id, profileId: id }),
   z.object({ t: z.literal('output.acceptResolution'), outputId: id }),
   z.object({ t: z.literal('output.setViewport'), outputId: id, viewport: ViewportSchema }),
+  z.object({ t: z.literal('output.setPose'), outputId: id, pose: PoseSchema.nullable() }),
+  /** Plan a projector before any PC is connected (a device can be approved onto it later). */
+  z.object({ t: z.literal('output.create'), name }),
+  /** Plan one projector per room side (main wall, 3 walls, floor, ceiling) for sides without one. */
+  z.object({ t: z.literal('output.planRoom') }),
   z.object({ t: z.literal('output.delete'), outputId: id }),
 
   z.object({ t: z.literal('preset.apply'), themeId: id, presetId: id, surfaceIds: surfaceIds.optional() }),
