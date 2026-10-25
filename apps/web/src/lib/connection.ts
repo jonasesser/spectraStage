@@ -66,6 +66,11 @@ export class Connection {
     private readonly handlers: ConnectionHandlers,
   ) {}
 
+  /** For authenticated HTTP requests of this show (e.g. ghost photos). */
+  get authToken(): string {
+    return this.token;
+  }
+
   setToken(token: string): void {
     this.token = token;
   }

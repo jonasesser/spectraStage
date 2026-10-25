@@ -1,6 +1,7 @@
 import type { WebSocket } from 'ws';
 import {
   planRoomOutputs,
+  releaseGhosts,
   applyCommand,
   applyReportedResolution,
   CommandError,
@@ -440,6 +441,11 @@ export class Hub {
       if (r.changed) {
         const next = r.state;
         this.commit(ls, next, controller.name, r.summary);
+        if (cmd.t === 'ghost.delete' || cmd.t === 'ghost.deleteAll')
+          this.store.pruneGhosts(
+            ls.state.id,
+            (ls.state.ghosts ?? []).map((g) => g.id),
+          );
       }
       if (r.approvedDevice) this.completeApproval(ls, r.approvedDevice);
       if (r.revokeDevice) this.revokeSubject(ls, r.revokeDevice, 'rejected');
@@ -463,6 +469,34 @@ export class Hub {
       this.log.error({ err: e }, 'command failed');
       return { type: 'nack', id: cmdId, code: 'internal', message: 'Internal error' };
     }
+  }
+
+  /**
+   * A ghost photo from the zombie camera (sent by a projector PC or a phone): stored, listed in
+   * the show and – if wanted – released right away from where the person stood (u).
+   */
+  addGhost(sessionId: string, mime: string, data: Buffer, release: boolean, u?: number): string | null {
+    const ls = this.live.get(sessionId) ?? this.load(sessionId);
+    if (!ls) return null;
+    const id = newId();
+    const now = this.now();
+    const next = structuredClone(ls.state);
+    const list = [...(next.ghosts ?? []), { id, at: now }];
+    // keep the newest 80 pictures
+    next.ghosts = list.slice(-80);
+    if (release) releaseGhosts(next, [id], { now, newId, newSeed } as never, 35, u);
+    this.store.insertGhost(id, sessionId, mime, data, now);
+    this.commit(ls, next, 'system', 'ghost photo');
+    if (list.length > 80)
+      this.store.pruneGhosts(
+        sessionId,
+        next.ghosts.map((g) => g.id),
+      );
+    return id;
+  }
+
+  ghostImage(sessionId: string, id: string): { mime: string; data: Buffer } | null {
+    return this.store.getGhost(sessionId, id);
   }
 
   private commit(ls: LiveSession, next: SessionState, actor: string, summary: string): void {

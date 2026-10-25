@@ -196,6 +196,44 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
     return { ok: true };
   });
 
+  // Ghost photos of the zombie camera (pictures of guests): only members of the show.
+  app.post('/api/ghosts', { bodyLimit: 900 * 1024 }, async (req, reply) => {
+    const row = auth(req, ['owner', 'controller', 'device']);
+    if (!limiter.take('rest', clientIp(req, config))) return tooMany(reply);
+    const body = z
+      .object({
+        image: z
+          .string()
+          .max(800_000)
+          .regex(/^data:image\/(webp|png|jpeg);base64,/),
+        release: z.boolean().optional(),
+        u: z.number().min(0).max(1).optional(),
+      })
+      .parse(req.body);
+    const [head, b64] = body.image.split(',', 2);
+    const mime = head!.slice(5, head!.indexOf(';'));
+    const id = hub.addGhost(
+      row.session_id,
+      mime,
+      Buffer.from(b64 ?? '', 'base64'),
+      body.release ?? true,
+      body.u,
+    );
+    if (!id) throw new HubError(404, 'not_found', 'Show not found');
+    return reply.code(201).send({ id });
+  });
+
+  app.get('/api/ghosts/:id', async (req, reply) => {
+    const row = auth(req, ['owner', 'controller', 'device']);
+    const { id } = z.object({ id: z.string().max(40) }).parse(req.params);
+    const g = hub.ghostImage(row.session_id, id);
+    if (!g) return reply.code(404).send({ error: 'not_found', message: 'Ghost not found' });
+    return reply
+      .header('Content-Type', g.mime)
+      .header('Cache-Control', 'private, max-age=86400')
+      .send(g.data);
+  });
+
   app.get('/api/sessions/audit', async (req) => {
     const row = auth(req, ['owner', 'controller']);
     return { entries: hub.audit(row.session_id) };

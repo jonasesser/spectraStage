@@ -82,6 +82,12 @@ export interface RendererOptions {
   powerPreference?: 'high-performance' | 'low-power';
 }
 
+/** A ghost photo prepared for drawing (ghostly look + glow). */
+export interface GhostPicture {
+  img: CanvasImageSource & { width: number; height: number };
+  glow: CanvasImageSource & { width: number; height: number };
+}
+
 export interface LiveSprite {
   canvas: HTMLCanvasElement;
   /** 0..1 – fade in/out. */
@@ -625,6 +631,125 @@ export class StageRenderer {
       blackReason: this.blackReason,
       lastError: this.lastError && Date.now() - this.lastError.at < 60_000 ? this.lastError.msg : null,
     };
+  }
+
+  private ghostImages: ((id: string) => GhostPicture | null) | null = null;
+  /** Ghost photos (zombie camera) for the flying ghosts of the show. */
+  setGhostImages(fn: ((id: string) => GhostPicture | null) | null): void {
+    this.ghostImages = fn;
+  }
+
+  /**
+   * A ghost photo flying around: it rises from where the person stood, then drifts along the
+   * walls (around the room), waving like cloth, with a fading tail, a glow and a faint trail.
+   */
+  private drawGhostFlight(
+    g: CanvasRenderingContext2D,
+    state: SessionState,
+    f: NonNullable<SessionState['ghostFlights']>[number],
+    gi: GhostPicture,
+    now: number,
+  ): boolean {
+    const world = this.worldFor(state);
+    const main = world.surfaces.find((w) => w.role === 'main');
+    if (!main) return false;
+    const r = main.rect;
+    const rng = createRng(f.seed);
+    const t = (now - f.startAt) / 1000;
+    const T = (f.endAt - f.startAt) / 1000;
+    const h = r.h * (0.42 + 0.14 * rng());
+    const w = (h * gi.img.width) / gi.img.height;
+    const dir = rng() < 0.5 ? -1 : 1;
+    const speed = r.w * (0.05 + 0.06 * rng());
+    const s1 = rng() * 6.28;
+    const s2 = rng() * 6.28;
+    const s3 = rng() * 6.28;
+    const x0 = r.x + r.w * (0.14 + 0.72 * (f.u ?? rng()));
+    const ring = world.wrap;
+    const posAt = (tt: number): [number, number] => {
+      // detach: rise from the person's place, then wander
+      const k = Math.min(1, Math.max(0, tt / 2.8));
+      const e = k * k * (3 - 2 * k);
+      const wanderT = Math.max(0, tt - 1.5);
+      // swings around the front wall (where most projectors are), now and then reaching the
+      // side walls, and slowly drifts on around the room
+      const cxw = r.x + r.w * 0.5;
+      let x =
+        x0 +
+        (cxw - x0) * e * 0.6 +
+        r.w * 0.55 * Math.sin(wanderT * 0.23 + s1) * e +
+        r.w * 0.12 * Math.sin(wanderT * 0.71 + s2) * e +
+        dir * speed * 0.15 * wanderT;
+      const yRise = r.y + r.h * 0.98 - h * 0.5;
+      const yFly = r.y + r.h * (0.36 + 0.13 * Math.sin(tt * 0.6 + s2) + 0.05 * Math.sin(tt * 1.9 + s3));
+      let y = yRise + (yFly - yRise) * e;
+      // fly away upwards at the end
+      const out = Math.max(0, tt - (T - 2.5)) / 2.5;
+      y -= out * out * r.h * 0.5;
+      if (ring) x = ring.x + ((((x - ring.x) % ring.w) + ring.w) % ring.w);
+      else x = r.x + r.w * 0.5 + r.w * 0.45 * Math.sin((x - r.x) / (r.w * 0.45));
+      return [x, y];
+    };
+    const fadeIn = Math.min(1, t / 1.6);
+    const fadeOut = Math.min(1, Math.max(0, (T - t) / 2.5));
+    const alpha = 0.78 * fadeIn * fadeOut * (0.9 + 0.1 * Math.sin(t * 7.3 + s1));
+    if (alpha <= 0.01) return false;
+    const [cx, cy] = posAt(t);
+    const [px] = posAt(t - 0.2);
+    const vx = (cx - px) / 0.2;
+    const tilt = Math.max(-0.35, Math.min(0.35, (vx / Math.max(0.01, r.w)) * 1.2));
+    const scale = (0.85 + 0.15 * Math.min(1, t / 2.8)) * (1 + 0.03 * Math.sin(t * 2.1 + s2));
+    const drawAt = (x: number, y: number, a: number, slices: boolean) => {
+      g.save();
+      g.translate(x, y);
+      g.rotate(tilt);
+      g.scale(scale, scale);
+      // glow
+      g.globalAlpha = a * 0.55;
+      g.globalCompositeOperation = 'lighter';
+      const gw = (w * gi.glow.width) / gi.img.width;
+      const gh = (h * gi.glow.height) / gi.img.height;
+      g.drawImage(gi.glow, -gw / 2, -gh / 2, gw, gh);
+      g.globalCompositeOperation = 'source-over';
+      if (!slices) {
+        g.globalAlpha = a;
+        g.drawImage(gi.img, -w / 2, -h / 2, w, h);
+      } else {
+        // waving like cloth, stronger towards the tail, which fades out
+        const N = 22;
+        const ih = gi.img.height;
+        for (let i = 0; i < N; i++) {
+          const sy = i / N;
+          const tail = sy < 0.55 ? 1 : Math.max(0, 1 - (sy - 0.55) / 0.45);
+          if (tail <= 0) continue;
+          const dx = Math.sin(sy * 5.5 - t * 2.6 + s3) * w * 0.035 * (0.25 + sy * 1.4);
+          const spread = 1 + Math.max(0, sy - 0.6) * 0.25;
+          g.globalAlpha = a * tail;
+          g.drawImage(
+            gi.img,
+            0,
+            (ih * i) / N,
+            gi.img.width,
+            ih / N + 1,
+            -(w * spread) / 2 + dx,
+            -h / 2 + (h * i) / N,
+            w * spread,
+            h / N + h * 0.003,
+          );
+        }
+      }
+      g.restore();
+    };
+    // faint trail behind, then the ghost (also across the seam of the room's wall ring)
+    const shifts = ring ? [0, -ring.w, ring.w] : [0];
+    for (const sh of shifts) {
+      const [tx1, ty1] = posAt(t - 0.18);
+      const [tx2, ty2] = posAt(t - 0.36);
+      if (!ring || Math.abs(tx1 - cx) < ring.w / 2) drawAt(tx1 + sh, ty1, alpha * 0.16, false);
+      if (!ring || Math.abs(tx2 - cx) < ring.w / 2) drawAt(tx2 + sh, ty2, alpha * 0.08, false);
+      drawAt(cx + sh, cy, alpha, true);
+    }
+    return true;
   }
 
   private liveSprite: (() => LiveSprite[]) | null = null;
@@ -1685,7 +1810,8 @@ export class StageRenderer {
     const all = [...cues, ...ambient];
     const o = this.actorOverlay;
     const live = this.liveSprite?.() ?? [];
-    if (all.length === 0 && !live.length) {
+    const flights = (state.ghostFlights ?? []).filter((f) => now >= f.startAt && now < f.endAt);
+    if (all.length === 0 && !live.length && !(flights.length && this.ghostImages)) {
       if (o.dirty) {
         o.clear();
         o.upload();
@@ -1810,6 +1936,12 @@ export class StageRenderer {
       }
     }
     if (this.actorSoundAt.size > 200) this.actorSoundAt.clear();
+    if (flights.length && this.ghostImages) {
+      for (const f of flights) {
+        const gi = this.ghostImages(f.ghostId);
+        if (gi && this.drawGhostFlight(g, state, f, gi, now)) drew = true;
+      }
+    }
     if (live.length) {
       // people from the live camera as ghosts drifting along the main wall, each on their own,
       // in the order they stand in the camera picture, standing on the wall's ground line

@@ -55,6 +55,15 @@ const MIGRATIONS: string[] = [
      summary TEXT NOT NULL
    );
    CREATE INDEX audit_session ON audit(session_id, at);`,
+  // 2: ghost photos of the zombie camera (pictures of guests – deleted with the show)
+  `CREATE TABLE ghosts (
+     id TEXT PRIMARY KEY,
+     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+     created_at INTEGER NOT NULL,
+     mime TEXT NOT NULL,
+     data BLOB NOT NULL
+   );
+   CREATE INDEX ghosts_session ON ghosts(session_id, created_at);`,
 ];
 
 export class Store {
@@ -203,6 +212,29 @@ export class Store {
     return this.db
       .prepare('SELECT at, actor, summary FROM audit WHERE session_id = ? ORDER BY id DESC LIMIT ?')
       .all(sessionId, limit) as { at: number; actor: string; summary: string }[];
+  }
+
+  insertGhost(id: string, sessionId: string, mime: string, data: Buffer, now: number): void {
+    this.db
+      .prepare('INSERT INTO ghosts (id, session_id, created_at, mime, data) VALUES (?, ?, ?, ?, ?)')
+      .run(id, sessionId, now, mime, data);
+  }
+
+  getGhost(sessionId: string, id: string): { mime: string; data: Buffer } | null {
+    return (
+      (this.db.prepare('SELECT mime, data FROM ghosts WHERE session_id = ? AND id = ?').get(sessionId, id) as
+        { mime: string; data: Buffer } | undefined) ?? null
+    );
+  }
+
+  /** Removes the ghost pictures of a show that are no longer listed. */
+  pruneGhosts(sessionId: string, keep: readonly string[]): void {
+    const ids = this.db.prepare('SELECT id FROM ghosts WHERE session_id = ?').all(sessionId) as {
+      id: string;
+    }[];
+    const k = new Set(keep);
+    const del = this.db.prepare('DELETE FROM ghosts WHERE id = ?');
+    for (const { id } of ids) if (!k.has(id)) del.run(id);
   }
 
   close(): void {

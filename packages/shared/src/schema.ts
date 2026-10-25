@@ -433,6 +433,25 @@ export const SessionStateSchema = z.object({
     .array(z.lazy(() => RoomObjectSchema))
     .max(24)
     .optional(),
+  /** Saved ghost photos (zombie camera); the pictures themselves live on the server. */
+  ghosts: z
+    .array(z.object({ id: z.string().max(40), at: z.number() }))
+    .max(80)
+    .optional(),
+  /** Ghosts flying around right now. `u`: where in the camera picture the person stood. */
+  ghostFlights: z
+    .array(
+      z.object({
+        id: z.string().max(40),
+        ghostId: z.string().max(40),
+        startAt: z.number(),
+        endAt: z.number(),
+        seed: z.number().int(),
+        u: z.number().min(0).max(1).optional(),
+      }),
+    )
+    .max(16)
+    .optional(),
   /** Object being placed: every projector shows its outline so it can be lined up. */
   objectEdit: z
     .object({ id: z.string().max(40), until: z.number() })
@@ -473,6 +492,15 @@ export const CommandSchema = z.discriminatedUnion('t', [
     patch: RoomObjectSchema.omit({ id: true }).partial(),
   }),
   z.object({ t: z.literal('object.delete'), id: z.string().max(40) }),
+  /** Let saved ghost photos fly around again (several at once, staggered). */
+  z.object({
+    t: z.literal('ghost.release'),
+    ghostIds: z.array(z.string().max(40)).min(1).max(12),
+    seconds: z.number().min(5).max(300).optional(),
+  }),
+  z.object({ t: z.literal('ghost.delete'), ghostId: z.string().max(40) }),
+  z.object({ t: z.literal('ghost.deleteAll') }),
+  z.object({ t: z.literal('ghost.stopFlights') }),
   /** Show the outline of an object on all projectors while it is placed (null = done). */
   z.object({ t: z.literal('object.edit'), id: z.string().max(40).nullable() }),
   z.object({ t: z.literal('session.setDefaultTheme'), themeId: id }),
@@ -659,6 +687,8 @@ export const RtcDataSchema = z.object({
   kind: z.enum(['offer', 'answer', 'ice', 'bye', 'style']),
   /** Zombie camera look: make-up (person stays recognisable) or comic (googly eyes). */
   style: z.enum(['makeup', 'comic']).optional(),
+  /** Zombie camera: this projector PC takes the ghost photos (only one does). */
+  capture: z.boolean().optional(),
   sdp: z.string().max(20_000).optional(),
   candidate: z
     .object({

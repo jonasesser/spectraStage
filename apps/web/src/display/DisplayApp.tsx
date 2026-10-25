@@ -5,6 +5,7 @@ import { loadThemeRuntime } from '@spectrastage/catalog/runtime';
 import { formatCode, normalizeCode, type SessionState } from '@spectrastage/shared';
 import { Connection, type ConnStatus } from '../lib/connection.ts';
 import { ZombieReceiver } from './zombie.ts';
+import { ghostImagesFor } from '../lib/ghostImages.ts';
 import type { ApiError } from '../lib/api.ts';
 import { api } from '../lib/api.ts';
 import { KEYS, storage } from '../lib/storage.ts';
@@ -273,7 +274,11 @@ function Projection({
     const r = rendererRef.current;
     if (!c || !r) return;
     const z = new ZombieReceiver(c, r);
-    return () => z.dispose();
+    r.setGhostImages(ghostImagesFor(c).get);
+    return () => {
+      r.setGhostImages(null);
+      z.dispose();
+    };
   }, [slot, renderMode]);
 
   useEffect(() => {

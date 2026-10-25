@@ -205,6 +205,40 @@ describe('sessions & pairing', () => {
   });
 });
 
+describe('ghost photos', () => {
+  it('stores a ghost photo, releases it, serves it only to the show and deletes it', async () => {
+    const { owner, ownerToken } = await createShow();
+    const other = await createShow();
+    const png =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const up = await api('POST', '/api/ghosts', { image: png, u: 0.3 }, ownerToken);
+    expect(up.status).toBe(201);
+    const id = up.data.id as string;
+    await owner.wait((m) => m.type === 'snapshot' && (m.state.ghostFlights ?? []).length === 1);
+    expect(owner.state!.ghosts!.map((g) => g.id)).toEqual([id]);
+    const get = await fetch(`http://${base}/api/ghosts/${id}`, {
+      headers: { authorization: `Bearer ${ownerToken}` },
+    });
+    expect(get.status).toBe(200);
+    expect(get.headers.get('content-type')).toBe('image/png');
+    // another show cannot see it
+    const foreign = await fetch(`http://${base}/api/ghosts/${id}`, {
+      headers: { authorization: `Bearer ${other.ownerToken}` },
+    });
+    expect(foreign.status).toBe(404);
+    await owner.cmd({ t: 'ghost.release', ghostIds: [id] });
+    await owner.wait((m) => m.type === 'snapshot' && (m.state.ghostFlights ?? []).length === 2);
+    await owner.cmd({ t: 'ghost.delete', ghostId: id });
+    await owner.wait((m) => m.type === 'snapshot' && (m.state.ghosts ?? []).length === 0);
+    const gone = await fetch(`http://${base}/api/ghosts/${id}`, {
+      headers: { authorization: `Bearer ${ownerToken}` },
+    });
+    expect(gone.status).toBe(404);
+    owner.close();
+    other.owner.close();
+  });
+});
+
 describe('reliability', () => {
   it('deduplicates resent commands and survives a server restart', async () => {
     const { owner, ownerToken } = await createShow();

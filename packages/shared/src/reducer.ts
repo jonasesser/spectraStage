@@ -522,6 +522,24 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
     case 'session.setRoom':
       state.room = cmd.room;
       return res(cmd.room ? 'room mode on' : 'room mode off');
+    case 'ghost.release': {
+      const have = new Set((state.ghosts ?? []).map((g) => g.id));
+      const ids = cmd.ghostIds.filter((g) => have.has(g));
+      if (!ids.length) fail('not_found', 'Unknown ghost');
+      releaseGhosts(state, ids, ctx, cmd.seconds ?? 35);
+      return res(`${ids.length} ghost(s) released`);
+    }
+    case 'ghost.delete':
+      state.ghosts = (state.ghosts ?? []).filter((g) => g.id !== cmd.ghostId);
+      state.ghostFlights = (state.ghostFlights ?? []).filter((f) => f.ghostId !== cmd.ghostId);
+      return res('ghost deleted');
+    case 'ghost.deleteAll':
+      state.ghosts = [];
+      state.ghostFlights = [];
+      return res('all ghosts deleted');
+    case 'ghost.stopFlights':
+      state.ghostFlights = [];
+      return res('ghosts back');
     case 'object.create': {
       const list = (state.objects ??= []);
       if (list.length >= 24) fail('limit', 'Too many objects');
@@ -1120,4 +1138,27 @@ export function mountOf(
   if (p.rotation === 0 && p.flipX && !p.flipY) return 'rear';
   if (p.rotation === 0 && !p.flipX && p.flipY) return 'ceilingRear';
   return 'other';
+}
+
+/** Ghost photos fly around (staggered by 1.2 s); finished and too many flights are dropped. */
+export function releaseGhosts(
+  state: SessionState,
+  ghostIds: readonly string[],
+  ctx: ReducerContext,
+  seconds = 35,
+  u?: number,
+): void {
+  const flights = (state.ghostFlights ?? []).filter((f) => f.endAt > ctx.now);
+  ghostIds.forEach((ghostId, i) => {
+    const startAt = ctx.now + i * 1200;
+    flights.push({
+      id: ctx.newId(),
+      ghostId,
+      startAt,
+      endAt: startAt + seconds * 1000,
+      seed: ctx.newSeed() % 100000,
+      ...(u !== undefined ? { u } : {}),
+    });
+  });
+  state.ghostFlights = flights.slice(-16);
 }

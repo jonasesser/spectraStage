@@ -1,9 +1,10 @@
 /**
  * Zombie camera on the projector PC: receives the phone's camera (WebRTC), cuts the people out
- * (MediaPipe selfie segmentation), makes them funny zombie ghosts (green cartoon skin, glowing
- * edge, ghost tail, googly eyes in dark rings, crooked teeth, a stitched scar – from MediaPipe
- * face landmarks) and hands the picture to the renderer, which lets it drift along the main wall.
- * Runs entirely in the browser; nothing is stored.
+ * (MediaPipe selfie segmentation), finds their faces (MediaPipe face landmarks, checked against
+ * the person mask so objects do not get faces) and turns each person into a zombie with their
+ * own random look (skin, eyes, mouth, scars, bolts …), slightly transparent like a ghost. When a
+ * face is seen well for a moment, a ghost photo is taken: it is saved with the show and flies
+ * around the room (see the renderer); saved ghosts can be released again any time.
  */
 import type { LiveSprite, StageRenderer } from '@spectrastage/engine';
 import type { RtcData } from '@spectrastage/shared';
@@ -17,6 +18,17 @@ type Vision = typeof Mp;
 type Segmenter = Mp.ImageSegmenter;
 type FaceLm = Mp.FaceLandmarker;
 type Pt = { x: number; y: number };
+/** Random zombie look of one person. */
+interface Variant {
+  /** Skin colour: multipliers r, g, b and a lift. */
+  skin: [number, number, number, number];
+  eyes: 'yellow' | 'red' | 'milky' | 'black' | 'blue';
+  mouth: 'dark' | 'stitched' | 'drool' | 'teeth';
+  marks: ('forehead' | 'cheek' | 'bandage' | 'bolts' | 'veins' | 'spots')[];
+  /** Cartoon look with googly eyes instead of zombie make-up. */
+  comic: boolean;
+  seed: number;
+}
 interface Person {
   id: number;
   box: { x: number; y: number; w: number; h: number };
@@ -25,6 +37,41 @@ interface Person {
   alpha: number;
   label: number;
   faces: Pt[][];
+  /** Last time a real face was found in this person (objects never get one). */
+  faceSeen: number;
+  /** Since when the face has been seen well (frontal, big enough) – for the ghost photo. */
+  goodSince: number;
+  capturedAt: number;
+  variant: Variant;
+}
+
+const SKINS: [number, number, number, number][] = [
+  [0.84, 1.02, 0.84, 14], // zombie green
+  [0.86, 0.92, 1.0, 10], // grey-blue ghoul
+  [0.96, 0.82, 1.0, 12], // purple
+  [1.0, 1.0, 0.98, 30], // pale white
+  [0.9, 1.0, 0.78, 8], // rotten olive
+];
+function makeVariant(id: number): Variant {
+  let x = (id * 2654435761) >>> 0;
+  const r = () => {
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    return ((x >>> 0) % 10000) / 10000;
+  };
+  const pick = <T>(a: readonly T[]): T => a[Math.floor(r() * a.length)]!;
+  const all = ['forehead', 'cheek', 'bandage', 'bolts', 'veins', 'spots'] as const;
+  const marks = all.filter(() => r() < 0.45);
+  if (!marks.length) marks.push(pick(all));
+  return {
+    skin: pick(SKINS),
+    eyes: pick(['yellow', 'red', 'milky', 'black', 'blue'] as const),
+    mouth: pick(['dark', 'stitched', 'drool', 'teeth'] as const),
+    marks: marks.slice(0, 3),
+    comic: r() < 0.3,
+    seed: Math.floor(r() * 1e6),
+  };
 }
 
 export class ZombieFx {
@@ -32,15 +79,20 @@ export class ZombieFx {
   private tmp = document.createElement('canvas');
   private seg: Segmenter | null = null;
   private face: FaceLm | null = null;
-  private faces: Pt[][] = [];
+  private faces: { f: Pt[]; v: Variant }[] = [];
   private frame = 0;
   private people: Person[] = [];
-  /** makeup: the person stays recognisable · comic: cartoon colours with googly eyes. */
-  style: 'makeup' | 'comic' = 'makeup';
   private nextId = 1;
   private glow = document.createElement('canvas');
   ready = false;
   failed = false;
+  /** Called with a ghost photo (data URL) and where the person stood (0..1). */
+  onCapture: ((image: string, u: number) => void) | null = null;
+  private lastCapture = 0;
+  private lastProcess = 0;
+  private interval = 80;
+  private lab: Int32Array | null = null;
+  private labPerson = new Map<number, Person>();
 
   async init(): Promise<void> {
     try {
@@ -57,9 +109,9 @@ export class ZombieFx {
           baseOptions: { modelAssetPath: '/mediapipe/face_landmarker.task', delegate },
           runningMode: 'IMAGE',
           numFaces: 2,
-          minFaceDetectionConfidence: 0.3,
-          minFacePresenceConfidence: 0.3,
-          minTrackingConfidence: 0.3,
+          minFaceDetectionConfidence: 0.6,
+          minFacePresenceConfidence: 0.6,
+          minTrackingConfidence: 0.6,
         });
       };
       try {
@@ -76,6 +128,10 @@ export class ZombieFx {
 
   process(video: HTMLVideoElement, ts: number): void {
     if (!this.seg || video.videoWidth === 0) return;
+    // how often a picture gets processed (slow PCs: hold people visible longer between pictures)
+    const pn = performance.now();
+    if (this.lastProcess) this.interval = this.interval * 0.8 + Math.min(5000, pn - this.lastProcess) * 0.2;
+    this.lastProcess = pn;
     const k = Math.min(1, MAX_W / video.videoWidth);
     const W = Math.round(video.videoWidth * k);
     const H = Math.round(video.videoHeight * k);
@@ -139,40 +195,6 @@ export class ZombieFx {
           }
         }
       }
-    // zombie colours for the whole picture
-    for (let i = 0, p = 0; i < W * H; i++, p += 4) {
-      const c = m[i]!;
-      // solid person, soft only right at the outline
-      const a = c <= 0.3 ? 0 : c >= 0.55 ? 1 : (c - 0.3) / 0.25;
-      if (a <= 0) {
-        d[p + 3] = 0;
-        continue;
-      }
-      const l = (0.3 * d[p]! + 0.59 * d[p + 1]! + 0.11 * d[p + 2]!) / 255;
-      if (this.style === 'comic') {
-        // cartoon zombie skin: a few green levels from the brightness
-        const q = Math.min(1, Math.floor(l * 5 + 0.5) / 5 + 0.08);
-        d[p] = 52 + 150 * q;
-        d[p + 1] = 92 + 160 * q;
-        d[p + 2] = 64 + 110 * q;
-        d[p + 3] = 255 * a;
-      } else {
-        // zombie make-up: every detail of the person stays (recognisable), colours turn pale
-        // grey-green with a bit more contrast
-        const gray = l * 255;
-        const r0 = d[p]! * 0.65 + gray * 0.35;
-        const g0 = d[p + 1]! * 0.65 + gray * 0.35;
-        const b0 = d[p + 2]! * 0.65 + gray * 0.35;
-        // lifted: a ghost must glow on the dark scene, also in dark clothes
-        const k = (x: number) => Math.max(0, Math.min(255, 34 + ((x - 128) * 1.08 + 128) * 0.9));
-        d[p] = k(r0 * 0.88);
-        d[p + 1] = k(g0 * 1.02 + 12);
-        d[p + 2] = k(b0 * 0.86);
-        d[p + 3] = 255 * a;
-      }
-    }
-    const tg = this.tmp.getContext('2d')!;
-    tg.putImageData(img, 0, 0);
     // follow the people from picture to picture (stable ids → stable places on the wall)
     const now = performance.now();
     const found = comps
@@ -202,14 +224,19 @@ export class ZombieFx {
             if (!best || Math.abs(pr.box.x + pr.box.w / 2 - cx) < Math.abs(best.box.x + best.box.w / 2 - cx))
               best = pr;
       if (!best) {
+        const id = this.nextId++;
         best = {
-          id: this.nextId++,
+          id,
           box: nb,
           canvas: document.createElement('canvas'),
           seen: now,
           alpha: 0,
           label: k,
           faces: [],
+          faceSeen: 0,
+          goodSince: 0,
+          capturedAt: 0,
+          variant: makeVariant(id + Math.floor(Math.random() * 1e6)),
         };
         this.people.push(best);
       }
@@ -225,15 +252,108 @@ export class ZombieFx {
       best.label = k;
       active.push(best);
     }
-    // faces per person (on their head area, so every face is found – also small ones in a group)
-    for (const pr of active) if ((this.frame + pr.id) % 2 === 0) pr.faces = this.findFaces(pr);
-    this.faces = active.flatMap((pr) => pr.faces);
+    this.labPerson = new Map(active.map((pr) => [pr.label, pr]));
+    // faces per person (on their head area); only real faces inside the person count
+    for (const pr of active) if ((this.frame + pr.id) % 2 === 0) pr.faces = this.findFaces(pr, m, W);
+    for (const pr of active) if (pr.faces.length) pr.faceSeen = now;
+
+    // zombie colours for the whole picture, each person in their own skin colour
+    const variantOf = (x: number, y: number): Variant | undefined => {
+      const l = lab[Math.floor(y / C) * gw + Math.floor(x / C)]!;
+      return l >= 0 ? this.labPerson.get(l)?.variant : undefined;
+    };
+    for (let i = 0, p = 0; i < W * H; i++, p += 4) {
+      const c = m[i]!;
+      // solid person, soft only right at the outline
+      const a = c <= 0.3 ? 0 : c >= 0.55 ? 1 : (c - 0.3) / 0.25;
+      if (a <= 0) {
+        d[p + 3] = 0;
+        continue;
+      }
+      const l = (0.3 * d[p]! + 0.59 * d[p + 1]! + 0.11 * d[p + 2]!) / 255;
+      const v = variantOf(i % W, (i / W) | 0);
+      if (v?.comic) {
+        // cartoon zombie skin: a few green levels from the brightness
+        const q = Math.min(1, Math.floor(l * 5 + 0.5) / 5 + 0.08);
+        d[p] = 52 + 150 * q;
+        d[p + 1] = 92 + 160 * q;
+        d[p + 2] = 64 + 110 * q;
+        d[p + 3] = 255 * a * 0.84;
+      } else {
+        // zombie make-up: every detail of the person stays (recognisable), colours turn pale
+        // grey-green with a bit more contrast
+        const gray = l * 255;
+        const r0 = d[p]! * 0.65 + gray * 0.35;
+        const g0 = d[p + 1]! * 0.65 + gray * 0.35;
+        const b0 = d[p + 2]! * 0.65 + gray * 0.35;
+        // lifted: a ghost must glow on the dark scene, also in dark clothes
+        const sk = v?.skin ?? SKINS[0]!;
+        const k = (x: number) => Math.max(0, Math.min(255, 34 + ((x - 128) * 1.08 + 128) * 0.9));
+        d[p] = k(r0 * sk[0] + sk[3] * 0.5);
+        d[p + 1] = k(g0 * sk[1] + sk[3]);
+        d[p + 2] = k(b0 * sk[2] + sk[3] * 0.6);
+        // a little transparent, like a ghost
+        d[p + 3] = 255 * a * 0.84;
+      }
+    }
+    const tg = this.tmp.getContext('2d')!;
+    tg.putImageData(img, 0, 0);
+    this.faces = active.flatMap((pr) => pr.faces.map((f) => ({ f, v: pr.variant })));
     this.drawFaces(tg, ts / 1000);
-    for (const pr of active) this.cutOut(pr, H, lab, gw, C);
+    // shown are people with a face (or clearly a standing person) – no lamps, chairs, posters
+    const shown = active.filter(
+      (pr) =>
+        now - pr.faceSeen < Math.max(4000, this.interval * 8) ||
+        (pr.box.h >= H * 0.45 && pr.box.h >= pr.box.w * 1.1),
+    );
+    for (const pr of shown) this.cutOut(pr, H, lab, gw, C);
+    for (const pr of active) if (!shown.includes(pr)) pr.seen = Math.min(pr.seen, now - 1e6);
+    for (const pr of shown) this.maybeCapture(pr, now, W);
+  }
+
+  /** Ghost photo when a face has been seen well for a moment (once a minute per person). */
+  private maybeCapture(pr: Person, now: number, W: number): void {
+    const f = pr.faces[0];
+    const good =
+      !!f &&
+      f.length >= 468 &&
+      this.frontal(f) &&
+      Math.hypot(f[33]!.x - f[263]!.x, f[33]!.y - f[263]!.y) > 18;
+    if (!good) {
+      pr.goodSince = 0;
+      return;
+    }
+    if (!pr.goodSince) pr.goodSince = now;
+    if (
+      !this.onCapture ||
+      now - pr.goodSince < 1200 ||
+      now - pr.capturedAt < 60_000 ||
+      now - this.lastCapture < 20_000
+    )
+      return;
+    pr.capturedAt = now;
+    this.lastCapture = now;
+    const src = pr.canvas;
+    const k = Math.min(1, 420 / src.height);
+    const c = document.createElement('canvas');
+    c.width = Math.max(8, Math.round(src.width * k));
+    c.height = Math.max(8, Math.round(src.height * k));
+    c.getContext('2d')!.drawImage(src, 0, 0, c.width, c.height);
+    let url = c.toDataURL('image/webp', 0.82);
+    if (!url.startsWith('data:image/webp')) url = c.toDataURL('image/png');
+    this.onCapture(url, (pr.box.x + pr.box.w / 2) / Math.max(1, W));
+  }
+
+  /** Face looks into the camera: nose roughly between the eyes. */
+  private frontal(f: Pt[]): boolean {
+    const l = Math.abs(f[1]!.x - f[33]!.x);
+    const r = Math.abs(f[263]!.x - f[1]!.x);
+    const q = l / Math.max(1, r);
+    return q > 0.55 && q < 1.8;
   }
 
   private faceCanvas = document.createElement('canvas');
-  private findFaces(pr: Person): Pt[][] {
+  private findFaces(pr: Person, m: Float32Array, W: number): Pt[][] {
     if (!this.face) return [];
     const b = pr.box;
     const x = Math.max(0, b.x);
@@ -248,9 +368,23 @@ export class ZombieFx {
     fc.getContext('2d')!.drawImage(this.work, x, y, w, h, 0, 0, fc.width, fc.height);
     try {
       const r = this.face.detect(fc);
-      return r.faceLandmarks.map((f: Mp.NormalizedLandmark[]) =>
-        f.map((p) => ({ x: x + p.x * w, y: y + p.y * h })),
-      );
+      const H = this.work.height;
+      return r.faceLandmarks
+        .map((f: Mp.NormalizedLandmark[]) => f.map((p) => ({ x: x + p.x * w, y: y + p.y * h })))
+        .filter((f: Pt[]) => {
+          // a real face sits inside the person (mask), in the upper part, with a sensible size
+          if (f.length < 468) return false;
+          const inMask = (p: Pt) => {
+            const px = Math.round(p.x);
+            const py = Math.round(p.y);
+            return px >= 0 && py >= 0 && px < W && py < H && m[py * W + px]! > 0.7;
+          };
+          const pts = [1, 33, 263, 13, 152, 10].map((i) => f[i]!);
+          if (pts.filter(inMask).length < 5) return false;
+          const eye = Math.hypot(f[33]!.x - f[263]!.x, f[33]!.y - f[263]!.y);
+          if (eye < 8 || eye > pr.box.w * 0.9) return false;
+          return f[1]!.y < pr.box.y + pr.box.h * 0.75;
+        });
     } catch {
       return pr.faces;
     }
@@ -320,7 +454,7 @@ export class ZombieFx {
     this.people = this.people.filter((pr) => {
       // a person stays fully visible while the camera sees them (also on a slow PC where the
       // recognition runs only a few times a second); fade in quickly, out gently
-      const target = on && now - pr.seen < 1500 ? 1 : 0;
+      const target = on && now - pr.seen < Math.max(1500, this.interval * 3) ? 1 : 0;
       const rate = target > pr.alpha ? 3 : 1;
       pr.alpha += Math.sign(target - pr.alpha) * Math.min(Math.abs(target - pr.alpha), dt * rate);
       if (pr.alpha <= 0.001 && target === 0) return false;
@@ -336,11 +470,12 @@ export class ZombieFx {
   }
 
   private drawFaces(g: CanvasRenderingContext2D, t: number): void {
-    if (this.style === 'makeup') return this.drawMakeup(g);
+    // every person has their own look: zombie make-up or cartoon with googly eyes
+    this.drawMakeup(g, t);
     const avg = (a: Pt, b: Pt): Pt => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
     const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
-    this.faces.forEach((f, n) => {
-      if (f.length < 400) return;
+    this.faces.forEach(({ f, v }, n) => {
+      if (!v.comic || f.length < 400) return;
       const eyes = [avg(f[33]!, f[133]!), avg(f[362]!, f[263]!)];
       const ew = (dist(f[33]!, f[133]!) + dist(f[362]!, f[263]!)) / 2;
       // dark rings
@@ -419,18 +554,21 @@ export class ZombieFx {
   }
 
   /**
-   * Zombie make-up on the real face (stays recognisable): sunken dark eye sockets, glowing
-   * yellow-green irises on the real eyes, dark lips, green veins at the temples, a small stitched
-   * scar on the forehead.
+   * Zombie make-up on the real face (stays recognisable), different for every person: sunken
+   * eye sockets and eyes (glowing yellow/red/blue, milky or black), mouth (dark, stitched,
+   * drooling or rotten teeth) and marks (forehead stitches, cheek cut, bandage, neck bolts, veins,
+   * rot spots).
    */
-  private drawMakeup(g: CanvasRenderingContext2D): void {
+  private drawMakeup(g: CanvasRenderingContext2D, t: number): void {
     const avg = (a: Pt, b: Pt): Pt => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
     const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
-    for (const f of this.faces) {
-      if (f.length < 468) continue;
+    const lerp = (a: Pt, b: Pt, u: number): Pt => ({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u });
+    for (const { f, v } of this.faces) {
+      if (v.comic || f.length < 468) continue;
       const eyes = [avg(f[33]!, f[133]!), avg(f[362]!, f[263]!)];
       const ew = (dist(f[33]!, f[133]!) + dist(f[362]!, f[263]!)) / 2;
       g.save();
+      g.lineCap = 'round';
       // sunken eye sockets (darken, the eye itself stays visible)
       g.globalCompositeOperation = 'multiply';
       for (const e of eyes) {
@@ -442,74 +580,204 @@ export class ZombieFx {
         g.arc(e.x, e.y + ew * 0.1, ew * 1.05, 0, Math.PI * 2);
         g.fill();
       }
-      // dark lips
+      // mouth
       const lips = [61, 40, 37, 0, 267, 270, 291, 321, 314, 17, 84, 91];
-      g.fillStyle = 'rgba(60,30,60,0.55)';
+      g.fillStyle = v.mouth === 'dark' ? 'rgba(40,20,45,0.7)' : 'rgba(60,30,60,0.5)';
       g.beginPath();
       lips.forEach((i, k) => (k ? g.lineTo(f[i]!.x, f[i]!.y) : g.moveTo(f[i]!.x, f[i]!.y)));
       g.closePath();
       g.fill();
+      // rot spots
+      if (v.marks.includes('spots')) {
+        for (let k = 0; k < 5; k++) {
+          const a = f[[50, 280, 205, 425, 108][k]!]!;
+          const r = ew * (0.12 + ((v.seed >> k) & 3) * 0.04);
+          const gr = g.createRadialGradient(a.x, a.y, 0, a.x, a.y, r);
+          gr.addColorStop(0, 'rgba(80,90,40,0.8)');
+          gr.addColorStop(1, 'rgba(255,255,255,0)');
+          g.fillStyle = gr;
+          g.beginPath();
+          g.arc(a.x, a.y, r, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
       g.restore();
-      // glowing irises on the real eyes
+      g.save();
+      g.lineCap = 'round';
+      // eyes
       if (f.length >= 478) {
-        g.save();
-        g.globalCompositeOperation = 'screen';
         for (const i of [468, 473]) {
           const c = f[i]!;
           const r = ew * 0.2;
-          const gr = g.createRadialGradient(c.x, c.y, 0, c.x, c.y, r * 1.8);
-          gr.addColorStop(0, 'rgba(230,255,90,0.75)');
-          gr.addColorStop(0.5, 'rgba(160,255,60,0.35)');
-          gr.addColorStop(1, 'rgba(120,255,40,0)');
-          g.fillStyle = gr;
-          g.beginPath();
-          g.arc(c.x, c.y, r * 1.8, 0, Math.PI * 2);
-          g.fill();
+          if (v.eyes === 'milky' || v.eyes === 'black') {
+            g.globalCompositeOperation = 'source-over';
+            g.fillStyle = v.eyes === 'milky' ? 'rgba(235,240,230,0.85)' : 'rgba(5,5,10,0.9)';
+            g.beginPath();
+            g.arc(c.x, c.y, r * 1.05, 0, Math.PI * 2);
+            g.fill();
+          } else {
+            const col = v.eyes === 'yellow' ? '230,255,90' : v.eyes === 'red' ? '255,60,40' : '90,200,255';
+            g.globalCompositeOperation = 'screen';
+            const gr = g.createRadialGradient(c.x, c.y, 0, c.x, c.y, r * 1.9);
+            gr.addColorStop(0, `rgba(${col},0.85)`);
+            gr.addColorStop(0.5, `rgba(${col},0.35)`);
+            gr.addColorStop(1, `rgba(${col},0)`);
+            g.fillStyle = gr;
+            g.beginPath();
+            g.arc(c.x, c.y, r * 1.9, 0, Math.PI * 2);
+            g.fill();
+          }
         }
-        g.restore();
+      }
+      g.globalCompositeOperation = 'source-over';
+      const mL = f[61]!;
+      const mR = f[291]!;
+      const mw = dist(mL, mR);
+      if (v.mouth === 'stitched') {
+        g.strokeStyle = 'rgba(30,15,20,0.9)';
+        g.lineWidth = Math.max(1, ew * 0.06);
+        g.beginPath();
+        g.moveTo(mL.x, mL.y);
+        g.lineTo(mR.x, mR.y);
+        g.stroke();
+        for (let k = 1; k <= 5; k++) {
+          const p = lerp(mL, mR, k / 6);
+          g.beginPath();
+          g.moveTo(p.x, p.y - mw * 0.1);
+          g.lineTo(p.x, p.y + mw * 0.1);
+          g.stroke();
+        }
+      } else if (v.mouth === 'drool') {
+        const p = lerp(mL, mR, 0.3);
+        const len = mw * (0.35 + 0.1 * Math.sin(t * 1.3));
+        const gr = g.createLinearGradient(p.x, p.y, p.x, p.y + len);
+        gr.addColorStop(0, 'rgba(170,230,120,0.85)');
+        gr.addColorStop(1, 'rgba(170,230,120,0)');
+        g.strokeStyle = gr;
+        g.lineWidth = Math.max(1.5, mw * 0.07);
+        g.beginPath();
+        g.moveTo(p.x, p.y);
+        g.quadraticCurveTo(p.x - mw * 0.05, p.y + len * 0.5, p.x + mw * 0.02, p.y + len);
+        g.stroke();
+      } else if (v.mouth === 'teeth') {
+        const up = f[13]!;
+        g.fillStyle = 'rgba(200,190,120,0.9)';
+        g.strokeStyle = 'rgba(60,50,20,0.8)';
+        g.lineWidth = Math.max(1, mw * 0.02);
+        for (let k = 0; k < 4; k++) {
+          if (((v.seed >> k) & 3) === 0) continue; // missing tooth
+          const u = 0.25 + k * 0.17;
+          const x = mL.x + (mR.x - mL.x) * u;
+          const y = mL.y + (mR.y - mL.y) * u + (up.y - (mL.y + mR.y) / 2) * Math.sin(u * Math.PI);
+          const tw = mw * 0.1;
+          const th = mw * (k % 2 ? 0.13 : 0.18);
+          g.save();
+          g.translate(x, y);
+          g.rotate(k % 2 ? 0.12 : -0.1);
+          g.fillRect(-tw / 2, 0, tw, th);
+          g.strokeRect(-tw / 2, 0, tw, th);
+          g.restore();
+        }
       }
       // veins at the temples
-      g.save();
-      g.strokeStyle = 'rgba(30,70,40,0.6)';
-      g.lineWidth = Math.max(1, ew * 0.05);
-      g.lineCap = 'round';
-      for (const [a, b] of [
-        [33, 127],
-        [263, 356],
-      ] as const) {
-        const A = f[a]!;
-        const B = f[b]!;
-        g.beginPath();
-        g.moveTo(A.x + (B.x - A.x) * 0.3, A.y);
-        for (let k = 1; k <= 4; k++) {
-          const u = 0.3 + k * 0.17;
-          g.lineTo(
-            A.x + (B.x - A.x) * u + (k % 2 ? 1 : -1) * ew * 0.08,
-            A.y + (B.y - A.y) * u - ew * 0.25 * k * 0.3,
-          );
+      if (v.marks.includes('veins')) {
+        g.strokeStyle = 'rgba(30,70,40,0.6)';
+        g.lineWidth = Math.max(1, ew * 0.05);
+        for (const [a, b] of [
+          [33, 127],
+          [263, 356],
+        ] as const) {
+          const A = f[a]!;
+          const B = f[b]!;
+          g.beginPath();
+          g.moveTo(A.x + (B.x - A.x) * 0.3, A.y);
+          for (let k = 1; k <= 4; k++) {
+            const u = 0.3 + k * 0.17;
+            g.lineTo(
+              A.x + (B.x - A.x) * u + (k % 2 ? 1 : -1) * ew * 0.08,
+              A.y + (B.y - A.y) * u - ew * 0.25 * k * 0.3,
+            );
+          }
+          g.stroke();
         }
+      }
+      const stitches = (a: Pt, b: Pt, n: number) => {
+        g.strokeStyle = 'rgba(110,30,45,0.85)';
+        g.lineWidth = Math.max(1.5, ew * 0.09);
+        g.beginPath();
+        g.moveTo(a.x, a.y);
+        g.lineTo(b.x, b.y);
+        g.stroke();
+        g.strokeStyle = 'rgba(30,20,20,0.9)';
+        g.lineWidth = Math.max(1, ew * 0.05);
+        const nx = -(b.y - a.y) / Math.max(1, dist(a, b));
+        const ny = (b.x - a.x) / Math.max(1, dist(a, b));
+        for (let k = 1; k <= n; k++) {
+          const p = lerp(a, b, k / (n + 1));
+          g.beginPath();
+          g.moveTo(p.x - nx * ew * 0.18, p.y - ny * ew * 0.18);
+          g.lineTo(p.x + nx * ew * 0.18, p.y + ny * ew * 0.18);
+          g.stroke();
+        }
+      };
+      if (v.marks.includes('forehead')) {
+        const s0 = f[67]!;
+        const s1 = f[10]!;
+        stitches(
+          { x: s0.x + (s1.x - s0.x) * 0.2, y: s0.y + ew * 0.35 },
+          { x: s0.x + (s1.x - s0.x) * 0.85, y: s1.y + ew * 0.55 },
+          3,
+        );
+      }
+      if (v.marks.includes('cheek')) {
+        const a = f[(v.seed & 1) === 0 ? 116 : 345]!;
+        const b = f[(v.seed & 1) === 0 ? 205 : 425]!;
+        g.strokeStyle = 'rgba(120,20,30,0.85)';
+        g.lineWidth = Math.max(1.5, ew * 0.08);
+        g.beginPath();
+        g.moveTo(a.x, a.y);
+        g.lineTo(b.x, b.y);
+        g.stroke();
+        g.strokeStyle = 'rgba(200,40,40,0.5)';
+        g.lineWidth = Math.max(1, ew * 0.04);
+        g.beginPath();
+        g.moveTo(a.x + ew * 0.05, a.y);
+        g.lineTo(b.x + ew * 0.05, b.y);
         g.stroke();
       }
-      // small stitched scar on the forehead
-      const s0 = f[67]!;
-      const s1 = f[10]!;
-      const a0 = { x: s0.x + (s1.x - s0.x) * 0.2, y: s0.y + ew * 0.35 };
-      const a1 = { x: s0.x + (s1.x - s0.x) * 0.85, y: s1.y + ew * 0.55 };
-      g.strokeStyle = 'rgba(110,30,45,0.85)';
-      g.lineWidth = Math.max(1.5, ew * 0.09);
-      g.beginPath();
-      g.moveTo(a0.x, a0.y);
-      g.lineTo(a1.x, a1.y);
-      g.stroke();
-      g.lineWidth = Math.max(1, ew * 0.05);
-      for (let k = 1; k <= 3; k++) {
-        const u = k / 4;
-        const x = a0.x + (a1.x - a0.x) * u;
-        const y = a0.y + (a1.y - a0.y) * u;
+      if (v.marks.includes('bandage')) {
+        // a plaster across the forehead
+        const c = lerp(f[10]!, f[151]!, 0.6);
+        const ang = Math.atan2(f[263]!.y - f[33]!.y, f[263]!.x - f[33]!.x) + (v.seed & 2 ? 0.5 : -0.5);
+        g.save();
+        g.translate(c.x, c.y);
+        g.rotate(ang);
+        g.fillStyle = 'rgba(225,205,170,0.92)';
+        g.fillRect(-ew * 0.9, -ew * 0.22, ew * 1.8, ew * 0.44);
+        g.fillStyle = 'rgba(190,160,130,0.9)';
+        g.fillRect(-ew * 0.3, -ew * 0.22, ew * 0.6, ew * 0.44);
+        g.fillStyle = 'rgba(140,30,30,0.6)';
         g.beginPath();
-        g.moveTo(x - ew * 0.1, y - ew * 0.17);
-        g.lineTo(x + ew * 0.1, y + ew * 0.17);
-        g.stroke();
+        g.arc(ew * 0.05, 0, ew * 0.12, 0, Math.PI * 2);
+        g.fill();
+        g.restore();
+      }
+      if (v.marks.includes('bolts')) {
+        // Frankenstein bolts at the neck, below the jaw
+        for (const i of [172, 397]) {
+          const p = f[i]!;
+          const side = i === 172 ? -1 : 1;
+          g.fillStyle = 'rgba(120,125,130,0.95)';
+          g.strokeStyle = 'rgba(40,40,45,0.9)';
+          g.lineWidth = Math.max(1, ew * 0.04);
+          g.fillRect(p.x + side * ew * 0.1 - (side < 0 ? ew * 0.5 : 0), p.y + ew * 0.3, ew * 0.5, ew * 0.22);
+          g.strokeRect(
+            p.x + side * ew * 0.1 - (side < 0 ? ew * 0.5 : 0),
+            p.y + ew * 0.3,
+            ew * 0.5,
+            ew * 0.22,
+          );
+        }
       }
       g.restore();
     }
@@ -530,7 +798,8 @@ export class ZombieReceiver {
   private timer = 0;
   private live = false;
   private lastFrame = 0;
-  private style: 'makeup' | 'comic' = 'makeup';
+  /** This PC takes the ghost photos (the phone picks one projector PC for that). */
+  private capture = false;
   private off: () => void;
 
   constructor(
@@ -553,8 +822,7 @@ export class ZombieReceiver {
   }
 
   private async onRtc(from: string, data: RtcData): Promise<void> {
-    if (data.style) this.style = data.style;
-    if (this.fx) this.fx.style = this.style;
+    if (data.capture !== undefined) this.capture = data.capture;
     if (data.kind === 'offer' && data.sdp) {
       this.close();
       const pc = new RTCPeerConnection(ICE);
@@ -585,7 +853,14 @@ export class ZombieReceiver {
   private async ensureFx(): Promise<void> {
     if (!this.fx) {
       this.fx = new ZombieFx();
-      this.fx.style = this.style;
+      this.fx.onCapture = (image, u) => {
+        if (!this.capture) return;
+        void fetch('/api/ghosts', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${this.conn.authToken}` },
+          body: JSON.stringify({ image, u, release: true }),
+        }).catch(() => {});
+      };
       await this.fx.init();
     }
     if (this.timer || this.fx.failed) return;

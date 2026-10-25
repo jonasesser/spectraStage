@@ -5,6 +5,8 @@ import { StageRenderer } from '@spectrastage/engine';
 import { worldLayout, type SessionState } from '@spectrastage/shared';
 import type { Tr } from '../lib/i18n.tsx';
 import { ZombieFx } from '../display/zombie.ts';
+import { ghostImagesFor } from '../lib/ghostImages.ts';
+import { useStore } from './store.ts';
 
 /**
  * Try the zombie camera without a projector: the same effect runs on this phone and the result
@@ -14,19 +16,30 @@ export function ZombiePreview({
   state,
   now,
   video,
-  style,
+  capture,
   L,
 }: {
   state: SessionState;
   now: () => number;
   video: HTMLVideoElement | null;
-  style: 'makeup' | 'comic';
+  /** Take ghost photos here (testing without a projector). */
+  capture: boolean;
   L: Tr;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const store = useStore();
+  const captureRef = useRef(capture);
+  captureRef.current = capture;
   const rRef = useRef<StageRenderer | null>(null);
   const fxRef = useRef<ZombieFx | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
+  // feedback when a ghost photo was taken (or could not be saved)
+  const [shot, setShot] = useState<{ ok: boolean; at: number } | null>(null);
+  useEffect(() => {
+    if (!shot) return;
+    const t = window.setTimeout(() => setShot(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [shot]);
 
   useEffect(() => {
     if (!ref.current || !video) return;
@@ -39,8 +52,18 @@ export function ZombiePreview({
       maxPixelRatio: 2,
     });
     rRef.current = r;
+    r.setGhostImages(ghostImagesFor(store.conn).get);
     const fx = new ZombieFx();
-    fx.style = style;
+    fx.onCapture = (image, u) => {
+      if (!captureRef.current) return;
+      void fetch('/api/ghosts', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${store.conn.authToken}` },
+        body: JSON.stringify({ image, u, release: true }),
+      })
+        .then((res) => setShot({ ok: res.ok, at: Date.now() }))
+        .catch(() => setShot({ ok: false, at: Date.now() }));
+    };
     fxRef.current = fx;
     let last = performance.now();
     r.setLiveSprite(() => {
@@ -75,10 +98,6 @@ export function ZombiePreview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video]);
 
-  useEffect(() => {
-    if (fxRef.current) fxRef.current.style = style;
-  }, [style]);
-
   // show the front wall (main wall) with a little room around it
   const main = worldLayout(state.surfaces).find((w) => w.role === 'main');
   useEffect(() => {
@@ -95,6 +114,13 @@ export function ZombiePreview({
   return (
     <div className="stack" style={{ gap: '0.3rem' }}>
       <canvas ref={ref} className="preview-canvas" style={{ aspectRatio: aspect }} />
+      {shot && (
+        <strong className="small">
+          {shot.ok
+            ? L('📸 Ghost photo taken – it flies off!', '📸 Geister-Foto aufgenommen – es fliegt los!')
+            : L('Ghost photo could not be saved.', 'Geister-Foto konnte nicht gespeichert werden.')}
+        </strong>
+      )}
       <span className="small muted">
         {status === 'loading'
           ? L(

@@ -3,6 +3,7 @@ import { activeProfile, roomFold, wallsOfPose, type Presence, type SessionState 
 import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
 import { ZombiePreview } from './ZombiePreview.tsx';
+import { GhostGallery } from './GhostGallery.tsx';
 
 const ICE: RTCConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
@@ -31,12 +32,21 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
   const store = useStore();
   const [on, setOn] = useState(false);
   const [facing, setFacing] = useState<'user' | 'environment'>('environment');
-  const [style, setStyleState] = useState<'makeup' | 'comic'>('makeup');
-  const styleRef = useRef(style);
-  styleRef.current = style;
-  const setStyle = (st: 'makeup' | 'comic') => {
-    setStyleState(st);
-    for (const id of run.current?.peers.keys() ?? []) store.conn.sendRtc(id, { kind: 'style', style: st });
+  // ghost photos: taken by this phone while its preview runs, else by the first projector PC;
+  // saved in the show
+  const [save, setSaveState] = useState(true);
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  const previewOnRef = useRef(false);
+  const tellCapture = () => {
+    const first = [...(run.current?.peers.keys() ?? [])][0];
+    if (first)
+      store.conn.sendRtc(first, { kind: 'style', capture: saveRef.current && !previewOnRef.current });
+  };
+  const setSave = (v: boolean) => {
+    setSaveState(v);
+    saveRef.current = v;
+    tellCapture();
   };
   const [err, setErr] = useState<string | null>(null);
   const [links, setLinks] = useState<Record<string, string>>({});
@@ -47,6 +57,10 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
     null,
   );
   const ids = targets(state, presence);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const presenceRef = useRef(presence);
+  presenceRef.current = presence;
   const idsKey = ids.join(',');
 
   const stop = () => {
@@ -80,7 +94,15 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
     void (async () => {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      store.conn.sendRtc(id, { kind: 'offer', sdp: offer.sdp ?? '', style: styleRef.current });
+      store.conn.sendRtc(id, {
+        kind: 'offer',
+        sdp: offer.sdp ?? '',
+        // only one projector PC takes the photos – and none while this phone's preview does
+        capture:
+          saveRef.current &&
+          !previewOnRef.current &&
+          id === targets(stateRef.current, presenceRef.current)[0],
+      });
     })();
   };
 
@@ -132,6 +154,11 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
   useEffect(() => () => stop(), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const live = Object.values(links).filter((s) => s === 'connected').length;
+  const previewOn = on && (preview ?? !ids.length);
+  if (previewOnRef.current !== previewOn) {
+    previewOnRef.current = previewOn;
+    queueMicrotask(tellCapture);
+  }
   return (
     <section className="panel stack">
       <div className="section-title">
@@ -139,8 +166,8 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
       </div>
       <p className="muted small" style={{ margin: 0 }}>
         {L(
-          'This phone films the guests – on the front wall they drift along as funny zombie ghosts, as long as the camera runs. Nothing is stored; the video goes straight to the projector PC.',
-          'Dieses Handy filmt die Gäste – an der vorderen Wand schweben sie als lustige Zombie-Geister herum, solange die Kamera läuft. Nichts wird gespeichert; das Video geht direkt zum Beamer-PC.',
+          'This phone films the guests – on the front wall they drift along as ghosts, every one with its own random look (zombie make-up, glowing eyes, scars, cartoon googly eyes …), as long as the camera runs. The video goes straight to the projector PC; only ghost photos (below) are saved.',
+          'Dieses Handy filmt die Gäste – an der vorderen Wand schweben sie als Geister herum, jeder mit eigenem Zufalls-Look (Zombie-Make-up, leuchtende Augen, Narben, Comic-Glubschaugen …), solange die Kamera läuft. Das Video geht direkt zum Beamer-PC; gespeichert werden nur Geister-Fotos (unten).',
         )}
       </p>
       <video
@@ -157,12 +184,12 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
           background: '#000',
         }}
       />
-      {on && (preview ?? !ids.length) && (
+      {previewOn && (
         <ZombiePreview
           state={state}
           now={() => store.conn.clock.now()}
           video={videoRef.current}
-          style={style}
+          capture={save}
           L={L}
         />
       )}
@@ -182,18 +209,6 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
           )}
         </label>
       )}
-      <div className="row" role="group" aria-label={L('Look', 'Aussehen')}>
-        {(
-          [
-            ['makeup', '🧟 ' + L('Zombie make-up (recognisable)', 'Zombie-Make-up (erkennbar)')],
-            ['comic', '👀 ' + L('Comic with googly eyes', 'Comic mit Glubschaugen')],
-          ] as const
-        ).map(([k, label]) => (
-          <button key={k} className={`chip${style === k ? ' on' : ''}`} onClick={() => setStyle(k)}>
-            {label}
-          </button>
-        ))}
-      </div>
       <div className="row">
         {!on ? (
           <>
@@ -251,7 +266,18 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
             );
           })}
       </ul>
+      <label
+        className="small"
+        style={{ display: 'flex', flexDirection: 'row', gap: '0.5rem', alignItems: 'center' }}
+      >
+        <input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} />
+        {L(
+          'Take ghost photos: a well seen face detaches as a ghost and flies around – the photo is saved in this show (until you delete it). Ask your guests if that is ok.',
+          'Geister-Fotos aufnehmen: ein gut erkanntes Gesicht löst sich als Geist und fliegt herum – das Foto wird in dieser Show gespeichert (bis du es löschst). Frag deine Gäste, ob das ok ist.',
+        )}
+      </label>
       {err && <div className="safety-note small">{err}</div>}
+      <GhostGallery state={state} L={L} />
     </section>
   );
 }

@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 import { catalog } from '@spectrastage/catalog/manifests';
 import { loadThemeRuntime } from '@spectrastage/catalog/runtime';
 import { StageRenderer } from '@spectrastage/engine';
+import { ghostImagesFor } from '../lib/ghostImages.ts';
+import { useStore } from './store.ts';
 import { activeProfile, stageBounds, type Profile, type SessionState } from '@spectrastage/shared';
 
 /**
@@ -23,6 +25,7 @@ export function StagePreview({
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const r = useRef<StageRenderer | null>(null);
+  const store = useStore();
   useEffect(() => {
     if (!ref.current) return;
     const renderer = new StageRenderer({
@@ -34,6 +37,7 @@ export function StagePreview({
       maxPixelRatio: 1,
     });
     r.current = renderer;
+    renderer.setGhostImages(ghostImagesFor(store.conn).get);
     renderer.start();
     return () => renderer.dispose();
     // eslint-disable-next-line react-hooks/exhaustive-deps
