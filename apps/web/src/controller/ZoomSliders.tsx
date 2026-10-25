@@ -9,17 +9,18 @@ import { Slider } from './ui.tsx';
  * The sides stay pinned onto their corners and are always filled completely; only the
  * proportions of what is shown on them change (a deeper room = things look narrower there).
  */
-export function ZoomSliders({ output, state, L }: { output: Output; state: SessionState; L: Tr }) {
+export function ZoomSliders({ output, state, L }: { output?: Output; state: SessionState; L: Tr }) {
   const store = useStore();
-  const prof = activeProfile(output);
+  const prof = output ? activeProfile(output) : null;
   const box = boxFrame(roomFold(state.surfaces));
   const [draft, setDraft] = useState<{ k: 'w' | 'd'; v: number } | null>(null);
   const timer = useRef(0);
   const pending = useRef<{ k: 'w' | 'd'; v: number } | null>(null);
-  const walls = prof.walls ?? [];
+  // without a projector (stage tab): both, for the whole room
+  const walls = prof ? (prof.walls ?? []) : ['vorne', 'links'];
   const sides = walls.filter((w) => w !== 'vorne' && w !== 'hinten');
   const front = walls.includes('vorne') || walls.includes('hinten');
-  if (!prof.pose || !box || (!sides.length && !front)) return null;
+  if ((prof && !prof.pose) || !box || (!sides.length && !front)) return null;
   const depth = draft?.k === 'd' ? draft.v : box.d;
   const width = draft?.k === 'w' ? draft.v : box.w;
   const send = (d: { k: 'w' | 'd'; v: number }, final: boolean) => {

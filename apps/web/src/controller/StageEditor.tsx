@@ -14,6 +14,7 @@ import { useT, type Tr } from '../lib/i18n.tsx';
 import { useShow, useStore } from './store.ts';
 import { kindColor, kindLabel } from './ui.tsx';
 import { Room3D } from './Room3D.tsx';
+import { ZoomSliders } from './ZoomSliders.tsx';
 
 type V = { x: number; y: number };
 type Sel = { type: 'surface'; id: string; vertex: number | null } | { type: 'output'; id: string } | null;
@@ -559,6 +560,10 @@ function RoomPanel({ state, L }: { state: SessionState; L: Tr }) {
           )}
         </li>
       </ol>
+      <strong className="small">
+        {L('Size of the room (proportions of the pictures)', 'Raumgröße (Proportionen der Bilder)')}
+      </strong>
+      <ZoomSliders state={state} L={L} />
       {widthOff && (
         <button className="btn small" onClick={() => void restoreWidth()}>
           ↔ {L('Restore the width of the front wall', 'Breite der Vorderwand wiederherstellen')} (
