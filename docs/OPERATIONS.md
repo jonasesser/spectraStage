@@ -107,6 +107,8 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
 
 ### Ghost photos (zombie camera)
 
+Segmentation uses MediaPipe's multiclass selfie model (`selfie_multiclass.tflite`, ~16 MB): background, hair, body skin, face skin, clothes – the creature's colours go on all skin (face, ears, neck, hands) and the hair, the face mesh adds the make-up details.
+
 Live tab → 👻 Ghost photos: start the camera on the phone and press the shutter (or tap the
 camera picture). Every person in the picture becomes their own ghost photo – a group of five gives
 five ghosts – saved in the show and rising together on the projectors, each from where the person

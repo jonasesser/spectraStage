@@ -30,6 +30,42 @@ export interface FaceIn {
   lum: number;
 }
 
+// ---------------------------------------------------------------- colours of the whole person
+
+/** Colour [r, g, b], strength 0..1 and brightness factor. */
+type Grade = [number, number, number, number, number];
+const ZOMBIE_SKIN: [number, number, number][] = [
+  [120, 150, 105],
+  [128, 140, 160],
+  [150, 125, 165],
+  [170, 175, 155],
+  [135, 145, 85],
+];
+const GRADES: Partial<Record<Kind, { skin: Grade; hair: Grade }>> = {
+  ghost: { skin: [225, 235, 255, 0.85, 1.45], hair: [215, 228, 255, 0.85, 1.6] },
+  vampire: { skin: [240, 232, 245, 0.65, 1.25], hair: [30, 20, 40, 0.55, 0.6] },
+  skeleton: { skin: [245, 245, 238, 0.7, 1.4], hair: [190, 190, 195, 0.45, 1.0] },
+  devil: { skin: [205, 45, 35, 0.8, 1.0], hair: [70, 10, 10, 0.6, 0.7] },
+  werewolf: { skin: [140, 95, 55, 0.6, 0.95], hair: [115, 85, 55, 0.6, 1.05] },
+  witch: { skin: [115, 175, 85, 0.8, 1.0], hair: [45, 30, 65, 0.55, 0.8] },
+};
+const gradeCache = new Map<string, { skin: Grade; hair: Grade }>();
+/**
+ * The creature's colours for all skin (face, ears, neck, hands) and the hair – applied to the
+ * whole person by the segmentation, so no part stays as it was (no mask look).
+ */
+export function lookColours(look: Look): { skin: Grade; hair: Grade } {
+  const k = `${look.kind}:${look.seed}`;
+  let g = gradeCache.get(k);
+  if (!g) {
+    const z = ZOMBIE_SKIN[look.seed % ZOMBIE_SKIN.length]!;
+    g = GRADES[look.kind] ?? { skin: [z[0], z[1], z[2], 0.78, 0.95], hair: [115, 120, 105, 0.5, 0.8] };
+    gradeCache.set(k, g);
+    if (gradeCache.size > 64) gradeCache.delete(gradeCache.keys().next().value as string);
+  }
+  return g;
+}
+
 // ---------------------------------------------------------------- texture painting (UV space)
 
 const S = 1024;
@@ -246,7 +282,9 @@ export function paintLook(look: Look): { tint: HTMLCanvasElement; detail: HTMLCa
   const eyeL = centre(EYE_L);
   const eyeR = centre(EYE_R);
   const base = (rgb: string, a: number, tint = true) => {
-    const x = tint ? tg : g;
+    // the skin colour itself comes from the grading of the whole person (lookColours)
+    if (tint) return;
+    const x = g;
     x.fillStyle = `rgba(${rgb},${a})`;
     path(x, OUTLINE, 1.05);
     x.fill();

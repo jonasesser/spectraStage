@@ -173,7 +173,7 @@ async function callGemini(key: string, model: string, photo: string, prompt: str
         { type: 'text', text: prompt },
         { type: 'image', mime_type: mimeOf(photo), data: b64(photo) },
       ],
-      response_format: { type: 'image', mime_type: 'image/png', aspect_ratio: '2:3' },
+      response_format: { type: 'image', mime_type: 'image/jpeg', aspect_ratio: '2:3' },
     }),
   });
   if (!res.ok) throw new Error(await errorText(res));

@@ -11,7 +11,15 @@ import type { LiveSprite, StageRenderer } from '@spectrastage/engine';
 import type { RtcData } from '@spectrastage/shared';
 import type { Connection } from '../lib/connection.ts';
 import type * as Mp from '@mediapipe/tasks-vision';
-import { FaceFilter, type FaceIn, type Kind, type Look, type Mark, type P3 } from './faceFilter.ts';
+import {
+  FaceFilter,
+  lookColours,
+  type FaceIn,
+  type Kind,
+  type Look,
+  type Mark,
+  type P3,
+} from './faceFilter.ts';
 
 const ICE: RTCConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 const MAX_W = 720;
@@ -122,7 +130,7 @@ export class ZombieFx {
       const files = await vision.FilesetResolver.forVisionTasks('/mediapipe/wasm');
       const make = async (delegate: 'GPU' | 'CPU') => {
         this.seg = await vision.ImageSegmenter.createFromOptions(files, {
-          baseOptions: { modelAssetPath: '/mediapipe/selfie_segmenter.tflite', delegate },
+          baseOptions: { modelAssetPath: '/mediapipe/selfie_multiclass.tflite', delegate },
           runningMode: 'VIDEO',
           outputConfidenceMasks: true,
           outputCategoryMask: false,
@@ -150,6 +158,38 @@ export class ZombieFx {
     }
   }
 
+  /**
+   * Processes the video over and over: as often as `every` ms at most, and always leaving the page
+   * time to breathe (a slow phone or PC does fewer pictures instead of freezing). Returns stop().
+   */
+  loop(
+    video: HTMLVideoElement,
+    every: number,
+    onFrame?: () => void,
+    active: () => boolean = () => true,
+  ): () => void {
+    let stopped = false;
+    let timer = 0;
+    const step = () => {
+      if (stopped) return;
+      const t0 = performance.now();
+      if (active())
+        try {
+          this.process(video, t0);
+          onFrame?.();
+        } catch (e) {
+          console.warn('[SpectraStage] zombie frame', e);
+        }
+      const took = performance.now() - t0;
+      timer = window.setTimeout(step, Math.max(every - took, took * 0.7, 16));
+    };
+    timer = window.setTimeout(step, 0);
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }
+
   process(video: HTMLVideoElement, ts: number): void {
     if (!this.seg || video.videoWidth === 0) return;
     this.video = video;
@@ -174,14 +214,32 @@ export class ZombieFx {
     wg.setTransform(-1, 0, 0, 1, W, 0);
     wg.drawImage(video, 0, 0, W, H);
     wg.setTransform(1, 0, 0, 1, 0, 0);
+    // what each pixel is: background, hair, body skin (neck, ears, hands), face skin, clothes,
+    // other (glasses …) – the person is everything but the background
     let mask: Float32Array | null = null;
+    let hair: Float32Array | null = null;
+    let skin: Float32Array | null = null;
     this.seg.segmentForVideo(this.work, ts, (r: Mp.ImageSegmenterResult) => {
-      const m = r.confidenceMasks?.[0];
-      if (m) mask = m.getAsFloat32Array().slice();
+      const cm = r.confidenceMasks;
+      if (!cm?.length) return;
+      const bg = cm[0]!.getAsFloat32Array();
+      const pm = new Float32Array(bg.length);
+      for (let i = 0; i < bg.length; i++) pm[i] = 1 - bg[i]!;
+      mask = pm;
+      if (cm.length >= 4) {
+        hair = cm[1]!.getAsFloat32Array().slice();
+        const body = cm[2]!.getAsFloat32Array();
+        const face = cm[3]!.getAsFloat32Array();
+        const sk = new Float32Array(bg.length);
+        for (let i = 0; i < bg.length; i++) sk[i] = Math.min(1, body[i]! + face[i]!);
+        skin = sk;
+      }
     });
     this.frame++;
     if (!mask) return;
     const m: Float32Array = mask;
+    const hm: Float32Array | null = hair;
+    const sm: Float32Array | null = skin;
     const img = wg.getImageData(0, 0, W, H);
     const d = img.data;
     // every person on their own: connected areas of the mask on a coarse grid
@@ -346,7 +404,8 @@ export class ZombieFx {
         d[p + 3] = 0;
         continue;
       }
-      if (lookOf(i % W, (i / W) | 0)?.kind === 'comic') {
+      const lk = lookOf(i % W, (i / W) | 0);
+      if (lk?.kind === 'comic') {
         // cartoon zombie skin: a few green levels from the brightness
         const l = (0.3 * d[p]! + 0.59 * d[p + 1]! + 0.11 * d[p + 2]!) / 255;
         const q = Math.min(1, Math.floor(l * 5 + 0.5) / 5 + 0.08);
@@ -354,6 +413,24 @@ export class ZombieFx {
         d[p + 1] = 92 + 160 * q;
         d[p + 2] = 64 + 110 * q;
       } else {
+        // the creature's colours on all skin (face, ears, neck, hands) and on the hair – the
+        // brightness of the real picture stays, so every detail stays
+        const col = lk ? lookColours(lk) : null;
+        if (col && (sm || hm)) {
+          const l = 0.2126 * d[p]! + 0.7152 * d[p + 1]! + 0.0722 * d[p + 2]!;
+          for (const [mk, c] of [
+            [sm, col.skin],
+            [hm, col.hair],
+          ] as const) {
+            const w = mk ? mk[i]! * c[3] : 0;
+            if (w <= 0.02) continue;
+            const lt = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+            const f = (l / Math.max(1, lt)) * c[4];
+            d[p] = d[p]! + (Math.min(255, c[0] * f) - d[p]!) * w;
+            d[p + 1] = d[p + 1]! + (Math.min(255, c[1] * f) - d[p + 1]!) * w;
+            d[p + 2] = d[p + 2]! + (Math.min(255, c[2] * f) - d[p + 2]!) * w;
+          }
+        }
         d[p] = 22 + d[p]! * 0.95;
         d[p + 1] = 22 + d[p + 1]! * 0.95;
         d[p + 2] = 26 + d[p + 2]! * 0.95;
@@ -372,7 +449,7 @@ export class ZombieFx {
     const faces: FaceIn[] = shown
       .filter((pr) => pr.face)
       .map((pr) => ({ pts: pr.face!, look: pr.look, lum: pr.lum }));
-    const gl = this.filter?.render(this.work, faces, W, H, top) ? this.filter.canvas : null;
+    const gl = this.filter?.render(this.tmp, faces, W, H, top) ? this.filter.canvas : null;
     const t = ts / 1000;
     for (const pr of shown) this.cutOut(pr, H, lab, gw, C, gl, top, t);
     for (const pr of active) if (!shown.includes(pr)) pr.seen = Math.min(pr.seen, now - 1e6);
@@ -764,6 +841,7 @@ export class ZombieReceiver {
   private video = document.createElement('video');
   private fx: ZombieFx | null = null;
   private timer = 0;
+  private stopLoop: (() => void) | null = null;
   private live = false;
   private lastFrame = 0;
   private off: () => void;
@@ -821,14 +899,8 @@ export class ZombieReceiver {
     }
     if (this.timer || this.fx.failed) return;
     // ~15 pictures per second are plenty for drifting ghosts and keep the GPU free for the show
-    this.timer = window.setInterval(() => {
-      if (!this.live) return;
-      try {
-        this.fx?.process(this.video, performance.now());
-      } catch (e) {
-        console.warn('[SpectraStage] zombie frame', e);
-      }
-    }, 66);
+    this.stopLoop = this.fx.loop(this.video, 66, undefined, () => this.live);
+    this.timer = 1;
   }
 
   private close(): void {
@@ -840,7 +912,7 @@ export class ZombieReceiver {
 
   dispose(): void {
     this.close();
-    window.clearInterval(this.timer);
+    this.stopLoop?.();
     this.off();
     this.renderer.setLiveSprite(null);
     this.fx?.dispose();

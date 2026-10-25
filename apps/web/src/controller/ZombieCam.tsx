@@ -57,6 +57,7 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
   const [flash, setFlash] = useState<string | null>(null);
   const jobId = useRef(1);
   const fxRef = useRef<ZombieFx | null>(null);
+  const stopLoop = useRef<(() => void) | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const previewRef = useRef<HTMLCanvasElement>(null);
   const run = useRef<{ stream: MediaStream; peers: Map<string, RTCPeerConnection>; off: () => void } | null>(
@@ -178,6 +179,8 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
     run.current = null;
     r?.off();
     r?.stream.getTracks().forEach((t) => t.stop());
+    stopLoop.current?.();
+    stopLoop.current = null;
     fxRef.current?.dispose();
     fxRef.current = null;
     setFxState('off');
@@ -244,16 +247,8 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
       await fx.init();
       if (fxRef.current !== fx) return;
       setFxState(fx.ready ? 'ready' : 'failed');
-      const tick = window.setInterval(() => {
-        if (fxRef.current !== fx || !video) return window.clearInterval(tick);
-        try {
-          fx.process(video, performance.now());
-          // keep the people list fresh (nobody shows these sprites here)
-          fx.sprites(0.09, true);
-        } catch {
-          /* skip a frame */
-        }
-      }, 90);
+      // keep the people list fresh too (nobody shows these sprites here)
+      stopLoop.current = fx.loop(video!, 90, () => fx.sprites(0.09, true));
     } catch (e) {
       setErr(
         L(
