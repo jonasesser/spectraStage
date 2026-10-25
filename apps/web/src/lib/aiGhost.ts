@@ -20,41 +20,66 @@ const CREATURE: Record<Kind, string[]> = {
     'a long-dead rotting zombie: peeling grey skin, exposed cheekbone, dark veins, cracked lips',
     'a Frankenstein-like patched-together undead: stitched seams across the face, greenish skin, neck bolts',
     'a funny cartoonish B-movie zombie with a goofy grin, green skin and messy stitches',
+    'a zombie bride or groom: rotting wedding clothes, wilted flowers, pale grey skin',
+    'a frozen zombie: frost-bitten blue skin, icicles in the hair, white breath',
   ],
   ghost: [
-    'a translucent pale-blue glowing ghost with hollow black eyes and a wailing mouth, wisps of mist',
-    'a Victorian ghost: ghostly white skin, faintly glowing, dark empty eyes, period clothing, trailing mist',
-    'a drowned ghost: wet hair, pale blue-green skin, dark rings around the eyes, dripping water',
+    'a translucent pale-blue glowing ghost with hollow black eyes and a wailing mouth',
+    'a Victorian ghost: ghostly white skin, faintly glowing, dark empty eyes, lace and old-fashioned clothing',
+    'a drowned ghost: wet hair, pale blue-green skin, dark rings around the eyes, dripping water and seaweed',
+    'a poltergeist: flickering, slightly distorted, glowing white eyes, objects floating around',
+    'a sad lantern ghost holding a small glowing lantern, soft white glow',
   ],
   vampire: [
     'an elegant vampire count: pale skin, glowing red eyes, sharp fangs, high-collared cape',
     'a vampire bride: porcelain skin, dark smoky eyes, blood-red lips, fangs, gothic lace',
     'a feral Nosferatu-style vampire: bald pale head, pointed ears, long fangs, sunken eyes',
+    'a vampire with bat wings spreading from the shoulders, bats fluttering around',
   ],
   skeleton: [
     'a living skeleton with Día de los Muertos skull make-up, colourful flowers and patterns',
     'a creepy realistic skull face: bone-white skin, black eye sockets, bare teeth painted across the lips',
     'a glowing skeleton: X-ray-like bones shining through translucent skin',
+    'a pirate skeleton ghost: skull face, tattered pirate hat and coat, a glowing green aura',
   ],
   devil: [
     'a devil: red skin, curved black horns, glowing yellow eyes, sharp eyebrows, small goatee',
     'a dark demon: charcoal-black cracked skin with glowing lava-orange cracks, big horns, fiery eyes',
     'a mischievous little devil: rosy red skin, small horns, a cheeky grin, pointed ears',
+    'a fallen angel: ash-grey skin, black feathered wings, a broken halo, burning eyes',
   ],
   werewolf: [
     'a werewolf in mid-transformation: fur on the face, wolf ears, yellow eyes, fangs',
     'a fully transformed grey werewolf with a wolf snout, keeping the person’s eyes and expression',
+    'a white snow werewolf with icy blue eyes and frosted fur',
   ],
   witch: [
     'a wicked witch: green skin, a tall crooked black witch hat, warts, purple lips',
     'a beautiful dark witch: pale skin, dark purple lipstick, glowing violet eyes, a black pointed hat',
     'an old swamp hag: wrinkled grey-green skin, crooked nose, wild hair, a battered hat',
+    'a voodoo priestess / priest: white face paint, glowing symbols, bone jewellery, a top hat',
   ],
   comic: [
     'a funny cartoon zombie with big googly eyes, in a colourful comic style',
     'a cute Pixar-style little monster version of the person with big eyes',
+    'a friendly cartoon ghost version of the person, round and cute, big eyes, in a children’s-book style',
   ],
 };
+/** Further creatures (AI only) – one of these now and then instead of the filter's creature. */
+const OTHERS = [
+  'a mummy: wrapped in old yellowed bandages, only the eyes and parts of the face showing, dust and dark glowing eyes',
+  'a pumpkin-head ghost: a carved glowing jack-o’-lantern as the head with the person’s face carved into it, ragged scarecrow clothes',
+  'a banshee: long white flowing hair, pale glowing skin, mouth open in a scream, ragged white gown',
+  'the grim reaper: a hooded black cloak, the face pale and gaunt in the shadow of the hood, a scythe',
+  'a creepy clown: cracked white face paint, red smile, wild hair, ragged colourful costume',
+  'a scarecrow: burlap-like skin with stitched seams, straw sticking out, an old pointed hat, crows around',
+  'a headless horseman style ghost holding a glowing pumpkin, the person’s face visible as a ghostly glow above the collar',
+  'a gargoyle: cracked stone-grey skin, small stone horns, stone wings',
+  'a swamp creature: scaly green skin, fins at the cheeks, wet seaweed hair',
+  'an alien ghost: grey skin, large glossy black eyes, a soft green glow',
+  'a cursed doll: porcelain face with cracks, painted rosy cheeks, glass-like eyes',
+  'a ghostly pirate captain: translucent green-glowing, tricorn hat, tattered coat, barnacles',
+];
 const EXTRA: Partial<Record<Look['marks'][number], string>> = {
   knife: 'a kitchen knife stuck in the top of the head',
   arrow: 'an arrow shot straight through the head',
@@ -90,15 +115,20 @@ export function aiPrompt(look: Look): string {
   const extras = look.kind === 'zombie' ? look.marks.map((m) => EXTRA[m]).filter(Boolean) : ([] as string[]);
   const eyes =
     look.kind === 'ghost' || look.kind === 'skeleton' || look.kind === 'comic' ? '' : EYES[look.eyes];
-  const details = [eyes, ...extras].filter(Boolean).join(', ');
+  const other = r() < 0.3;
+  const details = other ? '' : [eyes, ...extras].filter(Boolean).join(', ');
+  const creature = other ? pick(OTHERS) : pick(CREATURE[look.kind]);
   return (
-    `Turn the person in this photo into ${pick(CREATURE[look.kind])}` +
+    `Turn the person in this photo into ${creature}` +
     (details ? `, with ${details}` : '') +
-    ', for a Halloween projection show. ' +
-    'The person must stay clearly recognisable: same face, features, expression, hairstyle and clothes. ' +
+    ', as a floating ghost for a Halloween projection show. ' +
+    'The face must stay clearly recognisable: same face, features, expression and hairstyle. ' +
     'Movie-quality special-effects make-up and prosthetics, photorealistic, ' +
     `dramatic spooky lighting with ${pick(MOOD)}. ` +
-    'Show only this one person, head and upper body, centred, the whole head (and any hat or horns) in the picture with room above it, ' +
+    'A real ghost body: head and upper body of the creature, the arms and clothes become ghostly and tattered, ' +
+    'and from the chest down the body turns into a long, flowing, translucent ghost tail of torn cloth and mist ' +
+    'that fades out towards the bottom – no legs, no feet, floating in the air. ' +
+    'Show only this one figure, centred, the whole head (and any hat, horns or hood) in the picture with room above it, ' +
     'on a plain pure black background. No text, no frame.'
   );
 }
@@ -143,7 +173,7 @@ async function callGemini(key: string, model: string, photo: string, prompt: str
         { type: 'text', text: prompt },
         { type: 'image', mime_type: mimeOf(photo), data: b64(photo) },
       ],
-      response_format: { type: 'image', mime_type: 'image/png', aspect_ratio: '3:4' },
+      response_format: { type: 'image', mime_type: 'image/png', aspect_ratio: '2:3' },
     }),
   });
   if (!res.ok) throw new Error(await errorText(res));
