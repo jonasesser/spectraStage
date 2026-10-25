@@ -1,12 +1,8 @@
 import {
-  cornerWalls,
   facePoint,
-  faceWall,
   objectEdges,
-  pinnedFaces,
   polygonBBox,
   projectPose,
-  ROOM_WALL_LABEL,
   roomCorners,
   roomEdges,
   type Anchor,
@@ -14,7 +10,6 @@ import {
   type Pose,
   type RoomFold,
   type RoomObject,
-  type RoomWall,
   type SessionState,
   type V3,
   type Viewport,
@@ -227,29 +222,11 @@ export function drawAlignOverlay(
   anchors: readonly Anchor[],
   sel: string | null,
   now: number,
-  /** The sides chosen for this projector: only their outlines and corners are drawn. */
-  walls: readonly RoomWall[] | null = null,
 ): void {
   const aspect = w / h;
-  const chosen = (f: Parameters<typeof faceWall>[1]) => {
-    if (!walls?.length) return true;
-    const fw = faceWall(fold, f);
-    return !fw || walls.includes(fw);
-  };
   const toPx = (P: V3): [number, number] | null => {
     const q = projectPose(pose, aspect, P);
     return q ? [((q[0] + 1) / 2) * w, ((1 - q[1]) / 2) * h] : null;
-  };
-  // sides pinned to the measured corners are drawn exactly like the picture maps them
-  const pins = pinnedFaces(fold, pose, aspect, anchors);
-  const facePx = (f: RoomFold['faces'][number], x: number, y: number): [number, number] | null => {
-    const pin = pins.get(f.id);
-    if (!pin) return toPx(facePoint(f, x, y));
-    const sa = (x - f.rect.x) / f.rect.w;
-    const ta = (y - f.rect.y) / f.rect.h;
-    if (sa < pin.s0 - 1e-6 || sa > pin.s1 + 1e-6 || ta < pin.t0 - 1e-6 || ta > pin.t1 + 1e-6) return null;
-    const q = pin.at(sa, ta);
-    return [((q[0] + 1) / 2) * w, ((1 - q[1]) / 2) * h];
   };
   g.save();
   g.fillStyle = 'rgba(0,0,0,0.55)';
@@ -261,7 +238,6 @@ export function drawAlignOverlay(
   g.shadowColor = '#3ff2ff';
   g.shadowBlur = lw * 3;
   for (const f of fold.faces) {
-    if (!chosen(f)) continue;
     const r = f.rect;
     const edges: [number, number, number, number][] = [
       [r.x, r.y, r.x + r.w, r.y],
@@ -274,7 +250,7 @@ export function drawAlignOverlay(
       let pen = false;
       for (let i = 0; i <= 48; i++) {
         const t = i / 48;
-        const q = facePx(f, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+        const q = toPx(facePoint(f, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t));
         if (!q || q[0] < -w || q[0] > 2 * w || q[1] < -h || q[1] > 2 * h) {
           pen = false;
           continue;
@@ -313,32 +289,6 @@ export function drawAlignOverlay(
     g.stroke();
   }
   g.shadowBlur = 0;
-  // name of each side (VORNE, LINKS …) in the middle of its visible part
-  {
-    const ls = Math.max(18, h / 16);
-    g.font = `800 ${ls}px system-ui, sans-serif`;
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    for (const f of fold.faces) {
-      if (!chosen(f)) continue;
-      const fw = faceWall(fold, f);
-      if (!fw) continue;
-      let sx = 0;
-      let sy = 0;
-      let n = 0;
-      for (let i = 0; i <= 10; i++)
-        for (let j = 0; j <= 10; j++) {
-          const q = facePx(f, f.rect.x + (f.rect.w * i) / 10, f.rect.y + (f.rect.h * j) / 10);
-          if (!q || q[0] < 0 || q[0] > w || q[1] < 0 || q[1] > h) continue;
-          sx += q[0];
-          sy += q[1];
-          n++;
-        }
-      if (n < 3) continue;
-      g.fillStyle = 'rgba(63,242,255,0.55)';
-      g.fillText(ROOM_WALL_LABEL[fw].toUpperCase(), sx / n, sy / n);
-    }
-  }
   // numbered room corners (where the app thinks they are)
   const fs = Math.max(14, h / 28);
   g.font = `700 ${fs}px system-ui, sans-serif`;
@@ -346,8 +296,6 @@ export function drawAlignOverlay(
   g.textBaseline = 'middle';
   const corners = roomCorners(fold);
   for (const c of corners) {
-    const cw = cornerWalls(c.id);
-    if (walls?.length && cw.length && !cw.some((x) => walls.includes(x))) continue;
     const q = toPx(c.p);
     if (!q || q[0] < 0 || q[0] > w || q[1] < 0 || q[1] > h) continue;
     const isSel = c.id === sel;

@@ -524,10 +524,17 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       return res(cmd.room ? 'room mode on' : 'room mode off');
     case 'ghost.release': {
       const have = new Set((state.ghosts ?? []).map((g) => g.id));
-      const ids = cmd.ghostIds.filter((g) => have.has(g));
-      if (!ids.length) fail('not_found', 'Unknown ghost');
-      releaseGhosts(state, ids, ctx, cmd.seconds ?? 35);
-      return res(`${ids.length} ghost(s) released`);
+      // where each one rises (a group photo: everybody from their own place)
+      const pick = cmd.ghostIds.map((g, i) => ({ g, u: cmd.u?.[i] })).filter((x) => have.has(x.g));
+      if (!pick.length) fail('not_found', 'Unknown ghost');
+      releaseGhosts(
+        state,
+        pick.map((x) => x.g),
+        ctx,
+        cmd.seconds ?? 35,
+        cmd.u ? pick.map((x) => x.u) : undefined,
+      );
+      return res(`${pick.length} ghost(s) released`);
     }
     case 'ghost.delete':
       state.ghosts = (state.ghosts ?? []).filter((g) => g.id !== cmd.ghostId);
@@ -798,13 +805,10 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       if (!walls.length) return res(`${o.name}: no sides`);
       const ref = prof.referenceResolution;
       const pose = poseForWalls(roomFold(state.surfaces), walls, ref ? ref.w / ref.h : 16 / 9);
-      if (pose) {
-        prof.pose = pose;
-        // the projector is set up anew: earlier measurements no longer belong to it
-        prof.anchors = [];
-      }
-      // no automatic position found: the sides are still allowed, the projector keeps its
-      // position and is placed by measuring
+      if (!pose) return res(`${o.name}: these sides cannot be covered by one projector`);
+      prof.pose = pose;
+      // the projector is set up anew: earlier measurements no longer belong to it
+      prof.anchors = [];
       if (/^Beamer( |$)/.test(o.name) || /^Projector/.test(o.name)) o.name = wallsName(walls);
       return res(`${o.name}: covers ${walls.join(', ')}`);
     }
@@ -1149,18 +1153,20 @@ export function releaseGhosts(
   ghostIds: readonly string[],
   ctx: ReducerContext,
   seconds = 35,
-  u?: number,
+  u?: number | readonly (number | undefined)[],
 ): void {
   const flights = (state.ghostFlights ?? []).filter((f) => f.endAt > ctx.now);
   ghostIds.forEach((ghostId, i) => {
-    const startAt = ctx.now + i * 1200;
+    const startAt = ctx.now + i * 350;
     flights.push({
       id: ctx.newId(),
       ghostId,
       startAt,
       endAt: startAt + seconds * 1000,
       seed: ctx.newSeed() % 100000,
-      ...(u !== undefined ? { u } : {}),
+      ...((typeof u === 'number' ? u : u?.[i]) !== undefined
+        ? { u: typeof u === 'number' ? u : u![i]! }
+        : {}),
     });
   });
   state.ghostFlights = flights.slice(-16);

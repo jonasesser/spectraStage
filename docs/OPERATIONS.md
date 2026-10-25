@@ -105,17 +105,38 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
   picture brightness, why black is drawn on purpose, and a live picture of what the projector app
   draws. Graphics mode (standard / compatible / Full HD / power-saving GPU) switches live.
 
-### Zombie camera
+### Ghost photos (zombie camera)
 
-Live tab → 🧟 Zombie camera: the phone films the guests; the projector PCs of the front wall cut the
-people out (MediaPipe selfie segmentation + face landmarks, in the browser) and let them drift along
-the main wall as funny zombie ghosts (green cartoon skin, glow, ghost tail, googly eyes, teeth,
-stitched scar) for as long as the camera runs. Several people become separate ghosts (each tracked, own place and
-bobbing, in their camera order); faces are searched per person, so googly eyes etc. reach everyone. Video goes phone → projector PC via WebRTC
-(signalling through the show's WebSocket, STUN only – phone and PC should be in the same Wi-Fi);
-nothing is stored. Models and the WebAssembly runtime are served by the app itself
-(/mediapipe/…), not precached by the service worker. Needs camera permission on the phone
-(Permissions-Policy camera=self) and `wasm-unsafe-eval` in the CSP.
+Live tab → 👻 Ghost photos: start the camera on the phone and press the shutter (or tap the
+camera picture). Every person in the picture becomes their own ghost photo – a group of five gives
+five ghosts – saved in the show and rising together on the projectors, each from where the person
+stood. Photos are only ever taken on the phone.
+
+- **Face filter** (default): MediaPipe selfie segmentation cuts the people out; the face landmarker
+  runs per person on a sharp crop around the head (small faces in groups too) and gives a 3D face
+  mesh (468 points). A WebGL face filter (`apps/web/src/display/faceFilter.ts`) covers the mesh with
+  a painted creature texture in two layers – a skin tint that keeps the real face's light, pores and
+  wrinkles, and make-up details shaded by the real face – while the real eyes and mouth show
+  through. 3D props (horns, witch hat, wolf ears, knife, arrow, neck bolts, fangs) follow the head
+  pose; a head occluder hides what lies behind or inside the head. Creatures: zombie, ghost,
+  vampire, skeleton, devil, werewolf, witch, cartoon. The people keep their own colours, slightly
+  transparent like ghosts.
+- **AI** (optional, ✨ Gemini or OpenAI): enter your own API key – it stays only in the open page
+  (not saved, never sent to the SpectraStage server; enter it again after reloading). Each person's
+  plain photo goes from the phone straight to the provider with a creature prompt, all people in
+  parallel; the answer is cut out (OpenAI: transparent background; Gemini: black background +
+  segmentation) and uploaded. When all are ready they rise together. If the AI fails, the face
+  filter photo is used. The model id can be changed in the app (defaults in `lib/aiGhost.ts`). The
+  CSP allows `connect-src` to `generativelanguage.googleapis.com` and `api.openai.com` for this.
+- **Live picture on the projectors** (off by default): the camera video goes phone → projector PCs
+  of the front wall via WebRTC (signalling through the show's WebSocket, STUN only – same Wi-Fi);
+  they run the same face filter and let the guests drift along the main wall as live ghosts.
+- Gallery: release saved ghosts again (several at once), call them back, delete them.
+
+Models and the WebAssembly runtime are served by the app itself (/mediapipe/…), not precached by
+the service worker. Needs camera permission on the phone (Permissions-Policy camera=self) and
+`wasm-unsafe-eval` in the CSP. The face mesh data (`faceMesh.ts`) is MediaPipe's canonical face
+model (Apache-2.0).
 
 ## 4. Running the show
 

@@ -497,6 +497,8 @@ export const CommandSchema = z.discriminatedUnion('t', [
     t: z.literal('ghost.release'),
     ghostIds: z.array(z.string().max(40)).min(1).max(12),
     seconds: z.number().min(5).max(300).optional(),
+    /** Where each ghost rises (0..1 across the wall), same order as ghostIds. */
+    u: z.array(z.number().min(0).max(1)).max(12).optional(),
   }),
   z.object({ t: z.literal('ghost.delete'), ghostId: z.string().max(40) }),
   z.object({ t: z.literal('ghost.deleteAll') }),
@@ -684,13 +686,7 @@ export const OWNER_ONLY: ReadonlySet<CommandType> = new Set<CommandType>([
 // WebSocket messages
 // ---------------------------------------------------------------------------
 export const RtcDataSchema = z.object({
-  kind: z.enum(['offer', 'answer', 'ice', 'bye', 'style']),
-  /** Zombie camera look: make-up (person stays recognisable) or comic (googly eyes). */
-  style: z.enum(['makeup', 'comic']).optional(),
-  /** Zombie camera: this projector PC takes the ghost photos (only one does). */
-  capture: z.boolean().optional(),
-  /** Take a ghost photo now (a tap on the phone): place 0..1 across the mirrored picture. */
-  snap: z.number().min(0).max(1).optional(),
+  kind: z.enum(['offer', 'answer', 'ice', 'bye']),
   sdp: z.string().max(20_000).optional(),
   candidate: z
     .object({

@@ -13,13 +13,11 @@ import {
   type Anchor,
   type Output,
   type Pose,
-  type RoomWall,
   type SessionState,
   type V3,
 } from '@spectrastage/shared';
 import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
-import { CalibrationEditor } from './CalibrationEditor.tsx';
 import { WallPicker } from './WallPicker.tsx';
 import { ZoomSliders } from './ZoomSliders.tsx';
 
@@ -121,17 +119,7 @@ function targetsFor(state: SessionState, pose: Pose, aspect: number, L: Tr): Tar
 }
 
 /** The room seen from inside towards the front wall, with the corner or edge to hit marked. */
-const SKETCH_FACES: Record<Exclude<RoomWall, 'hinten'>, string> = {
-  vorne: '70,42 150,42 150,98 70,98',
-  links: '6,6 70,42 70,98 6,134',
-  rechts: '214,6 150,42 150,98 214,134',
-  decke: '6,6 214,6 150,42 70,42',
-  boden: '6,134 70,98 150,98 214,134',
-};
-
-function RoomSketch({ keys, walls, L }: { keys: string[]; walls: readonly RoomWall[]; L: Tr }) {
-  // the chosen sides are highlighted, the others drawn faintly for orientation
-  const on = (w: RoomWall) => !walls.length || walls.includes(w);
+function RoomSketch({ keys, L }: { keys: string[]; L: Tr }) {
   const pos = (k: string): [number, number] | null => {
     const [z, x, y] = k.split('-');
     if (!z || !x || !y) return null;
@@ -152,10 +140,6 @@ function RoomSketch({ keys, walls, L }: { keys: string[]; walls: readonly RoomWa
       aria-label={L('Sketch of the room', 'Skizze des Raums')}
     >
       <rect x="0" y="0" width="220" height="140" rx="8" fill="#0b0918" />
-      {walls.length > 0 &&
-        (Object.keys(SKETCH_FACES) as (keyof typeof SKETCH_FACES)[])
-          .filter(on)
-          .map((w) => <polygon key={w} points={SKETCH_FACES[w]} fill="#3ff2ff" opacity="0.12" />)}
       <g stroke={c} strokeWidth="1.5" fill="none" opacity="0.7">
         <rect x="70" y="42" width="80" height="56" />
         <line x1="6" y1="6" x2="70" y2="42" />
@@ -164,19 +148,19 @@ function RoomSketch({ keys, walls, L }: { keys: string[]; walls: readonly RoomWa
         <line x1="214" y1="134" x2="150" y2="98" />
       </g>
       <g fill="#9d93d9" fontSize="10" textAnchor="middle" fontFamily="system-ui, sans-serif">
-        <text x="110" y="74" opacity={on('vorne') ? 1 : 0.3}>
+        <text x="110" y="74">
           {L('front', 'vorne')}
         </text>
-        <text x="30" y="74" opacity={on('links') ? 1 : 0.3}>
+        <text x="30" y="74">
           {L('left', 'links')}
         </text>
-        <text x="190" y="74" opacity={on('rechts') ? 1 : 0.3}>
+        <text x="190" y="74">
           {L('right', 'rechts')}
         </text>
-        <text x="110" y="124" opacity={on('boden') ? 1 : 0.3}>
+        <text x="110" y="124">
           {L('floor', 'Boden')}
         </text>
-        <text x="110" y="24" opacity={on('decke') ? 1 : 0.3}>
+        <text x="110" y="24">
           {L('ceiling', 'Decke')}
         </text>
       </g>
@@ -218,9 +202,6 @@ export function MeasureWizard({
   const pose = profile.pose ?? null;
   const ref = profile.referenceResolution;
   const aspect = ref ? ref.w / ref.h : 16 / 9;
-  const [showMasks, setShowMasks] = useState(false);
-  /** Corners are enough; points on the edges are an optional fine adjustment. */
-  const [detail, setDetail] = useState(false);
   const [draft, setDraft] = useState<Anchor[] | null>(null);
   const anchors = draft ?? profile.anchors ?? [];
   const [history, setHistory] = useState<string[]>([]);
@@ -255,11 +236,9 @@ export function MeasureWizard({
 
   const walls = profile.walls ?? (pose ? wallsOfPose(roomFold(state.surfaces), pose, aspect) : []);
   // only what belongs to the sides this projector lights (if chosen)
-  const allTargets = (pose ? targetsFor(state, pose, aspect, L) : []).filter(
+  const targets = (pose ? targetsFor(state, pose, aspect, L) : []).filter(
     (t) => !walls.length || anchorWalls(t.id).some((w) => walls.includes(w)),
   );
-  const edgeCount = allTargets.filter((t) => t.kind === 'edge').length;
-  const targets = detail ? allTargets : allTargets.filter((t) => t.kind === 'corner');
   const current = targets.find((t) => !history.includes(t.id) && !skipped.has(t.id)) ?? null;
   const [active, setActive] = useState<string | null>(null);
   const target = targets.find((t) => t.id === active) ?? current;
@@ -350,7 +329,6 @@ export function MeasureWizard({
     setHistory([]);
     setSkipped(new Set());
     setActive(null);
-    setDetail(false);
   };
 
   const count = measureCount(anchors);
@@ -369,16 +347,9 @@ export function MeasureWizard({
   const doneSteps = history.length + skipped.size;
   const total = doneSteps + targets.filter((t) => !history.includes(t.id) && !skipped.has(t.id)).length;
 
-  if (showMasks) return <CalibrationEditor output={output} masksOnly onClose={() => setShowMasks(false)} />;
-
   return (
     <div className="panel stack">
-      <div className="row between">
-        <strong>📐 {L('Measure projector', 'Beamer einmessen')}</strong>
-        <button className="btn small" onClick={() => setShowMasks(true)}>
-          ⬛ {L('Masks', 'Masken')} ({activeProfile(output).masks.length})
-        </button>
-      </div>
+      <strong>📐 {L('Measure projector', 'Beamer einmessen')}</strong>
       <WallPicker output={output} state={state} L={L} />
       {target ? (
         <>
@@ -387,7 +358,7 @@ export function MeasureWizard({
           </div>
           <div style={{ fontWeight: 700 }}>{target.title}</div>
           {target.hint && <div className="small">{target.hint}</div>}
-          <RoomSketch keys={target.keys} walls={walls} L={L} />
+          <RoomSketch keys={target.keys} L={L} />
           <p className="small" style={{ margin: 0 }}>
             {target.kind === 'corner'
               ? L(
@@ -454,25 +425,12 @@ export function MeasureWizard({
           </div>
         </>
       ) : (
-        <div className="stack" style={{ gap: '0.5rem' }}>
-          <p style={{ margin: 0 }}>
-            {detail
-              ? L(
-                  'All points are measured. Check on the wall: the glowing lines should lie on the real room edges.',
-                  'Alle Punkte sind gemessen. Prüf an der Wand: Die Leuchtlinien sollten auf den echten Raumkanten liegen.',
-                )
-              : L(
-                  'Corners done. Check on the wall: do the glowing lines lie on the real room edges? Then you are finished.',
-                  'Ecken fertig. Prüf an der Wand: Liegen die Leuchtlinien auf den echten Raumkanten? Dann bist du fertig.',
-                )}
-          </p>
-          {!detail && edgeCount > 0 && (
-            <button className="btn small" onClick={() => setDetail(true)}>
-              🎯 {L('Lines still off? Fine-tune on the edges', 'Linien liegen noch daneben? Feinjustieren an den Kanten')} (
-              {edgeCount} {L('points, optional', 'Punkte, optional')})
-            </button>
+        <p style={{ margin: 0 }}>
+          {L(
+            'All points this projector reaches are measured. Check on the wall: the glowing lines should lie on the real room edges.',
+            'Alle Punkte, die dieser Beamer erreicht, sind gemessen. Prüf an der Wand: Die Leuchtlinien sollten auf den echten Raumkanten liegen.',
           )}
-        </div>
+        </p>
       )}
       <div className="small">
         {count < 7
@@ -485,7 +443,7 @@ export function MeasureWizard({
             } · ${L('more points = more precise, “Done” any time', 'mehr Punkte = genauer, „Fertig“ jederzeit')}`}
       </div>
       {outliers.map((o) => {
-        const t = allTargets.find((x) => x.id === o.c);
+        const t = targets.find((x) => x.id === o.c);
         return (
           <div key={o.c} className="safety-note small stack" style={{ gap: '0.4rem' }}>
             <span>

@@ -1063,10 +1063,7 @@ export function poseForWalls(fold: RoomFold, walls: readonly RoomWall[], aspect 
     b.h * fy,
     b.o[2] + b.ax[2] * b.w * fx + b.n[2] * b.d * fz,
   ];
-  // pass 1: the transitions fit completely; pass 2 (only if that finds nothing): aim at the
-  // middle of the chosen sides, transitions may then be cut at the picture edge
-  const search = (relaxed: boolean): Pose | null => {
-  let best: { pose: Pose; score: number; fov: number } | null = null;
+  let best: { pose: Pose; cover: number; fov: number } | null = null;
   for (const fx of [0.1, 0.3, 0.5, 0.7, 0.9])
     for (const fz of [0.05, 0.25, 0.5, 0.75, 0.95])
       for (const fy of [0.2, 0.5, 0.85]) {
@@ -1077,43 +1074,25 @@ export function poseForWalls(fold: RoomFold, walls: readonly RoomWall[], aspect 
           const l = Math.hypot(...d) || 1;
           for (let k = 0; k < 3; k++) m[k]! += d[k]! / l;
         }
-        const aims: Pose[] = [];
-        const fovs: number[] = [];
-        if (!relaxed && Math.hypot(...m) >= 0.2 * need.length) {
-          const aim = aimPose(from, add(from, m), 90);
-          let tx = 0;
-          let ok = true;
-          const R = poseDirFrame(aim);
-          for (const p of need) {
-            const d = sub(p, from);
-            const z = -dot(d, R.f);
-            if (z < 0.05) {
-              ok = false;
-              break;
-            }
-            tx = Math.max(tx, Math.abs(dot(d, R.r)) / z, (Math.abs(dot(d, R.u)) / z) * aspect);
+        if (Math.hypot(...m) < 0.2 * need.length) continue;
+        const aim = aimPose(from, add(from, m), 90);
+        let tx = 0;
+        let ok = true;
+        const R = poseDirFrame(aim);
+        for (const p of need) {
+          const d = sub(p, from);
+          const z = -dot(d, R.f);
+          if (z < 0.05) {
+            ok = false;
+            break;
           }
-          // open the picture a bit more (up to 150°) when that shows more of the chosen sides
-          const fov0 = (2 * Math.atan(tx * 1.04) * 180) / Math.PI;
-          if (ok && fov0 <= 150) {
-            aims.push(aim);
-            fovs.push(fov0, Math.min(150, fov0 + 15), Math.min(150, fov0 + 30));
-          }
+          tx = Math.max(tx, Math.abs(dot(d, R.r)) / z, (Math.abs(dot(d, R.u)) / z) * aspect);
         }
-        if (relaxed) {
-          const ms: V3 = [0, 0, 0];
-          for (const sm of samples) {
-            const d = sub(sm.p, from);
-            const l = Math.hypot(...d) || 1;
-            for (let k = 0; k < 3; k++) ms[k]! += d[k]! / l;
-          }
-          if (Math.hypot(...ms) >= 0.2 * samples.length) {
-            aims.push(aimPose(from, add(from, ms), 90));
-            fovs.push(90, 110, 130, 150);
-          }
-        }
-        for (const aim of aims)
-          for (const fov of fovs) {
+        if (!ok) continue;
+        // open the picture a bit more (up to 150°) when that shows more of the chosen sides
+        const fov0 = (2 * Math.atan(tx * 1.04) * 180) / Math.PI;
+        if (fov0 > 150) continue;
+        for (const fov of [fov0, Math.min(150, fov0 + 15), Math.min(150, fov0 + 30)]) {
           const pose = { ...aim, fov };
           const perWall = new Map<RoomWall, number>();
           for (const sm of samples) {
@@ -1121,33 +1100,15 @@ export function poseForWalls(fold: RoomFold, walls: readonly RoomWall[], aspect 
             if (q && Math.abs(q[0]) <= 1.001 && Math.abs(q[1]) <= 1.001)
               perWall.set(sm.wall, (perWall.get(sm.wall) ?? 0) + 1);
           }
-          // every chosen side must show up
+          // every chosen side must show up; then: as much of them as possible
           const each = walls.map((w) => (perWall.get(w) ?? 0) / 36);
           if (Math.min(...each) < 0.15) continue;
           const cover = each.reduce((a, c) => a + c, 0) / walls.length;
-          // the whole picture is meant for the chosen sides: as little as possible spills onto
-          // other sides, and every chosen side gets a real part (Vorne + Links → split in two)
-          const share = new Map<RoomWall, number>();
-          let onChosen = 0;
-          for (let j = 0; j <= 8; j++)
-            for (let i = 0; i <= 14; i++) {
-              const hit = roomRay(fold, pose.pos, poseRay(pose, aspect, (i / 14) * 2 - 1, 1 - (j / 8) * 2));
-              const fw = hit ? faceWall(fold, hit.face) : null;
-              if (fw && walls.includes(fw)) {
-                onChosen++;
-                share.set(fw, (share.get(fw) ?? 0) + 1);
-              }
-            }
-          const N = 9 * 15;
-          if (walls.length > 1 && Math.min(...walls.map((w) => (share.get(w) ?? 0) / N)) < 0.08) continue;
-          const score = onChosen / N + 0.5 * cover;
-          if (!best || score > best.score + 0.02 || (score > best.score - 0.02 && fov < best.fov - 0.5))
-            best = { pose, score, fov };
+          if (!best || cover > best.cover + 0.02 || (cover > best.cover - 0.02 && fov < best.fov - 0.5))
+            best = { pose, cover, fov };
         }
       }
   return best?.pose ?? null;
-  };
-  return search(false) ?? search(true);
 }
 
 /** Forward (into the picture, negated: points have −z), right and up vectors of a pose. */
@@ -1166,175 +1127,6 @@ function poseDirFrame(p: Pose): { f: V3; r: V3; u: V3 } {
     r: [r[0] / nr, r[1] / nr, r[2] / nr],
     u: [u[0] / nu, u[1] / nu, u[2] / nu],
   };
-}
-
-/**
- * Measured corners are pinned exactly: one projector pose is a best fit over all points, so a real
- * room (not a perfect box, lens shift, …) leaves the walls a little off where the crosses were
- * set. Per room side, the picture is mapped with a homography through its four corners – the
- * measured ones where they are set, the predicted ones elsewhere. Straight edges stay straight,
- * and a point set on the ceiling only moves the sides that share that corner.
- * Returns, per face id, (s, t) in 0…1 of the face rect → picture NDC (x right, y up).
- */
-export interface PinnedFace {
-  /** The part of the face rect (0…1) that is mapped; the rest lies outside the picture. */
-  s0: number;
-  s1: number;
-  t0: number;
-  t1: number;
-  /** (s, t) in 0…1 of the whole face rect → picture NDC (x right, y up). */
-  at: (s: number, t: number) => [number, number];
-}
-
-export function pinnedFaces(
-  fold: RoomFold,
-  pose: Pose,
-  aspect: number,
-  anchors: readonly { c: string; q?: V3 | undefined; u: number; v: number }[],
-): Map<string, PinnedFace> {
-  const out = new Map<string, PinnedFace>();
-  const set = anchors.filter((a) => !a.q && a.c.startsWith('c|'));
-  if (!set.length) return out;
-  const corners = roomCorners(fold);
-  const tol = Math.max(1e-3, fold.unit * 0.01);
-  const LIM = 20;
-  for (const f of fold.faces) {
-    const r = f.rect;
-    const at3 = (s2: number, t2: number) => facePoint(f, r.x + r.w * s2, r.y + r.h * t2);
-    const proj = (s2: number, t2: number) => {
-      const q = projectPose(pose, aspect, at3(s2, t2));
-      return q && Math.abs(q[0]) < LIM && Math.abs(q[1]) < LIM ? q : null;
-    };
-    const ST: [number, number][] = [
-      [0, 0],
-      [1, 0],
-      [1, 1],
-      [0, 1],
-    ];
-    // correction of each corner: measured minus predicted (0 where nothing is measured)
-    const pred = ST.map(([a2, b2]) => proj(a2, b2));
-    const corr: [number, number][] = ST.map(() => [0, 0]);
-    let pinned = false;
-    ST.forEach(([a2, b2], i) => {
-      const p = at3(a2, b2);
-      const c = corners.find((k) => Math.hypot(k.p[0] - p[0], k.p[1] - p[1], k.p[2] - p[2]) < tol);
-      const an = c ? set.find((x) => x.c === `c|${c.id}`) : undefined;
-      const q = pred[i];
-      if (an && q) {
-        corr[i] = [an.u * 2 - 1 - q[0], 1 - an.v * 2 - q[1]];
-        pinned = true;
-      }
-    });
-    if (!pinned) continue;
-    // part of the face behind or far beside the projector: map only the part in front of it
-    let s0 = 0;
-    let s1 = 1;
-    let t0 = 0;
-    let t1 = 1;
-    const ok = pred.map((q) => !!q);
-    const cut = (good: (k: number) => boolean, from: number, to: number) => {
-      let lo = from;
-      let hi = to;
-      for (let k = 0; k < 30; k++) {
-        const m = (lo + hi) / 2;
-        if (good(m)) lo = m;
-        else hi = m;
-      }
-      return lo;
-    };
-    const c2: [number, number][] = corr.map((x) => [x[0], x[1]]);
-    if (!ok.every(Boolean)) {
-      const colOk = (k: number) => !!proj(k, 0) && !!proj(k, 1);
-      const rowOk = (k: number) => !!proj(0, k) && !!proj(1, k);
-      if (ok[0] && ok[3] && !ok[1] && !ok[2]) {
-        s1 = cut(colOk, 0, 1);
-        c2[1] = corr[0]!;
-        c2[2] = corr[3]!;
-      } else if (ok[1] && ok[2] && !ok[0] && !ok[3]) {
-        s0 = cut(colOk, 1, 0);
-        c2[0] = corr[1]!;
-        c2[3] = corr[2]!;
-      } else if (ok[0] && ok[1] && !ok[2] && !ok[3]) {
-        t1 = cut(rowOk, 0, 1);
-        c2[3] = corr[0]!;
-        c2[2] = corr[1]!;
-      } else if (ok[2] && ok[3] && !ok[0] && !ok[1]) {
-        t0 = cut(rowOk, 1, 0);
-        c2[0] = corr[3]!;
-        c2[1] = corr[2]!;
-      } else continue;
-    }
-    const sub: [number, number][] = [
-      [s0, t0],
-      [s1, t0],
-      [s1, t1],
-      [s0, t1],
-    ];
-    const quad: [number, number][] = [];
-    for (let i = 0; i < 4; i++) {
-      const q = proj(sub[i]![0], sub[i]![1]);
-      if (!q) break;
-      quad.push([q[0] + c2[i]![0], q[1] + c2[i]![1]]);
-    }
-    if (quad.length < 4) continue;
-    const H = squareToQuad(quad);
-    if (!H) continue;
-    const ws = s1 - s0 || 1;
-    const wt = t1 - t0 || 1;
-    out.set(f.id, {
-      s0,
-      s1,
-      t0,
-      t1,
-      at: (sa, ta) => {
-        const u = (sa - s0) / ws;
-        const v = (ta - t0) / wt;
-        const w = H[6]! * u + H[7]! * v + 1;
-        return [(H[0]! * u + H[1]! * v + H[2]!) / w, (H[3]! * u + H[4]! * v + H[5]!) / w];
-      },
-    });
-  }
-  return out;
-}
-
-/** Homography of the unit square (0,0) (1,0) (1,1) (0,1) onto a quad (Heckbert). */
-function squareToQuad(q: [number, number][]): number[] | null {
-  const [p0, p1, p2, p3] = q as [[number, number], [number, number], [number, number], [number, number]];
-  const sx = p0[0] - p1[0] + p2[0] - p3[0];
-  const sy = p0[1] - p1[1] + p2[1] - p3[1];
-  const dx1 = p1[0] - p2[0];
-  const dx2 = p3[0] - p2[0];
-  const dy1 = p1[1] - p2[1];
-  const dy2 = p3[1] - p2[1];
-  const den = dx1 * dy2 - dx2 * dy1;
-  if (Math.abs(den) < 1e-12) return null;
-  const g = (sx * dy2 - dx2 * sy) / den;
-  const h = (dx1 * sy - sx * dy1) / den;
-  return [
-    p1[0] - p0[0] + g * p1[0],
-    p3[0] - p0[0] + h * p3[0],
-    p0[0],
-    p1[1] - p0[1] + g * p1[1],
-    p3[1] - p0[1] + h * p3[1],
-    p0[1],
-    g,
-    h,
-  ];
-}
-
-/** Which side of the room box a face is (null if the room is not a box). */
-export function faceWall(fold: RoomFold, f: RoomFace): RoomWall | null {
-  const b = boxFrame(fold);
-  if (!b) return null;
-  const ax = dot(f.n, b.ax);
-  const nz = dot(f.n, b.n);
-  if (ax > 0.9) return 'links';
-  if (ax < -0.9) return 'rechts';
-  if (f.n[1] > 0.9) return 'boden';
-  if (f.n[1] < -0.9) return 'decke';
-  if (nz > 0.9) return 'vorne';
-  if (nz < -0.9) return 'hinten';
-  return null;
 }
 
 /** Projector name from the sides it covers, e.g. "Beamer Links + Vorne + Rechts". */

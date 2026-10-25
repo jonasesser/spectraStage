@@ -33,18 +33,17 @@ export function WallPicker({ output, state, L }: { output: Output; state: Sessio
   const walls = prof.walls ?? (prof.pose ? wallsOfPose(roomFold(state.surfaces), prof.pose, aspect) : []);
   const toggle = (w: RoomWall) => {
     const next = walls.includes(w) ? walls.filter((x) => x !== w) : [...walls, w];
-    const auto = next.length ? poseForWalls(roomFold(state.surfaces), next, aspect) : null;
-    // allowed anyway – without an automatic position the projector stays and is measured in
-    setHint(
-      next.length && !auto
-        ? L(
-            `No automatic position found for ${next.map((x) => EN[x]).join(' + ')} – the projector keeps its position; measure it in.`,
-            `Für ${next.map((x) => ROOM_WALL_LABEL[x]).join(' + ')} finde ich keine automatische Position – der Beamer bleibt, wo er ist. Einfach einmessen.`,
-          )
-        : null,
-    );
+    if (next.length && !poseForWalls(roomFold(state.surfaces), next, aspect)) {
+      setHint(
+        L(
+          `${next.map((x) => EN[x]).join(' + ')} cannot be lit by one projector (e.g. opposite sides). Use a second projector.`,
+          `${next.map((x) => ROOM_WALL_LABEL[x]).join(' + ')} schafft ein Beamer nicht (z. B. gegenüberliegende Seiten). Dafür einen zweiten Beamer nehmen.`,
+        ),
+      );
+      return;
+    }
+    setHint(null);
     if (
-      auto &&
       activeProfile(output).anchors?.length &&
       !window.confirm(
         L(

@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { activeProfile, roomFold, wallsOfPose, type Presence, type SessionState } from '@spectrastage/shared';
 import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
-import { ZombiePreview } from './ZombiePreview.tsx';
 import { GhostGallery } from './GhostGallery.tsx';
+import { AI_MODELS, aiGhost, type AiProvider } from '../lib/aiGhost.ts';
+import { ZombieFx } from '../display/zombie.ts';
 
 const ICE: RTCConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
@@ -23,84 +24,142 @@ function targets(state: SessionState, presence: Presence): string[] {
   return (front.length ? front : online).map((d) => d.id);
 }
 
+interface Job {
+  id: number;
+  n: number;
+  done: number;
+  state: 'working' | 'flying' | 'failed';
+  note?: string;
+}
+
 /**
- * Zombie camera: this phone films the guests; the projector PCs of the front wall turn them into
- * funny zombie ghosts that drift along the wall – as long as the camera runs. The video goes
- * straight from the phone to the projector PCs (WebRTC), nothing is stored.
+ * Ghost photo shooting: this phone films the guests; one press of the shutter takes a ghost photo
+ * of everybody in the picture (a group of five → five ghosts). With an image AI every person is
+ * painted as a monster portrait in parallel in the background; when all are ready they are saved
+ * in the show and rise together on the projectors. Optional: the live picture of the camera on the
+ * projectors (off by default).
  */
 export function ZombieCam({ state, presence, L }: { state: SessionState; presence: Presence; L: Tr }) {
   const store = useStore();
   const [on, setOn] = useState(false);
   const [facing, setFacing] = useState<'user' | 'environment'>('environment');
-  // ghost photos: taken by this phone while its preview runs, else by the first projector PC;
-  // saved in the show
-  const [save, setSaveState] = useState(true);
-  const saveRef = useRef(save);
-  saveRef.current = save;
-  const previewOnRef = useRef(false);
-  const tellCapture = () => {
-    const first = [...(run.current?.peers.keys() ?? [])][0];
-    if (first)
-      store.conn.sendRtc(first, { kind: 'style', capture: saveRef.current && !previewOnRef.current });
-  };
-  const setSave = (v: boolean) => {
-    setSaveState(v);
-    saveRef.current = v;
-    tellCapture();
-  };
   const [err, setErr] = useState<string | null>(null);
-  // tap a face → ghost photo right away (the preview here, or the projector PC taking photos)
-  const snapRef = useRef<((u?: number) => boolean) | null>(null);
-  const [tapped, setTapped] = useState(0);
-  useEffect(() => {
-    if (!tapped) return;
-    const t = window.setTimeout(() => setTapped(0), 2500);
-    return () => window.clearTimeout(t);
-  }, [tapped]);
-  const snap = (u?: number) => {
-    if (!saveRef.current) return;
-    if (previewOnRef.current) snapRef.current?.(u);
-    else {
-      const first = targets(stateRef.current, presenceRef.current).find((id) => run.current?.peers.has(id));
-      if (!first) return;
-      store.conn.sendRtc(first, { kind: 'style', snap: u ?? 0.5 });
-    }
-    setTapped(Date.now());
-  };
-  const onVideoTap = (e: React.MouseEvent<HTMLVideoElement>) => {
-    const v = e.currentTarget;
-    const r = v.getBoundingClientRect();
-    // where the picture sits inside the element (object-fit: contain)
-    const k = Math.min(r.width / Math.max(1, v.videoWidth), r.height / Math.max(1, v.videoHeight));
-    const w = v.videoWidth * k;
-    const x = (e.clientX - r.left - (r.width - w) / 2) / Math.max(1, w);
-    // the effect mirrors the picture
-    snap(Math.max(0, Math.min(1, 1 - x)));
-  };
-  const [links, setLinks] = useState<Record<string, string>>({});
-  // test without a projector: run the effect here and show it on a preview of the front wall
-  const [preview, setPreview] = useState<boolean | null>(null);
+  // the live camera picture on the projectors (off by default)
+  const [live, setLive] = useState(false);
+  // monster portraits by an image AI with the user's own key (in memory only)
+  const [aiProvider, setAiProvider] = useState<AiProvider | null>(null);
+  const [aiKey, setAiKey] = useState('');
+  const [aiModel, setAiModel] = useState('');
+  const [fxState, setFxState] = useState<'off' | 'loading' | 'ready' | 'failed'>('off');
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [flash, setFlash] = useState<string | null>(null);
+  const jobId = useRef(1);
+  const fxRef = useRef<ZombieFx | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const run = useRef<{ stream: MediaStream; peers: Map<string, RTCPeerConnection>; off: () => void } | null>(
     null,
   );
+  const [links, setLinks] = useState<Record<string, string>>({});
   const ids = targets(state, presence);
-  const stateRef = useRef(state);
-  stateRef.current = state;
-  const presenceRef = useRef(presence);
-  presenceRef.current = presence;
   const idsKey = ids.join(',');
+
+  useEffect(() => {
+    if (!flash) return;
+    const t = window.setTimeout(() => setFlash(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [flash]);
+
+  const patchJob = (id: number, p: Partial<Job> | ((j: Job) => Partial<Job>)) =>
+    setJobs((js) => js.map((j) => (j.id === id ? { ...j, ...(typeof p === 'function' ? p(j) : p) } : j)));
+
+  const upload = async (image: string): Promise<string> => {
+    const res = await fetch('/api/ghosts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${store.conn.authToken}` },
+      body: JSON.stringify({ image, release: false }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return ((await res.json()) as { id: string }).id;
+  };
+
+  /** The shutter: everybody in the picture → their own ghost, all rising together. */
+  const shoot = () => {
+    const fx = fxRef.current;
+    if (!fx?.ready) return;
+    const shots = fx.captureAll().slice(0, 12);
+    if (!shots.length) {
+      setFlash(L('Nobody recognised – faces towards the camera.', 'Niemand erkannt – Gesichter zur Kamera.'));
+      return;
+    }
+    const id = jobId.current++;
+    const ai =
+      aiProvider && aiKey.trim() ? { provider: aiProvider, key: aiKey.trim(), model: aiModel.trim() } : null;
+    setJobs((js) => [{ id, n: shots.length, done: 0, state: 'working' as const }, ...js].slice(0, 6));
+    setFlash(
+      shots.length > 1
+        ? L(`📸 ${shots.length} people taken`, `📸 ${shots.length} Personen aufgenommen`)
+        : L('📸 Taken', '📸 Aufgenommen'),
+    );
+    void (async () => {
+      let aiFailed = '';
+      // one AI painter per person, all at the same time
+      const images = await Promise.all(
+        shots.map(async (s) => {
+          let img = s.image;
+          if (ai) {
+            try {
+              img = await aiGhost(ai.provider, ai.key, ai.model, s.photo, s.look.kind);
+            } catch (e) {
+              aiFailed = (e as Error).message;
+            }
+          }
+          patchJob(id, (j) => ({ done: j.done + 1 }));
+          return img;
+        }),
+      );
+      try {
+        const ghostIds: string[] = [];
+        for (const img of images) ghostIds.push(await upload(img));
+        // all of them at once, each from where the person stood
+        await store.send({ t: 'ghost.release', ghostIds, u: shots.map((s) => s.u) });
+        patchJob(id, {
+          state: 'flying',
+          note: aiFailed
+            ? L(
+                `AI failed (${aiFailed}) – live filter photo used.`,
+                `KI fehlgeschlagen (${aiFailed}) – Live-Filter-Foto genommen.`,
+              )
+            : undefined,
+        });
+      } catch (e) {
+        patchJob(id, { state: 'failed', note: (e as Error).message });
+      }
+    })();
+  };
+
+  const disconnect = (id: string) => {
+    const r = run.current;
+    const pc = r?.peers.get(id);
+    if (!r || !pc) return;
+    store.conn.sendRtc(id, { kind: 'bye' });
+    pc.close();
+    r.peers.delete(id);
+    setLinks((l) => {
+      const n = { ...l };
+      delete n[id];
+      return n;
+    });
+  };
 
   const stop = () => {
     const r = run.current;
+    if (r) for (const id of [...r.peers.keys()]) disconnect(id);
     run.current = null;
-    if (!r) return;
-    for (const [id, pc] of r.peers) {
-      store.conn.sendRtc(id, { kind: 'bye' });
-      pc.close();
-    }
-    r.off();
-    r.stream.getTracks().forEach((t) => t.stop());
+    r?.off();
+    r?.stream.getTracks().forEach((t) => t.stop());
+    fxRef.current?.dispose();
+    fxRef.current = null;
+    setFxState('off');
     setLinks({});
   };
 
@@ -122,15 +181,7 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
     void (async () => {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      store.conn.sendRtc(id, {
-        kind: 'offer',
-        sdp: offer.sdp ?? '',
-        // only one projector PC takes the photos – and none while this phone's preview does
-        capture:
-          saveRef.current &&
-          !previewOnRef.current &&
-          id === targets(stateRef.current, presenceRef.current)[0],
-      });
+      store.conn.sendRtc(id, { kind: 'offer', sdp: offer.sdp ?? '' });
     })();
   };
 
@@ -140,8 +191,8 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: facing,
-          width: { ideal: 960 },
-          height: { ideal: 720 },
+          width: { ideal: 1280 },
+          height: { ideal: 960 },
           frameRate: { ideal: 24 },
         },
         audio: false,
@@ -161,8 +212,26 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
         }
       });
       run.current = { stream, peers, off };
-      if (videoRef.current) videoRef.current.srcObject = stream;
+      const video = videoRef.current;
+      if (video) video.srcObject = stream;
       setOn(true);
+      // the effect runs here on the phone (it finds the people and makes the photos)
+      const fx = new ZombieFx();
+      fxRef.current = fx;
+      setFxState('loading');
+      await fx.init();
+      if (fxRef.current !== fx) return;
+      setFxState(fx.ready ? 'ready' : 'failed');
+      const tick = window.setInterval(() => {
+        if (fxRef.current !== fx || !video) return window.clearInterval(tick);
+        try {
+          fx.process(video, performance.now());
+          // keep the people list fresh (nobody shows these sprites here)
+          fx.sprites(0.09, true);
+        } catch {
+          /* skip a frame */
+        }
+      }, 90);
     } catch (e) {
       setErr(
         L(
@@ -173,90 +242,92 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
     }
   };
 
-  // (re)connect to projector PCs that come online while the camera runs
+  // the live picture on the projectors: connect / disconnect
   useEffect(() => {
     if (!on) return;
-    for (const id of ids) connect(id);
+    const r = run.current;
+    if (!r) return;
+    if (live) for (const id of ids) connect(id);
+    else for (const id of [...r.peers.keys()]) disconnect(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [on, idsKey]);
+  }, [on, idsKey, live]);
   useEffect(() => () => stop(), []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const live = Object.values(links).filter((s) => s === 'connected').length;
-  const previewOn = on && (preview ?? !ids.length);
-  if (previewOnRef.current !== previewOn) {
-    previewOnRef.current = previewOn;
-    queueMicrotask(tellCapture);
-  }
+  const connected = Object.values(links).filter((s) => s === 'connected').length;
+  const working = jobs.filter((j) => j.state === 'working').length;
   return (
     <section className="panel stack">
       <div className="section-title">
-        <h2>🧟 {L('Zombie camera', 'Zombie-Kamera')}</h2>
+        <h2>👻 {L('Ghost photos', 'Geister-Fotos')}</h2>
       </div>
       <p className="muted small" style={{ margin: 0 }}>
         {L(
-          'This phone films the guests – on the front wall they drift along as ghosts, every one with its own random look (zombie make-up, glowing eyes, scars, cartoon googly eyes …), as long as the camera runs. The video goes straight to the projector PC; only ghost photos (below) are saved.',
-          'Dieses Handy filmt die Gäste – an der vorderen Wand schweben sie als Geister herum, jeder mit eigenem Zufalls-Look (Zombie-Make-up, leuchtende Augen, Narben, Comic-Glubschaugen …), solange die Kamera läuft. Das Video geht direkt zum Beamer-PC; gespeichert werden nur Geister-Fotos (unten).',
+          'Point the camera at your guests and press the shutter: everybody in the picture becomes their own ghost (a random creature – zombie, ghost, vampire, skeleton, devil, werewolf, witch …), saved in this show and rising on the projectors. Ask your guests if that is ok.',
+          'Kamera auf die Gäste richten und auslösen: Jede Person im Bild wird zu ihrem eigenen Geist (zufällige Gestalt – Zombie, Geist, Vampir, Skelett, Teufel, Werwolf, Hexe …), wird in dieser Show gespeichert und steigt auf den Beamern auf. Frag deine Gäste, ob das ok ist.',
         )}
       </p>
       <video
         ref={videoRef}
-        onClick={onVideoTap}
+        onClick={shoot}
         autoPlay
         muted
         playsInline
         style={{
           display: on ? 'block' : 'none',
           width: '100%',
-          maxHeight: 220,
+          maxHeight: 320,
           objectFit: 'contain',
           borderRadius: 12,
           background: '#000',
-          cursor: 'crosshair',
+          transform: 'scaleX(-1)',
         }}
       />
       {on && (
-        <span className="small muted">
-          {tapped
-            ? save
-              ? L('📸 Ghost photo taken!', '📸 Geister-Foto ausgelöst!')
-              : L('Switch on ghost photos below first.', 'Erst unten Geister-Fotos einschalten.')
-            : L(
-                'Tap a face to take a ghost photo right away.',
-                'Tipp auf ein Gesicht – sofort ein Geister-Foto.',
-              )}
-        </span>
-      )}
-      {previewOn && (
-        <ZombiePreview
-          state={state}
-          now={() => store.conn.clock.now()}
-          video={videoRef.current}
-          capture={save}
-          snapRef={snapRef}
-          L={L}
-        />
-      )}
-      {on && (
-        <label
-          className="small"
-          style={{ display: 'flex', flexDirection: 'row', gap: '0.5rem', alignItems: 'center' }}
+        <button
+          className="btn primary"
+          style={{ fontSize: '1.15rem', padding: '0.9rem' }}
+          disabled={fxState !== 'ready'}
+          onClick={shoot}
         >
-          <input
-            type="checkbox"
-            checked={preview ?? !ids.length}
-            onChange={(e) => setPreview(e.target.checked)}
-          />
+          📸{' '}
+          {fxState === 'loading'
+            ? L('Loading (about 15 MB, once) …', 'Lade (ca. 15 MB, einmalig) …')
+            : fxState === 'failed'
+              ? L('Does not run in this browser', 'Läuft in diesem Browser nicht')
+              : L('Shutter – everybody in the picture', 'Auslösen – alle im Bild')}
+        </button>
+      )}
+      {flash && <strong className="small">{flash}</strong>}
+      {jobs.length > 0 && (
+        <ul className="small" style={{ margin: 0, paddingLeft: '1.1rem' }}>
+          {jobs.map((j) => (
+            <li key={j.id}>
+              {j.n === 1 ? L('1 person', '1 Person') : L(`${j.n} people`, `${j.n} Personen`)}:{' '}
+              {j.state === 'working'
+                ? aiProvider
+                  ? L(`AI painting … ${j.done}/${j.n}`, `KI malt … ${j.done}/${j.n}`)
+                  : L('saving …', 'speichere …')
+                : j.state === 'flying'
+                  ? L('✓ flying', '✓ fliegt')
+                  : L('✗ failed', '✗ fehlgeschlagen')}
+              {j.note && <span className="muted"> – {j.note}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {working > 0 && (
+        <span className="small muted">
           {L(
-            'Preview here on the phone (test without projector)',
-            'Vorschau hier auf dem Handy (Test ohne Beamer)',
+            'You can keep shooting – the AI works in the background.',
+            'Du kannst weiter auslösen – die KI arbeitet im Hintergrund.',
           )}
-        </label>
+        </span>
       )}
       <div className="row">
         {!on ? (
           <>
             <button className="btn primary" onClick={() => void start()}>
-              📷 {L('Start zombie camera', 'Zombie-Kamera starten')}
+              📷 {L('Start camera', 'Kamera starten')}
             </button>
             <button
               className="btn small"
@@ -277,48 +348,76 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
           </button>
         )}
       </div>
-      <span className="small muted">
-        {!ids.length
-          ? L(
-              'No projector PC is online right now – the camera can run anyway; as soon as a projector PC is online (open /display there), it gets the picture automatically.',
-              'Gerade ist kein Beamer-PC online – die Kamera kann trotzdem laufen; sobald ein Beamer-PC online ist (dort /display öffnen), bekommt er das Bild automatisch.',
-            )
-          : on
-            ? L(
-                `${live} of ${ids.length} projector PCs receive the picture`,
-                `${live} von ${ids.length} Beamer-PCs empfangen das Bild`,
-              )
-            : L(
-                `Goes to ${ids.length} projector PC(s) of the front wall.`,
-                `Geht an ${ids.length} Beamer-PC(s) der vorderen Wand.`,
+
+      <div className="stack" style={{ gap: '0.4rem' }}>
+        <span className="small">{L('Photo look', 'Foto-Stil')}</span>
+        <div className="row" role="group">
+          {(
+            [
+              [null, L('Face filter', 'Gesichtsfilter')],
+              ['gemini', '✨ KI · Gemini'],
+              ['openai', '✨ KI · OpenAI'],
+            ] as const
+          ).map(([k, label]) => (
+            <button
+              key={k ?? 'filter'}
+              className={`chip${aiProvider === k ? ' on' : ''}`}
+              onClick={() => {
+                setAiProvider(k);
+                setAiModel(k ? AI_MODELS[k] : '');
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {aiProvider && (
+          <>
+            <label className="small">
+              {aiProvider === 'gemini' ? 'Gemini API key' : 'OpenAI API key'}
+              <input
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={aiKey}
+                onChange={(e) => setAiKey(e.target.value)}
+                placeholder={aiProvider === 'gemini' ? 'AIza…' : 'sk-…'}
+              />
+            </label>
+            <label className="small">
+              {L('Model', 'Modell')}
+              <input value={aiModel} spellCheck={false} onChange={(e) => setAiModel(e.target.value)} />
+            </label>
+            <span className="small muted">
+              {L(
+                'The key stays only in this open page – it is not saved and never goes to the SpectraStage server; after reloading, enter it again. Every person goes as their own photo from this phone to the provider (a few cents each) and comes back as a cut-out monster portrait. If the AI fails, the face filter photo is used.',
+                'Der Key bleibt nur in dieser offenen Seite – er wird nicht gespeichert und geht nie an den SpectraStage-Server; nach dem Neuladen neu eingeben. Jede Person geht als eigenes Foto von diesem Handy zum Anbieter (je ein paar Cent) und kommt als freigestelltes Monster-Porträt zurück. Klappt die KI nicht, wird das Gesichtsfilter-Foto genommen.',
               )}
-      </span>
-      <ul className="small" style={{ margin: 0, paddingLeft: '1.1rem' }}>
-        {state.devices
-          .filter((d) => d.status === 'approved')
-          .map((d) => {
-            const o = state.outputs.find((x) => x.id === d.outputId);
-            const online = !!presence.devices[d.id]?.online;
-            return (
-              <li key={d.id}>
-                {online ? '🟢' : '⚪'} {d.name}
-                {o ? ` → ${o.name}` : ` – ${L('no projector assigned', 'keinem Beamer zugeordnet')}`}
-                {!online && ` (${L('offline', 'offline')})`}
-                {ids.includes(d.id) && ` · ${L('gets the camera', 'bekommt die Kamera')}`}
-              </li>
-            );
-          })}
-      </ul>
+            </span>
+          </>
+        )}
+      </div>
+
       <label
         className="small"
         style={{ display: 'flex', flexDirection: 'row', gap: '0.5rem', alignItems: 'center' }}
       >
-        <input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} />
+        <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
         {L(
-          'Take ghost photos: a well seen face detaches as a ghost and flies around – the photo is saved in this show (until you delete it). Ask your guests if that is ok.',
-          'Geister-Fotos aufnehmen: ein gut erkanntes Gesicht löst sich als Geist und fliegt herum – das Foto wird in dieser Show gespeichert (bis du es löschst). Frag deine Gäste, ob das ok ist.',
+          'Also show the live camera picture on the projectors (guests as live ghosts with face filter)',
+          'Zusätzlich das Live-Kamerabild auf den Beamern zeigen (Gäste als Live-Geister mit Gesichtsfilter)',
         )}
       </label>
+      {live && (
+        <span className="small muted">
+          {!ids.length
+            ? L('No projector PC online right now.', 'Gerade ist kein Beamer-PC online.')
+            : L(
+                `${connected} of ${ids.length} projector PCs receive the live picture`,
+                `${connected} von ${ids.length} Beamer-PCs empfangen das Live-Bild`,
+              )}
+        </span>
+      )}
       {err && <div className="safety-note small">{err}</div>}
       <GhostGallery state={state} L={L} />
     </section>
