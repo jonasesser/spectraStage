@@ -29,6 +29,7 @@ import {
   facePoint,
   roomRay,
   boxFrame,
+  faceWall,
   stageBounds,
   mainAzimuth,
   type RoomFold,
@@ -1442,7 +1443,16 @@ export class StageRenderer {
     } else if (this.poseRT.width !== ow || this.poseRT.height !== oh) this.poseRT.setSize(ow, oh);
     const fold = this.worldFor(state).fold;
     const zoom = profile.zoom ?? {};
-    const key = JSON.stringify([vp, zoom, fold.faces.map((f) => [f.id, f.o, f.ax, f.ay, f.rect])]);
+    // only the chosen sides get a picture; where the light unavoidably spills onto other sides
+    // (picture edge, trapezoid at a room corner) it stays black – another projector lights them
+    const lit = profile.walls?.length ? profile.walls : null;
+    const faces = lit
+      ? fold.faces.filter((f) => {
+          const w = faceWall(fold, f);
+          return !w || lit.includes(w);
+        })
+      : fold.faces;
+    const key = JSON.stringify([vp, zoom, lit, faces.map((f) => [f.id, f.o, f.ax, f.ay, f.rect])]);
     if (key !== this.poseKey) {
       // squeeze/stretch per side along the room depth, from the transition to the front wall
       const box = boxFrame(fold);
@@ -1460,7 +1470,7 @@ export class StageRenderer {
         this.poseRoom.remove(c);
         (c as THREE.Mesh).geometry?.dispose();
       }
-      for (const f of fold.faces) {
+      for (const f of faces) {
         const pts: [number, number][] = [
           [f.rect.x, f.rect.y],
           [f.rect.x + f.rect.w, f.rect.y],
@@ -1524,6 +1534,7 @@ export class StageRenderer {
           profile.anchors ?? [],
           align.sel,
           Date.now(),
+          profile.walls ?? null,
         );
       else if (markers) drawCornerMarkers(this.viewOverlay.g, ow, oh, this.previewFocus, now);
       if (editObj) drawObjectOutline(this.viewOverlay.g, ow, oh, pose, editObj, Date.now());

@@ -1,5 +1,7 @@
 import {
+  cornerWalls,
   facePoint,
+  faceWall,
   objectEdges,
   polygonBBox,
   projectPose,
@@ -10,6 +12,7 @@ import {
   type Pose,
   type RoomFold,
   type RoomObject,
+  type RoomWall,
   type SessionState,
   type V3,
   type Viewport,
@@ -222,8 +225,15 @@ export function drawAlignOverlay(
   anchors: readonly Anchor[],
   sel: string | null,
   now: number,
+  /** The sides chosen for this projector: only their outlines and corners are drawn. */
+  walls: readonly RoomWall[] | null = null,
 ): void {
   const aspect = w / h;
+  const chosen = (f: Parameters<typeof faceWall>[1]) => {
+    if (!walls?.length) return true;
+    const fw = faceWall(fold, f);
+    return !fw || walls.includes(fw);
+  };
   const toPx = (P: V3): [number, number] | null => {
     const q = projectPose(pose, aspect, P);
     return q ? [((q[0] + 1) / 2) * w, ((1 - q[1]) / 2) * h] : null;
@@ -238,6 +248,7 @@ export function drawAlignOverlay(
   g.shadowColor = '#3ff2ff';
   g.shadowBlur = lw * 3;
   for (const f of fold.faces) {
+    if (!chosen(f)) continue;
     const r = f.rect;
     const edges: [number, number, number, number][] = [
       [r.x, r.y, r.x + r.w, r.y],
@@ -296,6 +307,8 @@ export function drawAlignOverlay(
   g.textBaseline = 'middle';
   const corners = roomCorners(fold);
   for (const c of corners) {
+    const cw = cornerWalls(c.id);
+    if (walls?.length && cw.length && !cw.some((x) => walls.includes(x))) continue;
     const q = toPx(c.p);
     if (!q || q[0] < 0 || q[0] > w || q[1] < 0 || q[1] > h) continue;
     const isSel = c.id === sel;

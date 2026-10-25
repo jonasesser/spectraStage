@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { baseWarp, warpPoint } from '@spectrastage/engine';
 import {
   activeProfile,
+  facePoint,
+  faceWall,
   isConvexQuad,
+  projectPose,
+  roomFold,
   ProfileSchema,
   UNIT_QUAD,
   type Mask,
@@ -333,7 +337,53 @@ export function CalibrationEditor({
   };
 
   // Warped stage grid and surfaces for orientation
+  // masks in the 3D measuring: the phone shows the projector picture with the outlines of the
+  // chosen room sides – the same lines the projector draws on the wall
+  const roomView = masksOnly && saved.pose ? saved.pose : null;
+  const roomPaths = useMemo(() => {
+    if (!roomView) return [];
+    const fold = roomFold(state.surfaces);
+    const walls = saved.walls ?? [];
+    const out: string[] = [];
+    for (const f of fold.faces) {
+      const fw = faceWall(fold, f);
+      if (walls.length && fw && !walls.includes(fw)) continue;
+      const rc = f.rect;
+      const edges: [number, number, number, number][] = [
+        [rc.x, rc.y, rc.x + rc.w, rc.y],
+        [rc.x + rc.w, rc.y, rc.x + rc.w, rc.y + rc.h],
+        [rc.x + rc.w, rc.y + rc.h, rc.x, rc.y + rc.h],
+        [rc.x, rc.y + rc.h, rc.x, rc.y],
+      ];
+      for (const [x0, y0, x1, y1] of edges) {
+        let d = '';
+        let pen = false;
+        for (let i = 0; i <= 48; i++) {
+          const t = i / 48;
+          const q = projectPose(roomView, aspect, facePoint(f, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t));
+          if (!q || Math.abs(q[0]) > 3 || Math.abs(q[1]) > 3) {
+            pen = false;
+            continue;
+          }
+          d += `${pen ? 'L' : 'M'}${((q[0] + 1) / 2) * W},${((1 - q[1]) / 2) * H}`;
+          pen = true;
+        }
+        if (d) out.push(d);
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(roomView), JSON.stringify(saved.walls), state.surfaces, aspect, W, H]);
+  // while masks are drawn, the projector shows them (tinted) on top of the measuring picture
+  useEffect(() => {
+    if (!masksOnly || output.showMasks) return;
+    void store.send({ t: 'output.update', outputId: output.id, showMasks: true });
+    return () => void store.send({ t: 'output.update', outputId: output.id, showMasks: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [masksOnly, output.id]);
+
   const gridPaths = useMemo(() => {
+    if (roomView) return [];
     const paths: string[] = [];
     const N = 8;
     const line = (pts: (Pt | null)[]) =>
@@ -353,6 +403,7 @@ export function CalibrationEditor({
     return paths;
   }, [draft, W, H]);
   const surfacePaths = useMemo(() => {
+    if (roomView) return [];
     const vp = draft.viewport;
     return state.surfaces.map((s) => {
       const pts: Pt[] = [];
@@ -654,6 +705,16 @@ export function CalibrationEditor({
                   pointerEvents="none"
                 />
               ))}
+              {roomPaths.map((d, i) => (
+                <path
+                  key={`r${i}`}
+                  d={d}
+                  fill="none"
+                  stroke="#3ff2ff"
+                  strokeWidth={(2 * vbW) / Math.max(200, svgW)}
+                  pointerEvents="none"
+                />
+              ))}
               {surfacePaths.map((s) => (
                 <path
                   key={s.id}
@@ -664,13 +725,15 @@ export function CalibrationEditor({
                   pointerEvents="none"
                 />
               ))}
-              <polygon
-                points={draft.corners.map((c) => `${c.x * W},${c.y * H}`).join(' ')}
-                fill="none"
-                stroke="#fff"
-                strokeWidth={(2.5 * vbW) / Math.max(200, svgW)}
-                pointerEvents="none"
-              />
+              {!roomView && (
+                <polygon
+                  points={draft.corners.map((c) => `${c.x * W},${c.y * H}`).join(' ')}
+                  fill="none"
+                  stroke="#fff"
+                  strokeWidth={(2.5 * vbW) / Math.max(200, svgW)}
+                  pointerEvents="none"
+                />
+              )}
               {draft.fold && (
                 <line
                   x1={draft.fold.a.x * W}
