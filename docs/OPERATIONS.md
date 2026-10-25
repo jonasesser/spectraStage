@@ -103,7 +103,7 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
   “room depth” (sides, floor, ceiling) – the pictures always fill the sides completely. Choosing
   another side keeps the corners already measured (front + left = 6 corners, not 8). Measuring
   replaces an earlier flat 2D corner correction. **Proportions** (per projector, per side, horizontal
-  and vertical, 6 %–1600 %): narrower = the scene is laid out for a bigger area and put onto the
+  and vertical, 10 %–200 %): narrower = the scene is laid out for a bigger area and put onto the
   side, so things get narrower and more of them fit; wider = the opposite. The side always stays lit
   completely, the room sizes (Stage → room size, in meters) do not change. “Measure again from scratch” resets points,
   position and 2D corrections; Stage → room panel can restore the planned width of the front wall.

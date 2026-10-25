@@ -43,9 +43,9 @@ export function ProportionSliders({ output, L }: { output: Output; L: Tr }) {
     const cur = props[w] ?? { x: 1, y: 1 };
     send({ ...props, [w]: { ...cur, [axis]: v } }, final);
   };
-  // logarithmic: the middle is 100 %, the same way out to narrower and wider
-  const toPos = (v: number) => Math.log2(v);
-  const fromPos = (t: number) => Math.round(2 ** t * 100) / 100;
+  // 10 % … 200 %: mostly needed is narrower, so most of the way is below 100 %
+  const toPos = (v: number) => Math.min(2, Math.max(0.1, v));
+  const fromPos = (t: number) => Math.round(t * 100) / 100;
   const fmt = (t: number) => {
     const v = fromPos(t);
     const pct = `${Math.round(v * 100)} %`;
@@ -88,8 +88,8 @@ export function ProportionSliders({ output, L }: { output: Output; L: Tr }) {
             <Slider
               label={`↔ ${L('horizontal', 'waagerecht')}`}
               value={toPos(cur.x)}
-              min={-4}
-              max={4}
+              min={0.1}
+              max={2}
               step={0.01}
               onChange={(t) => set(w, 'x', fromPos(t), false)}
               format={fmt}
@@ -97,8 +97,8 @@ export function ProportionSliders({ output, L }: { output: Output; L: Tr }) {
             <Slider
               label={`↕ ${L('vertical', 'senkrecht')}`}
               value={toPos(cur.y)}
-              min={-4}
-              max={4}
+              min={0.1}
+              max={2}
               step={0.01}
               onChange={(t) => set(w, 'y', fromPos(t), false)}
               format={fmt}
