@@ -6,6 +6,7 @@ import {
   faceWall,
   isConvexQuad,
   projectPose,
+  ROOM_WALL_LABEL,
   roomFold,
   ProfileSchema,
   UNIT_QUAD,
@@ -52,7 +53,24 @@ export function CalibrationEditor({
   const [history, setHistory] = useState<Profile[]>([]);
   const [future, setFuture] = useState<Profile[]>([]);
   const [mode, setMode] = useState<Mode>(masksOnly ? 'masks' : 'corners');
-  const [handle, setHandle] = useState<Handle>({ kind: 'corner', i: 0 });
+  const [handle, setHandle] = useState<Handle>(masksOnly ? null : { kind: 'corner', i: 0 });
+  /** Mask tools: draw around an area with the finger, or drag a rectangle open. */
+  const [tool, setTool] = useState<'lasso' | 'rect' | null>(masksOnly ? 'lasso' : null);
+  const [stroke, setStroke] = useState<Pt[] | null>(null);
+  const strokeShape = (pts: Pt[] | null): Pick<Mask, 'shape' | 'points'> | null => {
+    if (!pts || pts.length < 2) return null;
+    if (tool === 'rect') return { shape: 'rect', points: [pts[0]!, pts[pts.length - 1]!] };
+    const simple = simplifyPath(pts, 0.003);
+    return simple.length >= 3 ? { shape: 'polygon', points: simple } : null;
+  };
+  // the shape being drawn is shown on the projector right away
+  const strokeMask: Mask | null = useMemo(() => {
+    const sh = strokeShape(stroke);
+    return sh
+      ? { id: 'drawing', name: '', mode: 'exclude', ...sh, margin: 0, feather: 0, safety: false, enabled: true }
+      : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stroke, tool]);
   const [maskId, setMaskId] = useState<string | null>(null);
   const [drawing, setDrawing] = useState<Pt[] | null>(null);
   const [fine, setFine] = useState(false);
@@ -90,12 +108,12 @@ export function CalibrationEditor({
       () =>
         store.conn.sendPreview(
           output.id,
-          draft,
+          strokeMask ? { ...draft, masks: [...draft.masks, strokeMask] } : draft,
           mode === 'corners' && handle?.kind === 'corner' ? handle.i : -1,
         ),
       60,
     );
-  }, [draft, output.id, store, mode, handle]);
+  }, [draft, output.id, store, mode, handle, strokeMask]);
   useEffect(() => () => store.conn.sendPreview(output.id, null), [output.id, store]);
 
   // Pick up server-side changes (other controller / profile switch) when not editing
@@ -187,6 +205,13 @@ export function CalibrationEditor({
         ? meshPos(h.i)
         : p.masks.find((m) => m.id === h.maskId)?.points[h.i];
   const onMove = (e: RPointerEvent) => {
+    if (stroke) {
+      const p = clampPt(toNorm(e));
+      const last = stroke[stroke.length - 1]!;
+      if (tool === 'rect') setStroke([stroke[0]!, p]);
+      else if (Math.hypot(p.x - last.x, p.y - last.y) > 0.002) setStroke([...stroke, p]);
+      return;
+    }
     if (padRef.current && handle) {
       const rect = svgRef.current!.getBoundingClientRect();
       const k = (vbW / W / rect.width) * (fine ? 0.2 : 1);
@@ -213,6 +238,17 @@ export function CalibrationEditor({
     }
   };
   const onUp = () => {
+    if (stroke) {
+      const sh = strokeShape(stroke);
+      setStroke(null);
+      const big =
+        sh &&
+        (sh.shape === 'rect'
+          ? Math.abs(sh.points[0]!.x - sh.points[1]!.x) > 0.01 && Math.abs(sh.points[0]!.y - sh.points[1]!.y) > 0.01
+          : true);
+      if (sh && big) addMask(sh.shape, sh.points);
+      return;
+    }
     if (padRef.current) {
       const before = padRef.current.before;
       padRef.current = null;
@@ -232,18 +268,43 @@ export function CalibrationEditor({
     panRef.current = null;
   };
   const onBgDown = (e: RPointerEvent) => {
+    if (mode === 'masks' && tool && !drawing) {
+      (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+      setStroke([clampPt(toNorm(e))]);
+      return;
+    }
     if (drawing) {
       const p = toNorm(e);
       setDrawing([...drawing, { x: Math.max(0, Math.min(1, p.x)), y: Math.max(0, Math.min(1, p.y)) }]);
       return;
     }
     (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
-    const start = handle && mode !== 'image' ? handlePos(handle, draft) : undefined;
+    const start =
+      handle && mode !== 'image' && (mode !== 'masks' || handle.kind === 'mask')
+        ? handlePos(handle, draft)
+        : undefined;
     if (handle && start) {
       padRef.current = { x: e.clientX, y: e.clientY, start, before: draft };
       return;
     }
     panRef.current = { x: e.clientX, y: e.clientY, cx: zoom.cx, cy: zoom.cy };
+  };
+
+  const addMask = (shape: Mask['shape'], points: Pt[]) => {
+    const m: Mask = {
+      id: uuid().slice(0, 12),
+      name: `${L('Mask', 'Maske')} ${draft.masks.length + 1}`,
+      mode: 'exclude',
+      shape,
+      points,
+      margin: 0.01,
+      feather: 0,
+      safety: true,
+      enabled: true,
+    };
+    commit({ ...draft, masks: [...draft.masks, m] }, draft);
+    setMaskId(m.id);
+    setHandle(null);
   };
 
   const nudge = (dx: number, dy: number) => {
@@ -340,14 +401,33 @@ export function CalibrationEditor({
   // masks in the 3D measuring: the phone shows the projector picture with the outlines of the
   // chosen room sides – the same lines the projector draws on the wall
   const roomView = masksOnly && saved.pose ? saved.pose : null;
-  const roomPaths = useMemo(() => {
-    if (!roomView) return [];
+  const roomPaths = useMemo((): { paths: string[]; labels: { t: string; x: number; y: number }[] } => {
+    if (!roomView) return { paths: [], labels: [] };
     const fold = roomFold(state.surfaces);
     const walls = saved.walls ?? [];
     const out: string[] = [];
+    const labels: { t: string; x: number; y: number }[] = [];
     for (const f of fold.faces) {
       const fw = faceWall(fold, f);
       if (walls.length && fw && !walls.includes(fw)) continue;
+      if (fw) {
+        let sx = 0;
+        let sy = 0;
+        let n = 0;
+        for (let i = 0; i <= 10; i++)
+          for (let j = 0; j <= 10; j++) {
+            const q = projectPose(
+              roomView,
+              aspect,
+              facePoint(f, f.rect.x + (f.rect.w * i) / 10, f.rect.y + (f.rect.h * j) / 10),
+            );
+            if (!q || Math.abs(q[0]) > 1 || Math.abs(q[1]) > 1) continue;
+            sx += ((q[0] + 1) / 2) * W;
+            sy += ((1 - q[1]) / 2) * H;
+            n++;
+          }
+        if (n >= 3) labels.push({ t: ROOM_WALL_LABEL[fw], x: sx / n, y: sy / n });
+      }
       const rc = f.rect;
       const edges: [number, number, number, number][] = [
         [rc.x, rc.y, rc.x + rc.w, rc.y],
@@ -371,7 +451,7 @@ export function CalibrationEditor({
         if (d) out.push(d);
       }
     }
-    return out;
+    return { paths: out, labels };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(roomView), JSON.stringify(saved.walls), state.surfaces, aspect, W, H]);
   // while masks are drawn, the projector shows them (tinted) on top of the measuring picture
@@ -629,7 +709,7 @@ export function CalibrationEditor({
         </div>
       </div>
 
-      {!testOn && (
+      {!testOn && !masksOnly && (
         <div className="safety-note row between">
           <span>
             {L(
@@ -648,7 +728,7 @@ export function CalibrationEditor({
         </div>
       )}
 
-      {mode !== 'image' && (
+      {mode !== 'image' && mode !== 'masks' && (
         <button className="btn primary big" onClick={() => setJustify(true)}>
           ✋ {L('Adjust on the wall (full screen touchpad)', 'An der Wand justieren (Vollbild-Touchpad)')}
         </button>
@@ -705,7 +785,7 @@ export function CalibrationEditor({
                   pointerEvents="none"
                 />
               ))}
-              {roomPaths.map((d, i) => (
+              {roomPaths.paths.map((d, i) => (
                 <path
                   key={`r${i}`}
                   d={d}
@@ -714,6 +794,21 @@ export function CalibrationEditor({
                   strokeWidth={(2 * vbW) / Math.max(200, svgW)}
                   pointerEvents="none"
                 />
+              ))}
+              {roomPaths.labels.map((l) => (
+                <text
+                  key={l.t}
+                  x={l.x}
+                  y={l.y}
+                  fill="rgba(63,242,255,0.6)"
+                  fontSize={(16 * vbW) / Math.max(200, svgW)}
+                  fontWeight={800}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  pointerEvents="none"
+                >
+                  {l.t.toUpperCase()}
+                </text>
               ))}
               {surfacePaths.map((s) => (
                 <path
@@ -761,9 +856,12 @@ export function CalibrationEditor({
                   H={H}
                   z={zoom.s}
                   selected={m.id === maskId}
-                  onSelect={() => mode === 'masks' && setMaskId(m.id)}
+                  onSelect={() => mode === 'masks' && (setMaskId(m.id), setTool(null))}
                 />
               ))}
+              {stroke && strokeMask && (
+                <MaskShape mask={strokeMask} W={W} H={H} z={zoom.s} selected onSelect={() => undefined} />
+              )}
               {drawing && (
                 <polyline
                   points={drawing.map((p) => `${p.x * W},${p.y * H}`).join(' ')}
@@ -913,7 +1011,7 @@ export function CalibrationEditor({
         </div>
 
         <div className="stack">
-          {handle && (
+          {handle && (mode !== 'masks' || handle.kind === 'mask') && (
             <div className="panel">
               <h3>{L('Fine adjust', 'Feinjustage')}</h3>
               <div className="row" style={{ alignItems: 'flex-start' }}>
@@ -1103,7 +1201,10 @@ export function CalibrationEditor({
               selected={selMask}
               select={setMaskId}
               drawing={drawing}
-              setDrawing={setDrawing}
+              setDrawing={(d) => (setDrawing(d), d && setTool(null))}
+              tool={tool}
+              add={addMask}
+              setTool={(t) => (setTool(t), setDrawing(null), setHandle(null))}
               L={L}
               showOnProjector={output.showMasks}
               toggleShow={() =>
@@ -1112,7 +1213,9 @@ export function CalibrationEditor({
             />
           )}
 
-          <ProfilesPanel output={output} draft={draft} dirty={dirty} L={L} onLoad={(p) => commit(p, draft)} />
+          {!masksOnly && (
+            <ProfilesPanel output={output} draft={draft} dirty={dirty} L={L} onLoad={(p) => commit(p, draft)} />
+          )}
 
           <div
             className="calib-bar"
@@ -1264,6 +1367,9 @@ function MasksPanel({
   select,
   drawing,
   setDrawing,
+  tool,
+  setTool,
+  add: addMask,
   L,
   showOnProjector,
   toggleShow,
@@ -1274,25 +1380,13 @@ function MasksPanel({
   select: (id: string | null) => void;
   drawing: Pt[] | null;
   setDrawing: (p: Pt[] | null) => void;
+  tool: 'lasso' | 'rect' | null;
+  setTool: (t: 'lasso' | 'rect' | null) => void;
+  add: (shape: Mask['shape'], points: Pt[]) => void;
   L: Tr;
   showOnProjector: boolean;
   toggleShow: () => void;
 }) {
-  const add = (shape: Mask['shape'], points: Pt[]) => {
-    const m: Mask = {
-      id: uuid().slice(0, 12),
-      name: `${L('Mask', 'Maske')} ${draft.masks.length + 1}`,
-      mode: 'exclude',
-      shape,
-      points,
-      margin: 0.01,
-      feather: 0,
-      safety: true,
-      enabled: true,
-    };
-    setDraft((p) => ({ ...p, masks: [...p.masks, m] }));
-    select(m.id);
-  };
   const update = (patch: Partial<Mask>) =>
     selected &&
     setDraft((p) => ({ ...p, masks: p.masks.map((m) => (m.id === selected.id ? { ...m, ...patch } : m)) }));
@@ -1322,7 +1416,7 @@ function MasksPanel({
               className="btn primary"
               disabled={drawing.length < 3}
               onClick={() => {
-                add('polygon', drawing);
+                addMask('polygon', drawing);
                 setDrawing(null);
               }}
             >
@@ -1341,32 +1435,31 @@ function MasksPanel({
           </div>
         </div>
       ) : (
-        <div className="row">
-          <button className="btn small" onClick={() => setDrawing([])}>
-            ＋ {L('Polygon', 'Vieleck')}
-          </button>
-          <button
-            className="btn small"
-            onClick={() =>
-              add('rect', [
-                { x: 0.4, y: 0.35 },
-                { x: 0.6, y: 0.6 },
-              ])
-            }
-          >
-            ＋ {L('Rectangle', 'Rechteck')}
-          </button>
-          <button
-            className="btn small"
-            onClick={() =>
-              add('ellipse', [
-                { x: 0.42, y: 0.38 },
-                { x: 0.58, y: 0.6 },
-              ])
-            }
-          >
-            ＋ {L('Ellipse', 'Ellipse')}
-          </button>
+        <div className="stack" style={{ gap: '0.5rem' }}>
+          <div className="row">
+            <button className={`btn${tool === 'lasso' ? ' primary' : ''}`} onClick={() => setTool('lasso')}>
+              ✏️ {L('Draw around', 'Umranden')}
+            </button>
+            <button className={`btn${tool === 'rect' ? ' primary' : ''}`} onClick={() => setTool('rect')}>
+              ▭ {L('Rectangle', 'Rechteck')}
+            </button>
+            <button className="btn small ghost" onClick={() => setDrawing([])}>
+              {L('Tap corners', 'Ecken antippen')}
+            </button>
+          </div>
+          <p className="small" style={{ margin: 0 }}>
+            {tool === 'lasso'
+              ? L(
+                  'Draw around the area with your finger on the image above – lifting the finger finishes the mask. It shows on the projector while you draw.',
+                  'Fahr oben im Bild mit dem Finger um den Bereich herum – loslassen, fertig. Der Beamer zeigt es schon beim Zeichnen.',
+                )
+              : tool === 'rect'
+                ? L('Drag a rectangle open on the image above.', 'Zieh oben im Bild ein Rechteck auf.')
+                : L(
+                    'Choose a tool – or tap a mask to move its points.',
+                    'Werkzeug wählen – oder eine Maske antippen, um ihre Punkte zu verschieben.',
+                  )}
+          </p>
         </div>
       )}
       {draft.masks.length > 0 && (
@@ -1380,7 +1473,7 @@ function MasksPanel({
               <button
                 className="main"
                 style={{ background: 'none', border: 0, textAlign: 'left', cursor: 'pointer' }}
-                onClick={() => select(m.id)}
+                onClick={() => (select(m.id), setTool(null))}
               >
                 <div
                   className="title"
@@ -1750,4 +1843,45 @@ function ProfilesPanel({
       </p>
     </div>
   );
+}
+
+function clampPt(p: Pt): Pt {
+  return { x: Math.max(0, Math.min(1, p.x)), y: Math.max(0, Math.min(1, p.y)) };
+}
+
+/** Fewer points for a finger stroke (Ramer–Douglas–Peucker), so the mask stays editable. */
+function simplifyPath(pts: Pt[], eps: number): Pt[] {
+  if (pts.length < 3) return pts;
+  const dist = (p: Pt, a: Pt, b: Pt) => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const l = Math.hypot(dx, dy);
+    if (l < 1e-9) return Math.hypot(p.x - a.x, p.y - a.y);
+    return Math.abs(dy * p.x - dx * p.y + b.x * a.y - b.y * a.x) / l;
+  };
+  const keep = new Array<boolean>(pts.length).fill(false);
+  keep[0] = keep[pts.length - 1] = true;
+  const stack: [number, number][] = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [i0, i1] = stack.pop()!;
+    let best = -1;
+    let bd = eps;
+    for (let i = i0 + 1; i < i1; i++) {
+      const d = dist(pts[i]!, pts[i0]!, pts[i1]!);
+      if (d > bd) {
+        bd = d;
+        best = i;
+      }
+    }
+    if (best >= 0) {
+      keep[best] = true;
+      stack.push([i0, best], [best, i1]);
+    }
+  }
+  const out = pts.filter((_, i) => keep[i]);
+  // the start and end of a closed stroke usually meet: drop the duplicate
+  const a = out[0]!;
+  const z = out[out.length - 1]!;
+  if (out.length > 3 && Math.hypot(a.x - z.x, a.y - z.y) < eps * 4) out.pop();
+  return out.slice(0, 64);
 }

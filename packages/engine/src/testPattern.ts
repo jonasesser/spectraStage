@@ -5,6 +5,7 @@ import {
   objectEdges,
   polygonBBox,
   projectPose,
+  ROOM_WALL_LABEL,
   roomCorners,
   roomEdges,
   type Anchor,
@@ -300,6 +301,32 @@ export function drawAlignOverlay(
     g.stroke();
   }
   g.shadowBlur = 0;
+  // name of each side (VORNE, LINKS …) in the middle of its visible part
+  {
+    const ls = Math.max(18, h / 16);
+    g.font = `800 ${ls}px system-ui, sans-serif`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    for (const f of fold.faces) {
+      if (!chosen(f)) continue;
+      const fw = faceWall(fold, f);
+      if (!fw) continue;
+      let sx = 0;
+      let sy = 0;
+      let n = 0;
+      for (let i = 0; i <= 10; i++)
+        for (let j = 0; j <= 10; j++) {
+          const q = toPx(facePoint(f, f.rect.x + (f.rect.w * i) / 10, f.rect.y + (f.rect.h * j) / 10));
+          if (!q || q[0] < 0 || q[0] > w || q[1] < 0 || q[1] > h) continue;
+          sx += q[0];
+          sy += q[1];
+          n++;
+        }
+      if (n < 3) continue;
+      g.fillStyle = 'rgba(63,242,255,0.55)';
+      g.fillText(ROOM_WALL_LABEL[fw].toUpperCase(), sx / n, sy / n);
+    }
+  }
   // numbered room corners (where the app thinks they are)
   const fs = Math.max(14, h / 28);
   g.font = `700 ${fs}px system-ui, sans-serif`;
