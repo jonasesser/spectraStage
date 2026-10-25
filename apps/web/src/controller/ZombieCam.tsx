@@ -169,7 +169,7 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
       <div className="row">
         {!on ? (
           <>
-            <button className="btn primary" onClick={() => void start()} disabled={!ids.length}>
+            <button className="btn primary" onClick={() => void start()}>
               📷 {L('Start zombie camera', 'Zombie-Kamera starten')}
             </button>
             <button
@@ -193,7 +193,10 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
       </div>
       <span className="small muted">
         {!ids.length
-          ? L('No projector PC online.', 'Kein Beamer-PC online.')
+          ? L(
+              'No projector PC is online right now – the camera can run anyway; as soon as a projector PC is online (open /display there), it gets the picture automatically.',
+              'Gerade ist kein Beamer-PC online – die Kamera kann trotzdem laufen; sobald ein Beamer-PC online ist (dort /display öffnen), bekommt er das Bild automatisch.',
+            )
           : on
             ? L(
                 `${live} of ${ids.length} projector PCs receive the picture`,
@@ -204,6 +207,22 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
                 `Geht an ${ids.length} Beamer-PC(s) der vorderen Wand.`,
               )}
       </span>
+      <ul className="small" style={{ margin: 0, paddingLeft: '1.1rem' }}>
+        {state.devices
+          .filter((d) => d.status === 'approved')
+          .map((d) => {
+            const o = state.outputs.find((x) => x.id === d.outputId);
+            const online = !!presence.devices[d.id]?.online;
+            return (
+              <li key={d.id}>
+                {online ? '🟢' : '⚪'} {d.name}
+                {o ? ` → ${o.name}` : ` – ${L('no projector assigned', 'keinem Beamer zugeordnet')}`}
+                {!online && ` (${L('offline', 'offline')})`}
+                {ids.includes(d.id) && ` · ${L('gets the camera', 'bekommt die Kamera')}`}
+              </li>
+            );
+          })}
+      </ul>
       {err && <div className="safety-note small">{err}</div>}
     </section>
   );
