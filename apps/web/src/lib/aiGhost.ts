@@ -5,7 +5,7 @@
  * The key lives only in this page's memory – never stored, never sent to our server.
  */
 import type * as Mp from '@mediapipe/tasks-vision';
-import type { Kind } from '../display/faceFilter.ts';
+import type { Kind, Look } from '../display/faceFilter.ts';
 
 export type AiProvider = 'gemini' | 'openai';
 export const AI_MODELS: Record<AiProvider, string> = {
@@ -13,24 +13,92 @@ export const AI_MODELS: Record<AiProvider, string> = {
   openai: 'gpt-image-2.5-flare',
 };
 
-const CREATURE: Record<Kind, string> = {
-  zombie:
-    'a gruesome but fun movie zombie: grey-green rotting skin, sunken dark eye sockets, scars, stitches and dried blood',
-  ghost: 'a translucent pale-blue glowing ghost with hollow black eyes and a wailing mouth, wisps of mist',
-  vampire: 'an elegant vampire: pale skin, glowing red eyes, sharp fangs, dark lips, a drop of blood',
-  skeleton: 'a living skeleton / skull face (Día de los Muertos style skull make-up, bony details)',
-  devil: 'a devil: red skin, curved black horns, glowing yellow eyes, sharp eyebrows, small goatee',
-  werewolf: 'a werewolf in mid-transformation: fur on the face, wolf ears, yellow eyes, fangs',
-  witch: 'a wicked witch: green skin, a tall crooked black witch hat, warts, purple lips',
-  comic: 'a funny cartoon zombie with big googly eyes',
+/** Several takes per creature – one is picked at random for every person. */
+const CREATURE: Record<Kind, string[]> = {
+  zombie: [
+    'a freshly risen zombie: grey-green skin, sunken dark eye sockets, scratches and dried blood',
+    'a long-dead rotting zombie: peeling grey skin, exposed cheekbone, dark veins, cracked lips',
+    'a Frankenstein-like patched-together undead: stitched seams across the face, greenish skin, neck bolts',
+    'a funny cartoonish B-movie zombie with a goofy grin, green skin and messy stitches',
+  ],
+  ghost: [
+    'a translucent pale-blue glowing ghost with hollow black eyes and a wailing mouth, wisps of mist',
+    'a Victorian ghost: ghostly white skin, faintly glowing, dark empty eyes, period clothing, trailing mist',
+    'a drowned ghost: wet hair, pale blue-green skin, dark rings around the eyes, dripping water',
+  ],
+  vampire: [
+    'an elegant vampire count: pale skin, glowing red eyes, sharp fangs, high-collared cape',
+    'a vampire bride: porcelain skin, dark smoky eyes, blood-red lips, fangs, gothic lace',
+    'a feral Nosferatu-style vampire: bald pale head, pointed ears, long fangs, sunken eyes',
+  ],
+  skeleton: [
+    'a living skeleton with Día de los Muertos skull make-up, colourful flowers and patterns',
+    'a creepy realistic skull face: bone-white skin, black eye sockets, bare teeth painted across the lips',
+    'a glowing skeleton: X-ray-like bones shining through translucent skin',
+  ],
+  devil: [
+    'a devil: red skin, curved black horns, glowing yellow eyes, sharp eyebrows, small goatee',
+    'a dark demon: charcoal-black cracked skin with glowing lava-orange cracks, big horns, fiery eyes',
+    'a mischievous little devil: rosy red skin, small horns, a cheeky grin, pointed ears',
+  ],
+  werewolf: [
+    'a werewolf in mid-transformation: fur on the face, wolf ears, yellow eyes, fangs',
+    'a fully transformed grey werewolf with a wolf snout, keeping the person’s eyes and expression',
+  ],
+  witch: [
+    'a wicked witch: green skin, a tall crooked black witch hat, warts, purple lips',
+    'a beautiful dark witch: pale skin, dark purple lipstick, glowing violet eyes, a black pointed hat',
+    'an old swamp hag: wrinkled grey-green skin, crooked nose, wild hair, a battered hat',
+  ],
+  comic: [
+    'a funny cartoon zombie with big googly eyes, in a colourful comic style',
+    'a cute Pixar-style little monster version of the person with big eyes',
+  ],
 };
+const EXTRA: Partial<Record<Look['marks'][number], string>> = {
+  knife: 'a kitchen knife stuck in the top of the head',
+  arrow: 'an arrow shot straight through the head',
+  bolts: 'metal bolts in the neck',
+  bandage: 'a bloody plaster on the forehead',
+  cheek: 'a deep cut on one cheek',
+  forehead: 'stitches across the forehead',
+};
+const EYES: Record<Look['eyes'], string> = {
+  yellow: 'glowing yellow eyes',
+  red: 'glowing red eyes',
+  milky: 'milky white blind eyes',
+  black: 'pitch-black eyes',
+  blue: 'icy glowing blue eyes',
+};
+const MOOD = [
+  'cold moonlight from above',
+  'eerie green light from below',
+  'flickering candle light',
+  'thin fog around the figure',
+  'a faint ghostly glow around the outline',
+];
 
-export function aiPrompt(kind: Kind): string {
+export function aiPrompt(look: Look): string {
+  let x = (look.seed * 2654435761) >>> 0 || 1;
+  const r = () => {
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    return ((x >>> 0) % 10000) / 10000;
+  };
+  const pick = <T>(a: readonly T[]): T => a[Math.floor(r() * a.length)]!;
+  const extras = look.kind === 'zombie' ? look.marks.map((m) => EXTRA[m]).filter(Boolean) : ([] as string[]);
+  const eyes =
+    look.kind === 'ghost' || look.kind === 'skeleton' || look.kind === 'comic' ? '' : EYES[look.eyes];
+  const details = [eyes, ...extras].filter(Boolean).join(', ');
   return (
-    `Turn the person in this photo into ${CREATURE[kind]} for a Halloween projection show. ` +
+    `Turn the person in this photo into ${pick(CREATURE[look.kind])}` +
+    (details ? `, with ${details}` : '') +
+    ', for a Halloween projection show. ' +
     'The person must stay clearly recognisable: same face, features, expression, hairstyle and clothes. ' +
-    'Movie-quality special-effects make-up and prosthetics, photorealistic, dramatic spooky lighting. ' +
-    'Show only this one person, head and upper body, centred, the whole head in the picture with room above it, ' +
+    'Movie-quality special-effects make-up and prosthetics, photorealistic, ' +
+    `dramatic spooky lighting with ${pick(MOOD)}. ` +
+    'Show only this one person, head and upper body, centred, the whole head (and any hat or horns) in the picture with room above it, ' +
     'on a plain pure black background. No text, no frame.'
   );
 }
@@ -178,9 +246,9 @@ export async function aiGhost(
   key: string,
   model: string,
   photo: string,
-  kind: Kind,
+  look: Look,
 ): Promise<string> {
-  const prompt = aiPrompt(kind);
+  const prompt = aiPrompt(look);
   const out =
     provider === 'gemini'
       ? await callGemini(key, model || AI_MODELS.gemini, photo, prompt)

@@ -33,11 +33,67 @@ export interface FaceIn {
 // ---------------------------------------------------------------- texture painting (UV space)
 
 const S = 1024;
-const uvp = (i: number) => ({ x: FACE_UV[i * 2]! * S, y: FACE_UV[i * 2 + 1]! * S });
-const OVAL = [
-  10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149,
-  150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109,
-];
+
+/**
+ * MediaPipe's face mesh ends in the middle of the forehead. Two extra rings of points carry it on
+ * up to the hairline (and a little to the temples), extrapolated away from the nose bridge (168) –
+ * so the make-up covers the whole forehead and fades out at the hair, not in a hard line.
+ */
+const ARC = [127, 162, 21, 54, 103, 67, 109, 10, 338, 297, 332, 284, 251, 389, 356];
+const ARC_K = [0, 0.18, 0.32, 0.46, 0.56, 0.62, 0.65, 0.66, 0.65, 0.62, 0.56, 0.46, 0.32, 0.18, 0];
+const ANCHOR = 168;
+const RINGS = [0.5, 1];
+/** Number of mesh points with the extension. */
+export const MESH_N = 468 + ARC.length * RINGS.length;
+/** Extended point j (0-based after the 468) → [arc index, ring factor]. */
+function extOf(j: number): [number, number] {
+  const ring = Math.floor(j / ARC.length);
+  return [j % ARC.length, RINGS[ring]!];
+}
+/** Extrapolates the extra points from the real ones (works for uv and for picture points). */
+function extend<T extends { x: number; y: number; z?: number }>(get: (i: number) => T, j: number): T {
+  const [a, f] = extOf(j);
+  const p = get(ARC[a]!);
+  const c = get(ANCHOR);
+  const k = ARC_K[a]! * f;
+  const out = { ...p, x: p.x + (p.x - c.x) * k, y: p.y + (p.y - c.y) * k } as T;
+  if (p.z !== undefined && c.z !== undefined) out.z = p.z + (p.z - c.z) * k;
+  return out;
+}
+const MESH_UV = (() => {
+  const uv = new Float32Array(MESH_N * 2);
+  uv.set(FACE_UV);
+  const get = (i: number) => ({ x: FACE_UV[i * 2]!, y: FACE_UV[i * 2 + 1]! });
+  for (let j = 0; j < MESH_N - 468; j++) {
+    const q = extend(get, j);
+    uv[(468 + j) * 2] = q.x;
+    uv[(468 + j) * 2 + 1] = Math.max(0.002, q.y);
+  }
+  return uv;
+})();
+const MESH_TRIS = (() => {
+  const t = [...FACE_TRIS];
+  const id = (ring: number, a: number) => (ring < 0 ? ARC[a]! : 468 + ring * ARC.length + a);
+  for (let ring = 0; ring < RINGS.length; ring++)
+    for (let a = 0; a + 1 < ARC.length; a++) {
+      const p0 = id(ring - 1, a);
+      const p1 = id(ring - 1, a + 1);
+      const q0 = id(ring, a);
+      const q1 = id(ring, a + 1);
+      t.push(p0, p1, q1, p0, q1, q0);
+    }
+  return new Uint16Array(t);
+})();
+const uvp = (i: number) => ({ x: MESH_UV[i * 2]! * S, y: MESH_UV[i * 2 + 1]! * S });
+/** The outline of the extended face (uv indices). */
+const OUTLINE = (() => {
+  const top = ARC.map((_, a) => 468 + (RINGS.length - 1) * ARC.length + a);
+  // the face outline from 454 down around the chin to 127, then the outer ring back over the forehead
+  const lower = [
+    454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234,
+  ];
+  return [...lower, ...top];
+})();
 const EYE_L = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246];
 const EYE_R = [263, 249, 390, 373, 374, 380, 381, 382, 362, 398, 384, 385, 386, 387, 388, 466];
 const LIPS_OUT = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185];
@@ -192,7 +248,7 @@ export function paintLook(look: Look): { tint: HTMLCanvasElement; detail: HTMLCa
   const base = (rgb: string, a: number, tint = true) => {
     const x = tint ? tg : g;
     x.fillStyle = `rgba(${rgb},${a})`;
-    path(x, OVAL, 1.05);
+    path(x, OUTLINE, 1.05);
     x.fill();
   };
   // sunken sockets around the eyes
@@ -425,20 +481,10 @@ export function paintLook(look: Look): { tint: HTMLCanvasElement; detail: HTMLCa
   const m = document.createElement('canvas');
   m.width = m.height = S;
   const mg = m.getContext('2d')!;
-  mg.filter = 'blur(34px)';
+  mg.filter = 'blur(42px)';
   mg.fillStyle = '#fff';
-  path(mg, OVAL, 0.95, 0, 6);
+  path(mg, OUTLINE, 0.94, 0, 10);
   mg.fill();
-  // the mesh ends on the forehead: fade out gently towards it (no hard line)
-  mg.filter = 'none';
-  mg.globalCompositeOperation = 'destination-in';
-  const top = uvp(10).y;
-  const brow = uvp(9).y;
-  const fade = mg.createLinearGradient(0, top, 0, brow);
-  fade.addColorStop(0, 'rgba(0,0,0,0)');
-  fade.addColorStop(1, 'rgba(0,0,0,1)');
-  mg.fillStyle = fade;
-  mg.fillRect(0, 0, S, S);
   for (const x of [tg, g]) {
     x.globalCompositeOperation = 'destination-in';
     x.drawImage(m, 0, 0);
@@ -732,9 +778,9 @@ export class FaceFilter {
     let s = this.slots[i];
     if (s) return s;
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(468 * 3), 3));
-    geo.setAttribute('uv', new THREE.BufferAttribute(FACE_UV, 2));
-    geo.setIndex(new THREE.BufferAttribute(FACE_TRIS, 1));
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MESH_N * 3), 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(MESH_UV, 2));
+    geo.setIndex(new THREE.BufferAttribute(MESH_TRIS, 1));
     const material = new THREE.ShaderMaterial({
       vertexShader: VERT,
       fragmentShader: FRAG,
@@ -807,6 +853,10 @@ export class FaceFilter {
       for (let i = 0; i < 468; i++) {
         const p = f.pts[i]!;
         pos.setXYZ(i, p.x, -p.y, -p.z);
+      }
+      for (let j = 0; j < MESH_N - 468; j++) {
+        const p = extend((i) => f.pts[i]!, j);
+        pos.setXYZ(468 + j, p.x, -p.y, -p.z);
       }
       pos.needsUpdate = true;
       s.mesh.geometry.computeBoundingSphere();

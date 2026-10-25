@@ -331,15 +331,17 @@ export class ZombieFx {
       pr.lum = pr.lum * 0.7 + (s / n) * 0.3;
     }
 
+    // soft outline: the mask a little blurred (no hard, jagged edges)
+    const soft = blurMask(m, W, H, Math.max(1, Math.round(W / 300)));
     // the people in their own colours, cut out, a little lifted and transparent like a ghost
     const lookOf = (x: number, y: number): Look | undefined => {
       const l = lab[Math.floor(y / C) * gw + Math.floor(x / C)]!;
       return l >= 0 ? byLabel.get(l)?.look : undefined;
     };
     for (let i = 0, p = 0; i < W * H; i++, p += 4) {
-      const c = m[i]!;
-      // solid person, soft only right at the outline
-      const a = c <= 0.3 ? 0 : c >= 0.55 ? 1 : (c - 0.3) / 0.25;
+      const c = soft[i]!;
+      // solid person, soft towards the outline
+      const a = c <= 0.25 ? 0 : c >= 0.65 ? 1 : (c - 0.25) / 0.4;
       if (a <= 0) {
         d[p + 3] = 0;
         continue;
@@ -374,6 +376,30 @@ export class ZombieFx {
     const t = ts / 1000;
     for (const pr of shown) this.cutOut(pr, H, lab, gw, C, gl, top, t);
     for (const pr of active) if (!shown.includes(pr)) pr.seen = Math.min(pr.seen, now - 1e6);
+    if (this.preview) this.drawPreview(this.preview, shown, W, H);
+  }
+
+  /** Where the live picture of the result goes (the phone: what the photos will look like). */
+  preview: HTMLCanvasElement | null = null;
+  private drawPreview(c: HTMLCanvasElement, shown: Person[], W: number, H: number): void {
+    // a little room above for hats and horns
+    const top = Math.round(H * 0.12);
+    if (c.width !== W || c.height !== H + top) {
+      c.width = W;
+      c.height = H + top;
+    }
+    const g = c.getContext('2d')!;
+    g.fillStyle = '#0d0b1a';
+    g.fillRect(0, 0, c.width, c.height);
+    // the room dimmed, the ghosts on top – like on the dark projection
+    g.globalAlpha = 0.28;
+    g.drawImage(this.work, 0, top);
+    g.globalAlpha = 1;
+    for (const pr of shown) {
+      const b = pr.box;
+      const head = b.h * HEADROOM;
+      g.drawImage(pr.canvas, b.x, top + b.y - head, b.w, b.h + head);
+    }
   }
 
   /**
@@ -586,6 +612,33 @@ export class ZombieFx {
     this.face?.close();
     this.filter?.dispose();
   }
+}
+
+/** Box blur (two passes each way) of the person mask. */
+function blurMask(m: Float32Array, W: number, H: number, r: number): Float32Array {
+  const a = Float32Array.from(m);
+  const b = new Float32Array(m.length);
+  const n = 2 * r + 1;
+  for (let pass = 0; pass < 2; pass++) {
+    for (let y = 0; y < H; y++) {
+      const o = y * W;
+      let sum = 0;
+      for (let x = -r; x <= r; x++) sum += a[o + Math.min(W - 1, Math.max(0, x))]!;
+      for (let x = 0; x < W; x++) {
+        b[o + x] = sum / n;
+        sum += a[o + Math.min(W - 1, x + r + 1)]! - a[o + Math.max(0, x - r)]!;
+      }
+    }
+    for (let x = 0; x < W; x++) {
+      let sum = 0;
+      for (let y = -r; y <= r; y++) sum += b[Math.min(H - 1, Math.max(0, y)) * W + x]!;
+      for (let y = 0; y < H; y++) {
+        a[y * W + x] = sum / n;
+        sum += b[Math.min(H - 1, y + r + 1) * W + x]! - b[Math.max(0, y - r) * W + x]!;
+      }
+    }
+  }
+  return a;
 }
 
 /**

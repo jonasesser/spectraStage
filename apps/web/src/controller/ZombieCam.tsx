@@ -29,6 +29,8 @@ interface Job {
   n: number;
   done: number;
   state: 'working' | 'flying' | 'failed';
+  /** The AI portraits that replace the filter photos. */
+  ai?: 'painting' | 'done' | 'failed';
   note?: string;
 }
 
@@ -56,6 +58,7 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
   const jobId = useRef(1);
   const fxRef = useRef<ZombieFx | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const previewRef = useRef<HTMLCanvasElement>(null);
   const run = useRef<{ stream: MediaStream; peers: Map<string, RTCPeerConnection>; off: () => void } | null>(
     null,
   );
@@ -101,38 +104,56 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
         : L('📸 Taken', '📸 Aufgenommen'),
     );
     void (async () => {
+      // 1. the face filter photos fly right away
+      let filterIds: string[];
+      try {
+        filterIds = [];
+        for (const s of shots) filterIds.push(await upload(s.image));
+        // all of them at once, each from where the person stood
+        await store.send({ t: 'ghost.release', ghostIds: filterIds, u: shots.map((s) => s.u) });
+        patchJob(id, { state: 'flying', ai: ai ? 'painting' : undefined });
+      } catch (e) {
+        patchJob(id, { state: 'failed', note: (e as Error).message });
+        return;
+      }
+      if (!ai) return;
+      // 2. one AI painter per person, all at the same time; when all are back, the AI portraits
+      // replace the filter photos and rise together
       let aiFailed = '';
-      // one AI painter per person, all at the same time
-      const images = await Promise.all(
+      const painted = await Promise.all(
         shots.map(async (s) => {
-          let img = s.image;
-          if (ai) {
-            try {
-              img = await aiGhost(ai.provider, ai.key, ai.model, s.photo, s.look.kind);
-            } catch (e) {
-              aiFailed = (e as Error).message;
-            }
+          try {
+            return await aiGhost(ai.provider, ai.key, ai.model, s.photo, s.look);
+          } catch (e) {
+            aiFailed = (e as Error).message;
+            return null;
+          } finally {
+            patchJob(id, (j) => ({ done: j.done + 1 }));
           }
-          patchJob(id, (j) => ({ done: j.done + 1 }));
-          return img;
         }),
       );
       try {
-        const ghostIds: string[] = [];
-        for (const img of images) ghostIds.push(await upload(img));
-        // all of them at once, each from where the person stood
-        await store.send({ t: 'ghost.release', ghostIds, u: shots.map((s) => s.u) });
+        const newIds: string[] = [];
+        const us: number[] = [];
+        for (let i = 0; i < shots.length; i++) {
+          const img = painted[i];
+          if (!img) continue;
+          newIds.push(await upload(img));
+          us.push(shots[i]!.u);
+          await store.send({ t: 'ghost.delete', ghostId: filterIds[i]! });
+        }
+        if (newIds.length) await store.send({ t: 'ghost.release', ghostIds: newIds, u: us });
         patchJob(id, {
-          state: 'flying',
+          ai: aiFailed ? 'failed' : 'done',
           note: aiFailed
             ? L(
-                `AI failed (${aiFailed}) – live filter photo used.`,
-                `KI fehlgeschlagen (${aiFailed}) – Live-Filter-Foto genommen.`,
+                `AI failed for ${shots.length - newIds.length} (${aiFailed}) – the filter photo stays.`,
+                `KI fehlgeschlagen bei ${shots.length - newIds.length} (${aiFailed}) – das Filter-Foto bleibt.`,
               )
             : undefined,
         });
       } catch (e) {
-        patchJob(id, { state: 'failed', note: (e as Error).message });
+        patchJob(id, { ai: 'failed', note: (e as Error).message });
       }
     })();
   };
@@ -217,6 +238,7 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
       setOn(true);
       // the effect runs here on the phone (it finds the people and makes the photos)
       const fx = new ZombieFx();
+      fx.preview = previewRef.current;
       fxRef.current = fx;
       setFxState('loading');
       await fx.init();
@@ -254,7 +276,7 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
   useEffect(() => () => stop(), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const connected = Object.values(links).filter((s) => s === 'connected').length;
-  const working = jobs.filter((j) => j.state === 'working').length;
+  const working = jobs.filter((j) => j.state === 'working' || j.ai === 'painting').length;
   return (
     <section className="panel stack">
       <div className="section-title">
@@ -266,22 +288,37 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
           'Kamera auf die Gäste richten und auslösen: Jede Person im Bild wird zu ihrem eigenen Geist (zufällige Gestalt – Zombie, Geist, Vampir, Skelett, Teufel, Werwolf, Hexe …), wird in dieser Show gespeichert und steigt auf den Beamern auf. Frag deine Gäste, ob das ok ist.',
         )}
       </p>
-      <video
-        ref={videoRef}
-        onClick={shoot}
-        autoPlay
-        muted
-        playsInline
-        style={{
-          display: on ? 'block' : 'none',
-          width: '100%',
-          maxHeight: 320,
-          objectFit: 'contain',
-          borderRadius: 12,
-          background: '#000',
-          transform: 'scaleX(-1)',
-        }}
-      />
+      <div style={{ position: 'relative', display: on ? 'block' : 'none' }}>
+        {/* the camera itself stays invisible underneath – shown is the result, live */}
+        <video
+          ref={videoRef}
+          autoPlay
+          muted
+          playsInline
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            opacity: 0,
+            pointerEvents: 'none',
+          }}
+        />
+        <canvas
+          ref={previewRef}
+          onClick={shoot}
+          style={{
+            position: 'relative',
+            display: 'block',
+            width: '100%',
+            maxHeight: 420,
+            objectFit: 'contain',
+            borderRadius: 12,
+            background: '#0d0b1a',
+            cursor: 'pointer',
+          }}
+        />
+      </div>
       {on && (
         <button
           className="btn primary"
@@ -304,12 +341,14 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
             <li key={j.id}>
               {j.n === 1 ? L('1 person', '1 Person') : L(`${j.n} people`, `${j.n} Personen`)}:{' '}
               {j.state === 'working'
-                ? aiProvider
-                  ? L(`AI painting … ${j.done}/${j.n}`, `KI malt … ${j.done}/${j.n}`)
-                  : L('saving …', 'speichere …')
-                : j.state === 'flying'
-                  ? L('✓ flying', '✓ fliegt')
-                  : L('✗ failed', '✗ fehlgeschlagen')}
+                ? L('saving …', 'speichere …')
+                : j.state === 'failed'
+                  ? L('✗ failed', '✗ fehlgeschlagen')
+                  : j.ai === 'painting'
+                    ? L(`✓ flying · AI painting … ${j.done}/${j.n}`, `✓ fliegt · KI malt … ${j.done}/${j.n}`)
+                    : j.ai === 'done'
+                      ? L('✓ AI portraits flying', '✓ KI-Porträts fliegen')
+                      : L('✓ flying', '✓ fliegt')}
               {j.note && <span className="muted"> – {j.note}</span>}
             </li>
           ))}
