@@ -564,6 +564,22 @@ function RoomPanel({ state, L }: { state: SessionState; L: Tr }) {
         {L('Size of the room (proportions of the pictures)', 'Raumgröße (Proportionen der Bilder)')}
       </strong>
       <ZoomSliders state={state} L={L} />
+      <button
+        className="btn small"
+        onClick={() => {
+          if (
+            window.confirm(
+              L(
+                'Back to standard size (front wall 4 m wide, room 4 m deep)? Fine-tune with the sliders afterwards.',
+                'Auf Standardmaße zurücksetzen (Vorderwand 4 m breit, Raum 4 m tief)? Danach mit den Reglern feinjustieren.',
+              ),
+            )
+          )
+            void store.send({ t: 'room.resetSize' });
+        }}
+      >
+        ↺ {L('Standard size', 'Standardmaße')}
+      </button>
       {widthOff && (
         <button className="btn small" onClick={() => void restoreWidth()}>
           ↔ {L('Restore the width of the front wall', 'Breite der Vorderwand wiederherstellen')} (

@@ -578,6 +578,11 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
     case 'session.setRoom':
       state.room = cmd.room;
       return res(cmd.room ? 'room mode on' : 'room mode off');
+    case 'room.resetSize': {
+      setFrontWidth(state, 4);
+      setRoomDepth(state, 4);
+      return res('room back to standard size');
+    }
     case 'room.setWidth': {
       setFrontWidth(state, cmd.width);
       return res(`front wall ${cmd.width.toFixed(2)} m wide`);
