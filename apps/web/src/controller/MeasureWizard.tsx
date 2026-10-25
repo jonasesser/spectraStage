@@ -117,64 +117,171 @@ function targetsFor(state: SessionState, pose: Pose, aspect: number, L: Tr): Tar
   return out;
 }
 
-/** The room seen from inside towards the front wall, with the corner or edge to hit marked. */
-function RoomSketch({ keys, L }: { keys: string[]; L: Tr }) {
+interface SketchItem {
+  id: string;
+  keys: string[];
+  state: 'done' | 'todo' | 'skipped';
+}
+
+/**
+ * The room seen from inside towards the front wall – and the place to measure: every corner of the
+ * chosen sides is a point. Touch a point and drag: the cross on the wall moves along (the point
+ * here springs back when let go – what counts is the cross on the wall).
+ */
+function RoomSketch({
+  items,
+  selected,
+  onPick,
+  onDrag,
+  L,
+}: {
+  items: SketchItem[];
+  selected: string | null;
+  onPick: (id: string) => void;
+  /** Finger movement in screen pixels since the touch began; final on release. */
+  onDrag: (dx: number, dy: number, final: boolean, width: number) => void;
+  L: Tr;
+}) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const drag = useRef<{ x: number; y: number; id: string } | null>(null);
+  const [off, setOff] = useState<{ id: string; dx: number; dy: number } | null>(null);
   const pos = (k: string): [number, number] | null => {
     const [z, x, y] = k.split('-');
     if (!z || !x || !y) return null;
     const front = z === 'vorne';
     const left = x === 'links';
     const top = y === 'oben';
-    return front ? [left ? 70 : 150, top ? 42 : 98] : [left ? 6 : 214, top ? 6 : 134];
+    return front ? [left ? 70 : 150, top ? 42 : 98] : [left ? 14 : 206, top ? 10 : 130];
   };
-  const pts = keys.map(pos);
-  if (pts.some((p) => !p)) return null;
+  const at = (it: SketchItem): [number, number] | null => {
+    const ps = it.keys.map(pos);
+    if (ps.some((p) => !p)) return null;
+    if (ps.length === 1) return ps[0]!;
+    return [(ps[0]![0] + ps[1]![0]) / 2, (ps[0]![1] + ps[1]![1]) / 2];
+  };
+  const toSvg = (e: { clientX: number; clientY: number }) => {
+    const r = svgRef.current!.getBoundingClientRect();
+    return {
+      x: ((e.clientX - r.left) / r.width) * 220,
+      y: ((e.clientY - r.top) / r.height) * 140,
+      w: r.width,
+    };
+  };
   const c = '#3ff2ff';
   const o = '#ffb347';
+  const sel = items.find((i) => i.id === selected);
+  const selPts = sel ? sel.keys.map(pos) : [];
   return (
     <svg
+      ref={svgRef}
       viewBox="0 0 220 140"
-      style={{ width: '100%', maxWidth: 320, display: 'block', margin: '0 auto' }}
+      style={{ width: '100%', maxWidth: 420, display: 'block', margin: '0 auto', touchAction: 'none' }}
       role="img"
-      aria-label={L('Sketch of the room', 'Skizze des Raums')}
+      aria-label={L(
+        'Sketch of the room – touch a point and drag',
+        'Skizze des Raums – Punkt antippen und ziehen',
+      )}
+      onPointerDown={(e) => {
+        const p = toSvg(e);
+        // the nearest point (generous, for fingers); else keep moving the selected one
+        let best: SketchItem | null = null;
+        let bd = 26;
+        for (const it of items) {
+          const q = at(it);
+          if (!q) continue;
+          const d = Math.hypot(q[0] - p.x, q[1] - p.y);
+          if (d < bd) {
+            bd = d;
+            best = it;
+          }
+        }
+        const id = best?.id ?? selected;
+        if (!id) return;
+        if (id !== selected) onPick(id);
+        (e.target as Element).setPointerCapture?.(e.pointerId);
+        drag.current = { x: e.clientX, y: e.clientY, id };
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current;
+        if (!d) return;
+        const w = svgRef.current!.getBoundingClientRect().width;
+        const k = 220 / w;
+        setOff({ id: d.id, dx: (e.clientX - d.x) * k, dy: (e.clientY - d.y) * k });
+        onDrag(e.clientX - d.x, e.clientY - d.y, false, w);
+      }}
+      onPointerUp={(e) => {
+        const d = drag.current;
+        drag.current = null;
+        setOff(null);
+        if (!d) return;
+        onDrag(e.clientX - d.x, e.clientY - d.y, true, svgRef.current!.getBoundingClientRect().width);
+      }}
+      onPointerCancel={() => {
+        drag.current = null;
+        setOff(null);
+      }}
     >
       <rect x="0" y="0" width="220" height="140" rx="8" fill="#0b0918" />
-      <g stroke={c} strokeWidth="1.5" fill="none" opacity="0.7">
+      <g stroke={c} strokeWidth="1.5" fill="none" opacity="0.5">
         <rect x="70" y="42" width="80" height="56" />
-        <line x1="6" y1="6" x2="70" y2="42" />
-        <line x1="214" y1="6" x2="150" y2="42" />
-        <line x1="6" y1="134" x2="70" y2="98" />
-        <line x1="214" y1="134" x2="150" y2="98" />
+        <line x1="14" y1="10" x2="70" y2="42" />
+        <line x1="206" y1="10" x2="150" y2="42" />
+        <line x1="14" y1="130" x2="70" y2="98" />
+        <line x1="206" y1="130" x2="150" y2="98" />
       </g>
-      <g fill="#9d93d9" fontSize="10" textAnchor="middle" fontFamily="system-ui, sans-serif">
+      <g fill="#9d93d9" fontSize="9" textAnchor="middle" fontFamily="system-ui, sans-serif">
         <text x="110" y="74">
           {L('front', 'vorne')}
         </text>
-        <text x="30" y="74">
+        <text x="36" y="74">
           {L('left', 'links')}
         </text>
-        <text x="190" y="74">
+        <text x="184" y="74">
           {L('right', 'rechts')}
         </text>
-        <text x="110" y="124">
+        <text x="110" y="122">
           {L('floor', 'Boden')}
         </text>
         <text x="110" y="24">
           {L('ceiling', 'Decke')}
         </text>
       </g>
-      {pts.length === 2 && (
+      {selPts.length === 2 && selPts.every(Boolean) && (
         <line
-          x1={pts[0]![0]}
-          y1={pts[0]![1]}
-          x2={pts[1]![0]}
-          y2={pts[1]![1]}
+          x1={selPts[0]![0]}
+          y1={selPts[0]![1]}
+          x2={selPts[1]![0]}
+          y2={selPts[1]![1]}
           stroke={o}
-          strokeWidth="5"
+          strokeWidth="4"
           strokeLinecap="round"
+          opacity="0.7"
         />
       )}
-      {pts.length === 1 && <circle cx={pts[0]![0]} cy={pts[0]![1]} r="7" fill={o} />}
+      {items.map((it) => {
+        const q = at(it);
+        if (!q) return null;
+        const isSel = it.id === selected;
+        const dx = off && off.id === it.id ? off.dx : 0;
+        const dy = off && off.id === it.id ? off.dy : 0;
+        return (
+          <g
+            key={it.id}
+            style={{ transition: off?.id === it.id ? 'none' : 'transform 0.25s ease-out' }}
+            transform={`translate(${dx} ${dy})`}
+          >
+            {isSel && <circle cx={q[0]} cy={q[1]} r="13" fill="none" stroke={o} strokeWidth="2" />}
+            <circle
+              cx={q[0]}
+              cy={q[1]}
+              r={isSel ? 8 : 6}
+              fill={
+                isSel ? o : it.state === 'done' ? '#7dff8a' : it.state === 'skipped' ? '#5a5675' : '#c9c3ff'
+              }
+            />
+          </g>
+        );
+      })}
     </svg>
   );
 }
@@ -207,8 +314,7 @@ export function MeasureWizard({
   const [history, setHistory] = useState<string[]>(() => (profile.anchors ?? []).map((a) => a.c));
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
   const [fine, setFine] = useState(false);
-  const padRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ x: number; y: number; u: number; v: number } | null>(null);
+  const dragBase = useRef<{ id: string; u: number; v: number } | null>(null);
   const timer = useRef(0);
   const pending = useRef<Anchor[] | null>(null);
 
@@ -298,11 +404,14 @@ export function MeasureWizard({
       </p>
     );
 
-  const move = (u: number, v: number, how: 'drag' | 'now' | 'full') => {
-    if (!target) return;
+  const move = (u: number, v: number, how: 'drag' | 'now' | 'full', t: Target | null = target) => {
+    if (!t) return;
     const c = (x: number) => Math.min(1.2, Math.max(-0.2, x));
+    const has = anchors.some((a) => a.c === t.id);
     send(
-      anchors.map((a) => (a.c === target.id ? { ...a, u: c(u), v: c(v) } : a)),
+      has
+        ? anchors.map((a) => (a.c === t.id ? { ...a, u: c(u), v: c(v) } : a))
+        : [...anchors, { c: t.id, p: t.p, ...(t.q ? { q: t.q } : {}), u: c(u), v: c(v) }],
       how,
     );
   };
@@ -311,7 +420,6 @@ export function MeasureWizard({
     const k = fine ? 0.0006 : 0.004;
     move(anchor.u + sx * dx * k, anchor.v + sy * dy * k * aspect, 'drag');
   };
-  const scale = () => (fine ? 0.06 : 0.35) / (padRef.current?.clientWidth || 300);
   // the cross lives in the projector's own picture; a turned or mirrored mount turns the
   // directions on the wall – keep "drag right = cross goes right on the wall"
   const turned = profile.rotation === 180;
@@ -361,6 +469,40 @@ export function MeasureWizard({
     setActive(null);
   };
 
+  // the sketch: all points of the chosen sides; touch one to (re)measure it, drag to move it
+  const items: SketchItem[] = targets.map((t) => ({
+    id: t.id,
+    keys: t.keys,
+    state: skipped.has(t.id) ? 'skipped' : history.includes(t.id) ? 'done' : 'todo',
+  }));
+  const pick = (id: string) => {
+    setSkipped((sk) => {
+      if (!sk.has(id)) return sk;
+      const n = new Set(sk);
+      n.delete(id);
+      return n;
+    });
+    setActive(id);
+  };
+  const sketch = (
+    <RoomSketch
+      items={items}
+      selected={target?.id ?? null}
+      onPick={pick}
+      onDrag={(dx, dy, final, width) => {
+        const t = target;
+        if (!t) return;
+        const a = anchors.find((x) => x.c === t.id);
+        if (!dragBase.current || dragBase.current.id !== t.id)
+          dragBase.current = { id: t.id, u: a?.u ?? t.u, v: a?.v ?? t.v };
+        const k = (fine ? 0.06 : 0.35) / (width || 300);
+        const b0 = dragBase.current;
+        move(b0.u + sx * dx * k, b0.v + sy * dy * k * aspect, final ? 'full' : 'drag', t);
+        if (final) dragBase.current = null;
+      }}
+      L={L}
+    />
+  );
   const doneSteps = history.length + skipped.size;
   const total = doneSteps + targets.filter((t) => !history.includes(t.id) && !skipped.has(t.id)).length;
 
@@ -371,47 +513,24 @@ export function MeasureWizard({
       {target ? (
         <>
           <div className="muted small">
-            {L('Step', 'Schritt')} {Math.min(total, doneSteps + 1)} {L('of', 'von')} {total}
+            {history.includes(target.id)
+              ? L('Correct a corner', 'Ecke korrigieren')
+              : `${L('Step', 'Schritt')} ${Math.min(total, doneSteps + 1)} ${L('of', 'von')} ${total}`}
           </div>
           <div style={{ fontWeight: 700 }}>{target.title}</div>
           {target.hint && <div className="small">{target.hint}</div>}
-          <RoomSketch keys={target.keys} L={L} />
           <p className="small" style={{ margin: 0 }}>
             {target.kind === 'corner'
               ? L(
-                  'Look at the wall: move the orange cross exactly onto this corner. If your projector does not reach it: “not visible – skip”.',
-                  'Schau an die Wand: Schiebe das orange Kreuz genau auf diese Ecke. Trifft dein Beamer sie nicht: „Nicht sichtbar – überspringen“.',
+                  'Look at the wall and drag the point below: the orange cross moves on the wall – put it exactly onto this corner. Not reachable: “not visible – skip”. Tap another point to correct it.',
+                  'Schau an die Wand und zieh unten am Punkt: Das orange Kreuz bewegt sich an der Wand – genau auf diese Ecke setzen. Nicht erreichbar: „Nicht sichtbar – überspringen“. Anderen Punkt antippen, um ihn zu korrigieren.',
                 )
               : L(
-                  'Instead of the corner you skipped: put the cross anywhere exactly on this real edge (the orange line shows where the app expects it). Not reachable either: skip.',
-                  'Statt der übersprungenen Ecke: Setz das Kreuz irgendwo genau auf diese echte Kante (die orange Linie zeigt, wo die App sie vermutet). Auch nicht erreichbar: überspringen.',
+                  'Instead of the corner you skipped: drag until the cross sits anywhere exactly on this real edge (the orange line shows where the app expects it). Not reachable either: skip.',
+                  'Statt der übersprungenen Ecke: Ziehen, bis das Kreuz irgendwo genau auf dieser echten Kante sitzt (die orange Linie zeigt, wo die App sie vermutet). Auch nicht erreichbar: überspringen.',
                 )}
           </p>
-          <div
-            ref={padRef}
-            className="corner-pad"
-            onPointerDown={(e) => {
-              if (!anchor) return;
-              (e.target as HTMLElement).setPointerCapture(e.pointerId);
-              dragRef.current = { x: e.clientX, y: e.clientY, u: anchor.u, v: anchor.v };
-            }}
-            onPointerMove={(e) => {
-              const d = dragRef.current;
-              if (!d) return;
-              const k = scale();
-              move(d.u + sx * (e.clientX - d.x) * k, d.v + sy * (e.clientY - d.y) * k * aspect, 'drag');
-            }}
-            onPointerUp={(e) => {
-              const d = dragRef.current;
-              dragRef.current = null;
-              if (!d) return;
-              const k = scale();
-              move(d.u + sx * (e.clientX - d.x) * k, d.v + sy * (e.clientY - d.y) * k * aspect, 'now');
-            }}
-            onPointerCancel={() => (dragRef.current = null)}
-          >
-            {L('Drag here – the cross moves on the wall', 'Hier ziehen – das Kreuz bewegt sich an der Wand')}
-          </div>
+          {sketch}
           <div className="row" style={{ justifyContent: 'center' }}>
             <button className="btn small" onClick={() => nudge(-1, 0)} aria-label="links">
               ◀
@@ -437,17 +556,20 @@ export function MeasureWizard({
               {L('Not visible – skip', 'Nicht sichtbar – überspringen')}
             </button>
             <button className="btn primary" onClick={next}>
-              ✓ {L('Fits – next', 'Sitzt – weiter')}
+              ✓ {history.includes(target.id) ? L('Fits', 'Sitzt') : L('Fits – next', 'Sitzt – weiter')}
             </button>
           </div>
         </>
       ) : (
-        <p style={{ margin: 0 }}>
-          {L(
-            'All points this projector reaches are measured. Check on the wall: the glowing lines should lie on the real room edges.',
-            'Alle Punkte, die dieser Beamer erreicht, sind gemessen. Prüf an der Wand: Die Leuchtlinien sollten auf den echten Raumkanten liegen.',
-          )}
-        </p>
+        <>
+          <p style={{ margin: 0 }}>
+            {L(
+              'All corners are set. Check on the wall: the glowing lines should lie on the real edges. To correct a corner: touch its point and drag.',
+              'Alle Ecken sind gesetzt. Prüf an der Wand: Die Leuchtlinien sollten auf den echten Kanten liegen. Ecke korrigieren: ihren Punkt antippen und ziehen.',
+            )}
+          </p>
+          {sketch}
+        </>
       )}
       <div className="small">
         {L(
