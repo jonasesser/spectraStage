@@ -49,14 +49,13 @@ export class GhostImages {
       img.height = h;
       const g = img.getContext('2d', { willReadFrequently: true })!;
       g.drawImage(bmp, 0, 0);
+      // the photo keeps its colours – a bit lifted so it glows on the dark scene
       const data = g.getImageData(0, 0, w, h);
       const d = data.data;
       for (let p = 0; p < d.length; p += 4) {
-        const l = (0.3 * d[p]! + 0.59 * d[p + 1]! + 0.11 * d[p + 2]!) / 255;
-        // ghostly: towards a pale blue-white, but the face stays readable
-        d[p] = 40 + 200 * l * 0.9 + d[p]! * 0.12;
-        d[p + 1] = 60 + 190 * l * 0.95 + d[p + 1]! * 0.12;
-        d[p + 2] = 90 + 160 * l + d[p + 2]! * 0.12;
+        d[p] = 24 + d[p]! * 0.95;
+        d[p + 1] = 28 + d[p + 1]! * 0.95;
+        d[p + 2] = 36 + d[p + 2]! * 0.95;
       }
       g.putImageData(data, 0, 0);
       const glow = document.createElement('canvas');

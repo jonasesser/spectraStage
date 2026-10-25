@@ -49,6 +49,34 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
     tellCapture();
   };
   const [err, setErr] = useState<string | null>(null);
+  // tap a face → ghost photo right away (the preview here, or the projector PC taking photos)
+  const snapRef = useRef<((u?: number) => boolean) | null>(null);
+  const [tapped, setTapped] = useState(0);
+  useEffect(() => {
+    if (!tapped) return;
+    const t = window.setTimeout(() => setTapped(0), 2500);
+    return () => window.clearTimeout(t);
+  }, [tapped]);
+  const snap = (u?: number) => {
+    if (!saveRef.current) return;
+    if (previewOnRef.current) snapRef.current?.(u);
+    else {
+      const first = targets(stateRef.current, presenceRef.current).find((id) => run.current?.peers.has(id));
+      if (!first) return;
+      store.conn.sendRtc(first, { kind: 'style', snap: u ?? 0.5 });
+    }
+    setTapped(Date.now());
+  };
+  const onVideoTap = (e: React.MouseEvent<HTMLVideoElement>) => {
+    const v = e.currentTarget;
+    const r = v.getBoundingClientRect();
+    // where the picture sits inside the element (object-fit: contain)
+    const k = Math.min(r.width / Math.max(1, v.videoWidth), r.height / Math.max(1, v.videoHeight));
+    const w = v.videoWidth * k;
+    const x = (e.clientX - r.left - (r.width - w) / 2) / Math.max(1, w);
+    // the effect mirrors the picture
+    snap(Math.max(0, Math.min(1, 1 - x)));
+  };
   const [links, setLinks] = useState<Record<string, string>>({});
   // test without a projector: run the effect here and show it on a preview of the front wall
   const [preview, setPreview] = useState<boolean | null>(null);
@@ -172,6 +200,7 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
       </p>
       <video
         ref={videoRef}
+        onClick={onVideoTap}
         autoPlay
         muted
         playsInline
@@ -182,14 +211,28 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
           objectFit: 'contain',
           borderRadius: 12,
           background: '#000',
+          cursor: 'crosshair',
         }}
       />
+      {on && (
+        <span className="small muted">
+          {tapped
+            ? save
+              ? L('📸 Ghost photo taken!', '📸 Geister-Foto ausgelöst!')
+              : L('Switch on ghost photos below first.', 'Erst unten Geister-Fotos einschalten.')
+            : L(
+                'Tap a face to take a ghost photo right away.',
+                'Tipp auf ein Gesicht – sofort ein Geister-Foto.',
+              )}
+        </span>
+      )}
       {previewOn && (
         <ZombiePreview
           state={state}
           now={() => store.conn.clock.now()}
           video={videoRef.current}
           capture={save}
+          snapRef={snapRef}
           L={L}
         />
       )}

@@ -17,6 +17,7 @@ export function ZombiePreview({
   now,
   video,
   capture,
+  snapRef,
   L,
 }: {
   state: SessionState;
@@ -24,6 +25,8 @@ export function ZombiePreview({
   video: HTMLVideoElement | null;
   /** Take ghost photos here (testing without a projector). */
   capture: boolean;
+  /** Set to a function that takes a ghost photo now (tap on a face). */
+  snapRef?: React.MutableRefObject<((u?: number) => boolean) | null>;
   L: Tr;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -65,6 +68,7 @@ export function ZombiePreview({
         .catch(() => setShot({ ok: false, at: Date.now() }));
     };
     fxRef.current = fx;
+    if (snapRef) snapRef.current = (u) => fx.snap(u);
     let last = performance.now();
     r.setLiveSprite(() => {
       const t = performance.now();
@@ -94,6 +98,7 @@ export function ZombiePreview({
       fx.dispose();
       rRef.current = null;
       fxRef.current = null;
+      if (snapRef) snapRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video]);
@@ -113,7 +118,14 @@ export function ZombiePreview({
   const aspect = main ? `${main.rect.w} / ${main.rect.h}` : '16 / 9';
   return (
     <div className="stack" style={{ gap: '0.3rem' }}>
-      <canvas ref={ref} className="preview-canvas" style={{ aspectRatio: aspect }} />
+      <canvas
+        ref={ref}
+        className="preview-canvas"
+        style={{ aspectRatio: aspect, cursor: 'crosshair' }}
+        onClick={() => {
+          if (captureRef.current) fxRef.current?.snap();
+        }}
+      />
       {shot && (
         <strong className="small">
           {shot.ok

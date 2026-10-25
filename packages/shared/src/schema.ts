@@ -689,6 +689,8 @@ export const RtcDataSchema = z.object({
   style: z.enum(['makeup', 'comic']).optional(),
   /** Zombie camera: this projector PC takes the ghost photos (only one does). */
   capture: z.boolean().optional(),
+  /** Take a ghost photo now (a tap on the phone): place 0..1 across the mirrored picture. */
+  snap: z.number().min(0).max(1).optional(),
   sdp: z.string().max(20_000).optional(),
   candidate: z
     .object({
