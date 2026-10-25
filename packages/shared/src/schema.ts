@@ -150,6 +150,17 @@ export const ProfileSchema = z.object({
     })
     .partial()
     .optional(),
+  /**
+   * Proportions per side for this projector (x: horizontal, y: vertical in the side's own picture):
+   * below 1 the things on the side get narrower and more of them fit, above 1 wider – the side is
+   * always filled completely. Does not change the sizes of the room.
+   */
+  proportions: z
+    .record(
+      z.enum(['vorne', 'rechts', 'hinten', 'links', 'boden', 'decke']),
+      z.object({ x: z.number().min(0.05).max(20), y: z.number().min(0.05).max(20) }),
+    )
+    .optional(),
   /** Measured room corners and edge points → the pose is computed from them. */
   anchors: z.array(AnchorSchema).max(40).optional(),
   updatedAt: z.number(),
@@ -620,6 +631,14 @@ export const CommandSchema = z.discriminatedUnion('t', [
         decke: z.number().min(0.2).max(5),
       })
       .partial(),
+  }),
+  z.object({
+    t: z.literal('output.setProportions'),
+    outputId: id,
+    proportions: z.record(
+      z.enum(['vorne', 'rechts', 'hinten', 'links', 'boden', 'decke']),
+      z.object({ x: z.number().min(0.05).max(20), y: z.number().min(0.05).max(20) }),
+    ),
   }),
   /** Start/stop corner measuring on the projector (sel = highlighted corner). */
   z.object({

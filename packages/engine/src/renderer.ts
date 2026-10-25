@@ -1092,7 +1092,18 @@ export class StageRenderer {
     if (seen) visible = visible.filter((s) => seen.has(s.id));
     const outputs = state.outputs;
     const world = this.worldFor(state);
-    for (const s of visible) this.renderSurface(s, state, now, ppmView, dtMs, output, outputs, world);
+    for (const s of visible)
+      this.renderSurface(
+        s,
+        state,
+        now,
+        ppmView,
+        dtMs,
+        output,
+        outputs,
+        world,
+        this.proportionFor(s, profile, world, !!pose),
+      );
     this.gcLayers(visible, wall);
 
     // 2) Actors (stage space)
@@ -1650,6 +1661,29 @@ export class StageRenderer {
     return this.worldCache;
   }
 
+  /**
+   * Proportions of a side for this projector: the scene is laid out for a bigger / smaller area
+   * and then put onto the real side – things get narrower (more of them) or wider, the side stays
+   * filled completely. The anchor is the edge towards the front wall.
+   */
+  private proportionFor(
+    s: Surface,
+    profile: Profile,
+    world: WorldInfo,
+    room: boolean,
+  ): { x: number; y: number; ax: number; ay: number } {
+    const none = { x: 1, y: 1, ax: 0.5, ay: 0.5 };
+    if (!room || !profile.proportions) return none;
+    const face = world.fold.faces.find((f) => f.id === s.id);
+    const wall = face ? faceWall(world.fold, face) : null;
+    const p = wall ? profile.proportions[wall] : undefined;
+    if (!p || (Math.abs(p.x - 1) < 1e-3 && Math.abs(p.y - 1) < 1e-3)) return none;
+    // anchor: the edge that meets the front wall (in the unfolded stage layout)
+    const ax = wall === 'links' ? 1 : wall === 'rechts' ? 0 : 0.5;
+    const ay = wall === 'boden' ? 0 : wall === 'decke' ? 1 : 0.5;
+    return { x: p.x, y: p.y, ax, ay };
+  }
+
   private renderSurface(
     s: Surface,
     state: SessionState,
@@ -1659,6 +1693,7 @@ export class StageRenderer {
     output: Output | null,
     outputs: readonly Output[],
     world: WorldInfo,
+    prop: { x: number; y: number; ax: number; ay: number } = { x: 1, y: 1, ax: 0.5, ay: 0.5 },
   ): void {
     let layer = this.layers.get(s.id);
     if (!layer) {
@@ -1680,30 +1715,65 @@ export class StageRenderer {
 
     // Scene selection (deterministic from playback + clock)
     const active = activeScene(s.playback, state.playlists, now);
+    // the scene's own size: bigger / smaller than the side for other proportions
+    let sw = lw;
+    let sh = lh;
+    if (prop.x !== 1 || prop.y !== 1) {
+      sw = Math.max(16, Math.round(lw / prop.x));
+      sh = Math.max(16, Math.round(lh / prop.y));
+      const fs = Math.min(1, maxDim / Math.max(sw, sh));
+      sw = Math.round(sw * fs);
+      sh = Math.round(sh * fs);
+    }
+    const worldKey = `${world.key}|${prop.x.toFixed(3)},${prop.y.toFixed(3)}`;
     if (active && now >= active.startedAt - 50) {
       const runtime = this.runtimes.get(active.scene.themeId);
       const mod = runtime?.scenes[active.scene.sceneId];
-      const self = world.surfaces.find((w) => w.id === s.id);
+      const self0 = world.surfaces.find((w) => w.id === s.id);
+      // in the shared world the side covers a bigger / smaller area, from its edge at the front wall
+      const self =
+        self0 && (prop.x !== 1 || prop.y !== 1)
+          ? {
+              ...self0,
+              rect: {
+                x: self0.rect.x + self0.rect.w * prop.ax * (1 - 1 / prop.x),
+                y: self0.rect.y + self0.rect.h * prop.ay * (1 - 1 / prop.y),
+                w: self0.rect.w / prop.x,
+                h: self0.rect.h / prop.y,
+              },
+            }
+          : self0;
       if (
         mod &&
-        (!layer.current || layer.current.key !== active.key || layer.current.worldKey !== world.key)
+        (!layer.current || layer.current.key !== active.key || layer.current.worldKey !== worldKey)
       ) {
-        const rt = makeRT(lw, lh);
+        const rt = makeRT(sw, sh);
         const inst = mod.create({
           world: self
             ? {
                 self,
-                surfaces: world.surfaces,
+                surfaces: world.surfaces.map((w) => (w.id === s.id ? self : w)),
                 bounds: world.bounds,
                 wrap: world.wrap,
-                room: world.fold,
+                room:
+                  self && self0 && self !== self0
+                    ? {
+                        ...world.fold,
+                        // the side in the folded room: the same plane, the bigger / smaller area
+                        faces: world.fold.faces.map((f) =>
+                          f.id === s.id
+                            ? { ...f, rect: self.rect, o: facePoint(f, self.rect.x, self.rect.y) }
+                            : f,
+                        ),
+                      }
+                    : world.fold,
                 seed: hashInts(Math.floor(active.startedAt / 1000) % 2147483647, 0x3077),
               }
             : undefined,
           renderer: r,
-          width: lw,
-          height: lh,
-          ppm: layer.ppm,
+          width: sw,
+          height: sh,
+          ppm: sw / Math.max(1, (self0?.rect.w ?? b.w) / prop.x) || layer.ppm,
           seed: active.seed,
           params: active.scene.params,
           kind: s.kind,
@@ -1728,7 +1798,7 @@ export class StageRenderer {
           active,
           paramsJson: JSON.stringify(active.scene.params),
           stopAmbient,
-          worldKey: world.key,
+          worldKey,
         };
       } else if (layer.current && layer.current.key === active.key) {
         const pj = JSON.stringify(active.scene.params);

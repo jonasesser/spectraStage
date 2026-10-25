@@ -17,7 +17,7 @@ import { CalibrationEditor } from './CalibrationEditor.tsx';
 import { MeasureWizard } from './MeasureWizard.tsx';
 import { WallPicker } from './WallPicker.tsx';
 import { MountPicker } from './MountPicker.tsx';
-import { ZoomSliders } from './ZoomSliders.tsx';
+import { ProportionSliders } from './ProportionSliders.tsx';
 import { StagePreview } from './Preview.tsx';
 
 export function OutputsView() {
@@ -377,7 +377,7 @@ function OutputCard({
       {profile.pose && (
         <div style={{ marginTop: '0.75rem' }}>
           <WallPicker output={output} state={state} L={L} />
-          {details && <ZoomSliders output={output} state={state} L={L} />}
+          {details && <ProportionSliders output={output} L={L} />}
         </div>
       )}
       {output.resolutionMismatch && (

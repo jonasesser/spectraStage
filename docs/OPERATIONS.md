@@ -102,7 +102,10 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
   room or its surfaces: the proportions are set by the user with “wall width” (front/back) and
   “room depth” (sides, floor, ceiling) – the pictures always fill the sides completely. Choosing
   another side keeps the corners already measured (front + left = 6 corners, not 8). Measuring
-  replaces an earlier flat 2D corner correction. “Measure again from scratch” resets points,
+  replaces an earlier flat 2D corner correction. **Proportions** (per projector, per side, horizontal
+  and vertical, 6 %–1600 %): narrower = the scene is laid out for a bigger area and put onto the
+  side, so things get narrower and more of them fit; wider = the opposite. The side always stays lit
+  completely, the room sizes (Stage → room size, in meters) do not change. “Measure again from scratch” resets points,
   position and 2D corrections; Stage → room panel can restore the planned width of the front wall.
 - **📦 Objects**: add a box or a pillar; while it is selected every projector shows its yellow
   outline – drag it on the floor in the 3D view, nudge and size it until the outline sits on the real

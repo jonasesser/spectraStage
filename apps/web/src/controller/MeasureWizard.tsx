@@ -18,7 +18,7 @@ import {
 import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
 import { WallPicker } from './WallPicker.tsx';
-import { ZoomSliders } from './ZoomSliders.tsx';
+import { ProportionSliders } from './ProportionSliders.tsx';
 
 interface Target {
   id: string;
@@ -493,7 +493,7 @@ export function MeasureWizard({
           </div>
         );
       })}
-      <ZoomSliders output={output} state={state} L={L} />
+      <ProportionSliders output={output} L={L} />
       <div className="row">
         <button className="btn small" onClick={restart}>
           ↺ {L('Measure again from scratch', 'Komplett neu einmessen')}

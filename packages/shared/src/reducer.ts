@@ -906,6 +906,11 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       prof.flipY = cmd.mount === 'ceilingRear';
       return res(`${o.name} mounted ${cmd.mount}`);
     }
+    case 'output.setProportions': {
+      const o = requireOutput(state, cmd.outputId);
+      activeProfile(o).proportions = cmd.proportions;
+      return res(`${o.name}: proportions`);
+    }
     case 'output.setZoom': {
       const o = requireOutput(state, cmd.outputId);
       activeProfile(o).zoom = cmd.zoom;
