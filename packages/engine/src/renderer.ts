@@ -30,6 +30,7 @@ import {
   roomRay,
   boxFrame,
   faceWall,
+  pinnedFaces,
   stageBounds,
   mainAzimuth,
   type RoomFold,
@@ -417,6 +418,18 @@ export class StageRenderer {
   private poseRoom = new THREE.Group();
   private poseObjects = new THREE.Group();
   private poseObjectsKey = '';
+  /** Room sides pinned to the measured corners, drawn straight in picture space. */
+  private pinScene = new THREE.Scene();
+  private pinGroup = new THREE.Group();
+  private pinMaterial = new THREE.ShaderMaterial({
+    uniforms: { map: { value: null } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader:
+      'uniform sampler2D map; varying vec2 vUv; void main(){ gl_FragColor = vec4(texture2D(map, vUv).rgb, 1.0); }',
+    side: THREE.DoubleSide,
+    depthTest: false,
+    depthWrite: false,
+  });
   private poseMaterial = new THREE.ShaderMaterial({
     uniforms: { map: { value: null } },
     vertexShader: VERT,
@@ -1452,7 +1465,14 @@ export class StageRenderer {
           return !w || lit.includes(w);
         })
       : fold.faces;
-    const key = JSON.stringify([vp, zoom, lit, faces.map((f) => [f.id, f.o, f.ax, f.ay, f.rect])]);
+    const pins = pinnedFaces(fold, pose, ow / oh, profile.anchors ?? []);
+    const key = JSON.stringify([
+      vp,
+      zoom,
+      lit,
+      faces.map((f) => [f.id, f.o, f.ax, f.ay, f.rect]),
+      pins.size ? [pose, profile.anchors] : null,
+    ]);
     if (key !== this.poseKey) {
       // squeeze/stretch per side along the room depth, from the transition to the front wall
       const box = boxFrame(fold);
@@ -1466,10 +1486,12 @@ export class StageRenderer {
         return null;
       };
       this.poseKey = key;
-      for (const c of [...this.poseRoom.children]) {
-        this.poseRoom.remove(c);
-        (c as THREE.Mesh).geometry?.dispose();
-      }
+      for (const grp of [this.poseRoom, this.pinGroup])
+        for (const c of [...grp.children]) {
+          grp.remove(c);
+          (c as THREE.Mesh).geometry?.dispose();
+        }
+      if (!this.pinGroup.parent) this.pinScene.add(this.pinGroup);
       for (const f of faces) {
         const pts: [number, number][] = [
           [f.rect.x, f.rect.y],
@@ -1497,6 +1519,43 @@ export class StageRenderer {
           }
           uv.push((cx - vp.x) / vp.w, 1 - (cy - vp.y) / vp.h);
         }
+        const pin = pins.get(f.id);
+        if (pin) {
+          // through the measured corners: a fine grid in picture space (homography per side)
+          const N = 24;
+          const pp: number[] = [];
+          const tt: number[] = [];
+          const ix: number[] = [];
+          const U = (k: number) => uv[k]!;
+          for (let j = 0; j <= N; j++)
+            for (let i = 0; i <= N; i++) {
+              const sa = pin.s0 + ((pin.s1 - pin.s0) * i) / N;
+              const ta = pin.t0 + ((pin.t1 - pin.t0) * j) / N;
+              const q = pin.at(sa, ta);
+              pp.push(q[0], q[1], 0);
+              // corners 0 (0,0) 1 (1,0) 2 (1,1) 3 (0,1)
+              const w0 = (1 - sa) * (1 - ta);
+              const w1 = sa * (1 - ta);
+              const w2 = sa * ta;
+              const w3 = (1 - sa) * ta;
+              tt.push(
+                w0 * U(0) + w1 * U(2) + w2 * U(4) + w3 * U(6),
+                w0 * U(1) + w1 * U(3) + w2 * U(5) + w3 * U(7),
+              );
+              if (i < N && j < N) {
+                const a = j * (N + 1) + i;
+                ix.push(a, a + N + 1, a + 1, a + 1, a + N + 1, a + N + 2);
+              }
+            }
+          const g = new THREE.BufferGeometry();
+          g.setAttribute('position', new THREE.Float32BufferAttribute(pp, 3));
+          g.setAttribute('uv', new THREE.Float32BufferAttribute(tt, 2));
+          g.setIndex(ix);
+          const m = new THREE.Mesh(g, this.pinMaterial);
+          m.frustumCulled = false;
+          this.pinGroup.add(m);
+          continue;
+        }
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
         g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
@@ -1508,12 +1567,19 @@ export class StageRenderer {
     }
     this.syncPoseObjects(state.objects ?? [], now);
     this.poseMaterial.uniforms.map!.value = this.viewRT.texture;
+    this.pinMaterial.uniforms.map!.value = this.viewRT.texture;
     const cam = this.poseCamera;
     this.setPoseCamera(pose, ow / oh);
     r.setRenderTarget(this.poseRT);
     r.setClearColor(0x000000, 1);
     r.clear();
-    r.render(this.poseScene, cam);
+    {
+      const prev = r.autoClear;
+      r.autoClear = false;
+      if (this.pinGroup.children.length) r.render(this.pinScene, CLIP_CAMERA);
+      r.render(this.poseScene, cam);
+      r.autoClear = prev;
+    }
     const align = output?.align && output.align.until > now ? output.align : null;
     const editObj =
       state.objectEdit && state.objectEdit.until > now

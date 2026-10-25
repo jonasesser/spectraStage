@@ -3,6 +3,7 @@ import {
   facePoint,
   faceWall,
   objectEdges,
+  pinnedFaces,
   polygonBBox,
   projectPose,
   ROOM_WALL_LABEL,
@@ -239,6 +240,17 @@ export function drawAlignOverlay(
     const q = projectPose(pose, aspect, P);
     return q ? [((q[0] + 1) / 2) * w, ((1 - q[1]) / 2) * h] : null;
   };
+  // sides pinned to the measured corners are drawn exactly like the picture maps them
+  const pins = pinnedFaces(fold, pose, aspect, anchors);
+  const facePx = (f: RoomFold['faces'][number], x: number, y: number): [number, number] | null => {
+    const pin = pins.get(f.id);
+    if (!pin) return toPx(facePoint(f, x, y));
+    const sa = (x - f.rect.x) / f.rect.w;
+    const ta = (y - f.rect.y) / f.rect.h;
+    if (sa < pin.s0 - 1e-6 || sa > pin.s1 + 1e-6 || ta < pin.t0 - 1e-6 || ta > pin.t1 + 1e-6) return null;
+    const q = pin.at(sa, ta);
+    return [((q[0] + 1) / 2) * w, ((1 - q[1]) / 2) * h];
+  };
   g.save();
   g.fillStyle = 'rgba(0,0,0,0.55)';
   g.fillRect(0, 0, w, h);
@@ -262,7 +274,7 @@ export function drawAlignOverlay(
       let pen = false;
       for (let i = 0; i <= 48; i++) {
         const t = i / 48;
-        const q = toPx(facePoint(f, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t));
+        const q = facePx(f, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
         if (!q || q[0] < -w || q[0] > 2 * w || q[1] < -h || q[1] > 2 * h) {
           pen = false;
           continue;
@@ -316,7 +328,7 @@ export function drawAlignOverlay(
       let n = 0;
       for (let i = 0; i <= 10; i++)
         for (let j = 0; j <= 10; j++) {
-          const q = toPx(facePoint(f, f.rect.x + (f.rect.w * i) / 10, f.rect.y + (f.rect.h * j) / 10));
+          const q = facePx(f, f.rect.x + (f.rect.w * i) / 10, f.rect.y + (f.rect.h * j) / 10);
           if (!q || q[0] < 0 || q[0] > w || q[1] < 0 || q[1] > h) continue;
           sx += q[0];
           sy += q[1];

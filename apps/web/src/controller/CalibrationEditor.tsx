@@ -5,6 +5,7 @@ import {
   facePoint,
   faceWall,
   isConvexQuad,
+  pinnedFaces,
   projectPose,
   ROOM_WALL_LABEL,
   roomFold,
@@ -405,6 +406,16 @@ export function CalibrationEditor({
     if (!roomView) return { paths: [], labels: [] };
     const fold = roomFold(state.surfaces);
     const walls = saved.walls ?? [];
+    const pins = pinnedFaces(fold, roomView, aspect, saved.anchors ?? []);
+    // picture position of a point on a side (pinned to the measured corners like on the projector)
+    const at = (f: (typeof fold.faces)[number], x: number, y: number): [number, number] | null => {
+      const pin = pins.get(f.id);
+      if (!pin) return projectPose(roomView, aspect, facePoint(f, x, y));
+      const sa = (x - f.rect.x) / f.rect.w;
+      const ta = (y - f.rect.y) / f.rect.h;
+      if (sa < pin.s0 - 1e-6 || sa > pin.s1 + 1e-6 || ta < pin.t0 - 1e-6 || ta > pin.t1 + 1e-6) return null;
+      return pin.at(sa, ta);
+    };
     const out: string[] = [];
     const labels: { t: string; x: number; y: number }[] = [];
     for (const f of fold.faces) {
@@ -416,11 +427,7 @@ export function CalibrationEditor({
         let n = 0;
         for (let i = 0; i <= 10; i++)
           for (let j = 0; j <= 10; j++) {
-            const q = projectPose(
-              roomView,
-              aspect,
-              facePoint(f, f.rect.x + (f.rect.w * i) / 10, f.rect.y + (f.rect.h * j) / 10),
-            );
+            const q = at(f, f.rect.x + (f.rect.w * i) / 10, f.rect.y + (f.rect.h * j) / 10);
             if (!q || Math.abs(q[0]) > 1 || Math.abs(q[1]) > 1) continue;
             sx += ((q[0] + 1) / 2) * W;
             sy += ((1 - q[1]) / 2) * H;
@@ -440,7 +447,7 @@ export function CalibrationEditor({
         let pen = false;
         for (let i = 0; i <= 48; i++) {
           const t = i / 48;
-          const q = projectPose(roomView, aspect, facePoint(f, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t));
+          const q = at(f, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
           if (!q || Math.abs(q[0]) > 3 || Math.abs(q[1]) > 3) {
             pen = false;
             continue;
@@ -453,7 +460,7 @@ export function CalibrationEditor({
     }
     return { paths: out, labels };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(roomView), JSON.stringify(saved.walls), state.surfaces, aspect, W, H]);
+  }, [JSON.stringify(roomView), JSON.stringify(saved.walls), JSON.stringify(saved.anchors), state.surfaces, aspect, W, H]);
   // while masks are drawn, the projector shows them (tinted) on top of the measuring picture
   useEffect(() => {
     if (!masksOnly || output.showMasks) return;
