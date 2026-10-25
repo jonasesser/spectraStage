@@ -179,6 +179,7 @@ a {
 }
 .grow {
   flex: 1;
+  min-width: 0;
 }
 
 label {
@@ -201,6 +202,8 @@ textarea {
   padding: 0 0.75rem;
   color: var(--ink);
   font-weight: 500;
+  max-width: 100%;
+  min-width: 0;
 }
 textarea {
   padding: 0.6rem 0.75rem;

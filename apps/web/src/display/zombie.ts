@@ -27,7 +27,7 @@ interface Person {
   faces: Pt[][];
 }
 
-class ZombieFx {
+export class ZombieFx {
   private work = document.createElement('canvas');
   private tmp = document.createElement('canvas');
   private seg: Segmenter | null = null;

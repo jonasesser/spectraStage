@@ -71,7 +71,10 @@ export function ZoomSliders({ output, state, L }: { output: Output; state: Sessi
           'Bild pro Seite stauchen / strecken (ab dem Übergang zur vorderen Wand):',
         )}
       </span>
-      <label className="small" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+      <label
+        className="small"
+        style={{ display: 'flex', flexDirection: 'row', gap: '0.5rem', alignItems: 'center' }}
+      >
         <input type="checkbox" checked={linked} onChange={(e) => setLinked(e.target.checked)} />
         {L(
           'All sides together (edges between them stay matched)',

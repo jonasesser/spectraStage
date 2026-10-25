@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { activeProfile, roomFold, wallsOfPose, type Presence, type SessionState } from '@spectrastage/shared';
 import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
+import { ZombiePreview } from './ZombiePreview.tsx';
 
 const ICE: RTCConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
@@ -39,6 +40,8 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
   };
   const [err, setErr] = useState<string | null>(null);
   const [links, setLinks] = useState<Record<string, string>>({});
+  // test without a projector: run the effect here and show it on a preview of the front wall
+  const [preview, setPreview] = useState<boolean | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const run = useRef<{ stream: MediaStream; peers: Map<string, RTCPeerConnection>; off: () => void } | null>(
     null,
@@ -154,6 +157,31 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
           background: '#000',
         }}
       />
+      {on && (preview ?? !ids.length) && (
+        <ZombiePreview
+          state={state}
+          now={() => store.conn.clock.now()}
+          video={videoRef.current}
+          style={style}
+          L={L}
+        />
+      )}
+      {on && (
+        <label
+          className="small"
+          style={{ display: 'flex', flexDirection: 'row', gap: '0.5rem', alignItems: 'center' }}
+        >
+          <input
+            type="checkbox"
+            checked={preview ?? !ids.length}
+            onChange={(e) => setPreview(e.target.checked)}
+          />
+          {L(
+            'Preview here on the phone (test without projector)',
+            'Vorschau hier auf dem Handy (Test ohne Beamer)',
+          )}
+        </label>
+      )}
       <div className="row" role="group" aria-label={L('Look', 'Aussehen')}>
         {(
           [
