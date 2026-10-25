@@ -125,7 +125,7 @@ export function aiPrompt(look: Look): string {
     'The face must stay clearly recognisable: same face, features, expression and hairstyle. ' +
     'Movie-quality special-effects make-up and prosthetics, photorealistic, ' +
     `dramatic spooky lighting with ${pick(MOOD)}. ` +
-    'A real ghost body: head and upper body of the creature, the arms and clothes become ghostly and tattered, ' +
+    'A real ghost body: head and upper body of the creature, the arms and clothes become pale, glowing, ghostly and tattered (no solid dark clothing), ' +
     'and from the chest down the body turns into a long, flowing, translucent ghost tail of torn cloth and mist ' +
     'that fades out towards the bottom – no legs, no feet, floating in the air. ' +
     'Show only this one figure, centred, the whole head (and any hat, horns or hood) in the picture with room above it, ' +
@@ -217,6 +217,26 @@ function getSegmenter(): Promise<Mp.ImageSegmenter> {
   return segmenter;
 }
 
+/**
+ * Black becomes transparent, light stays: alpha from the brightness, the colour "un-darkened" so
+ * the result drawn over anything looks like the picture added onto it (a glowing ghost).
+ */
+function lumaKey(d: Uint8ClampedArray): void {
+  for (let p = 0; p < d.length; p += 4) {
+    const m = Math.max(d[p]!, d[p + 1]!, d[p + 2]!) / 255;
+    const a = Math.min(1, Math.max(0, (m - 0.035) / 0.2));
+    if (a <= 0) {
+      d[p + 3] = 0;
+      continue;
+    }
+    const k = 1 / Math.max(a, 0.05);
+    d[p] = Math.min(255, d[p]! * k);
+    d[p + 1] = Math.min(255, d[p + 1]! * k);
+    d[p + 2] = Math.min(255, d[p + 2]! * k);
+    d[p + 3] = 255 * a;
+  }
+}
+
 /** Cuts the figure out of the AI picture (transparent background), at most 560 px high. */
 async function cutOut(dataUrl: string): Promise<string> {
   const bmp = await createImageBitmap(await (await fetch(dataUrl)).blob());
@@ -249,19 +269,21 @@ async function cutOut(dataUrl: string): Promise<string> {
           en++;
         }
       const dark = edge / Math.max(1, en) < 0.15;
-      if (m)
+      if (dark) {
+        // a figure on black (as asked; JPEG has no transparency): light = picture, darkness =
+        // see-through – exactly how a projector shows it anyway. Dark clothes become ghostly
+        // instead of a black silhouette that would cover the scene behind it.
+        lumaKey(d);
+      } else if (m)
         for (let i = 0, p = 0; i < W * H; i++, p += 4) {
           const a = m[i]!;
-          // the black background goes, the glowing parts (mist, eyes) stay
-          const lum = Math.max(d[p]!, d[p + 1]!, d[p + 2]!) / 255;
           const fig = a <= 0.3 ? 0 : (a - 0.3) / 0.3;
-          d[p + 3] = 255 * Math.min(1, dark ? Math.max(fig, Math.max(0, lum - 0.12) * 1.2) : fig);
+          d[p + 3] = 255 * Math.min(1, fig);
         }
       r.close();
     } catch {
       // no segmentation: the black background simply turns transparent
-      for (let p = 0; p < d.length; p += 4)
-        d[p + 3] = 255 * Math.min(1, (Math.max(d[p]!, d[p + 1]!, d[p + 2]!) / 255) * 3);
+      lumaKey(d);
     }
     g.putImageData(img, 0, 0);
   }
