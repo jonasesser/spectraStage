@@ -235,10 +235,14 @@ export function MeasureWizard({
   };
 
   const walls = profile.walls ?? (pose ? wallsOfPose(roomFold(state.surfaces), pose, aspect) : []);
-  // only what belongs to the sides this projector lights (if chosen)
-  const targets = (pose ? targetsFor(state, pose, aspect, L) : []).filter(
-    (t) => !walls.length || anchorWalls(t.id).some((w) => walls.includes(w)),
-  );
+  // only the corners of the sides this projector lights; a point on an edge only stands in for
+  // a corner that could not be reached (skipped) – one per edge running into that corner
+  const targets = (pose ? targetsFor(state, pose, aspect, L) : []).filter((t) => {
+    if (walls.length && !anchorWalls(t.id).some((w) => walls.includes(w))) return false;
+    if (t.kind === 'corner') return true;
+    if (!t.id.endsWith('|A')) return false;
+    return t.keys.some((k) => skipped.has(`c|${k}`));
+  });
   const current = targets.find((t) => !history.includes(t.id) && !skipped.has(t.id)) ?? null;
   const [active, setActive] = useState<string | null>(null);
   const target = targets.find((t) => t.id === active) ?? current;
@@ -324,26 +328,25 @@ export function MeasureWizard({
     setActive(prev);
   };
   const restart = () => {
-    if (!window.confirm(L('Remove all measured points?', 'Alle gemessenen Punkte entfernen?'))) return;
-    send([], 'full');
+    if (
+      !window.confirm(
+        L('Measure this projector again from scratch?', 'Diesen Beamer komplett neu einmessen?'),
+      )
+    )
+      return;
+    // back to the start: points, computed position and 2D corrections are dropped
+    setDraft(null);
+    void store.send({
+      t: 'output.setWalls',
+      outputId: output.id,
+      walls: walls.length ? (walls as never) : ['vorne'],
+    });
     setHistory([]);
     setSkipped(new Set());
     setActive(null);
   };
 
   const count = measureCount(anchors);
-  let err: number | null = null;
-  if (count >= 7) {
-    let s = 0;
-    let n = 0;
-    for (const a of anchors) {
-      const q = projectPose(pose, aspect, a.p);
-      if (!q || a.q) continue;
-      s += (((q[0] + 1) / 2 - a.u) * 1920) ** 2 + (((1 - q[1]) / 2 - a.v) * (1920 / aspect)) ** 2;
-      n++;
-    }
-    err = n ? Math.sqrt(s / n) : 0;
-  }
   const doneSteps = history.length + skipped.size;
   const total = doneSteps + targets.filter((t) => !history.includes(t.id) && !skipped.has(t.id)).length;
 
@@ -366,8 +369,8 @@ export function MeasureWizard({
                   'Schau an die Wand: Schiebe das orange Kreuz genau auf diese Ecke. Trifft dein Beamer sie nicht: „Nicht sichtbar – überspringen“.',
                 )
               : L(
-                  'Where the app expects this edge, the projector draws an orange line. Move the cross onto the real edge (not onto the orange line).',
-                  'Wo die App diese Kante vermutet, zeichnet der Beamer eine orange Linie. Schiebe das Kreuz auf die echte Kante (nicht auf die orange Linie).',
+                  'Instead of the corner you skipped: put the cross anywhere exactly on this real edge (the orange line shows where the app expects it). Not reachable either: skip.',
+                  'Statt der übersprungenen Ecke: Setz das Kreuz irgendwo genau auf diese echte Kante (die orange Linie zeigt, wo die App sie vermutet). Auch nicht erreichbar: überspringen.',
                 )}
           </p>
           <div
@@ -433,14 +436,10 @@ export function MeasureWizard({
         </p>
       )}
       <div className="small">
-        {count < 7
-          ? L(
-              `${anchors.length} points measured – a few more and the app computes the projector`,
-              `${anchors.length} Punkte gemessen – noch ein paar, dann berechnet die App den Beamer`,
-            )
-          : `${L('Projector computed', 'Beamer berechnet')} · ${anchors.length} ${L('points', 'Punkte')}${
-              err !== null ? ` · ${L('accuracy', 'Genauigkeit')} ±${Math.round(err)} px` : ''
-            } · ${L('more points = more precise, “Done” any time', 'mehr Punkte = genauer, „Fertig“ jederzeit')}`}
+        {L(
+          `${anchors.filter((a) => !a.q).length} corner(s) set – each side sits exactly on its set corners; corners not set follow from the others.`,
+          `${anchors.filter((a) => !a.q).length} Ecke(n) gesetzt – jede Seite sitzt genau auf ihren gesetzten Ecken; nicht gesetzte Ecken ergeben sich aus den anderen.`,
+        )}
       </div>
       {outliers.map((o) => {
         const t = targets.find((x) => x.id === o.c);
@@ -482,11 +481,9 @@ export function MeasureWizard({
       })}
       {count >= 7 && <ZoomSliders output={output} state={state} L={L} />}
       <div className="row">
-        {anchors.length > 0 && (
-          <button className="btn small" onClick={restart}>
-            {L('Start over', 'Neu beginnen')}
-          </button>
-        )}
+        <button className="btn small" onClick={restart}>
+          ↺ {L('Measure again from scratch', 'Komplett neu einmessen')}
+        </button>
         <button className="btn small primary" onClick={onDone}>
           ✓ {L('Done', 'Fertig')}
         </button>

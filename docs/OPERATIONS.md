@@ -91,12 +91,17 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
 - **The room has 6 fixed sides** (front, right, back, left, floor, ceiling) – nothing to add or measure.
   Choose per projector which sides it lights (Projectors tab); it is set up to cover them
   (opposite sides are refused – that needs a second projector).
-- **Calibrate** (projectors in the 3D room) opens the guided measuring: step by step the projector
-  highlights a room corner or a room edge (orange) and shows a cross; move it from the phone onto
-  the real corner/edge, “fits – next” or “not visible – skip”. A corner gives 2 equations, a point
-  on an edge 1; from 7 the projector is computed. All projectors are solved together and – when the
-  room is built around one main wall – also the room's width and depth (height fixed), so nobody
-  enters dimensions. Dragging refines quickly, “next” runs the full solve.
+- **Calibrate** (projectors in the 3D room) opens the guided measuring: step by step only the
+  corners of the sides chosen for this projector (front only = 4 corners); the projector shows
+  those sides with their names (VORNE, LINKS …) and a cross – move it from the phone onto the real
+  corner, “fits – next”. A measured corner is the truth: each chosen side is pinned exactly onto its
+  measured corners (projective mapping, like the 2D corner calibration); sides not chosen stay
+  dark. The computed projector position only fills in corners that could not be measured and keeps
+  proportions on walls lit at an angle. A corner that cannot be reached can be skipped; then a point
+  on one of the edges running into it stands in for it. The room's width/depth only change when
+  points away from the front wall were measured (one flat wall cannot tell its width). Measuring
+  replaces an earlier flat 2D corner correction. “Measure again from scratch” resets points,
+  position and 2D corrections; Stage → room panel can restore the planned width of the front wall.
 - **📦 Objects**: add a box or a pillar; while it is selected every projector shows its yellow
   outline – drag it on the floor in the 3D view, nudge and size it until the outline sits on the real
   object. Looks: glow, fire flicker, spooky colours, glowing edges, dark. Objects hide the walls

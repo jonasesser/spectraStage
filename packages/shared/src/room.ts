@@ -761,6 +761,17 @@ export function solveRoom(input: RoomSolveInput): {
   const h = box.h;
   const usesBox = solved.some((pr) => pr.anchors.some((a) => boxPoints(box, a.c, box.w, box.d, h)));
   if (!usesBox) return { poses: out, size: null };
+  // the room size only follows from points away from the front wall (a back corner, an edge running
+  // into the room …) – the corners of one flat wall cannot tell its width from the projector's zoom
+  const offFront = solved.some((pr) =>
+    pr.anchors.some((a) => {
+      const bp = boxPoints(box, a.c, box.w, box.d, h);
+      if (!bp) return false;
+      const depth = (P: V3) => dot(sub(P, box.o), box.n);
+      return depth(bp.p) > 0.05 * box.d || (bp.q ? depth(bp.q) > 0.05 * box.d : false);
+    }),
+  );
+  if (!offFront) return { poses: out, size: null };
   // 2) together with the room size
   const resid = (x: number[]): number[] => {
     const w = Math.exp(x[0]!);
@@ -1186,4 +1197,78 @@ export function findOutliers(
   const sorted = [...errs].map((e) => e.errPx).sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)]!;
   return errs.filter((e) => e.errPx > Math.max(12, median * 4)).sort((a, b) => b.errPx - a.errPx);
+}
+
+/** Which side of a box room a face is (null for other layouts). */
+export function faceWall(fold: RoomFold, f: RoomFace): RoomWall | null {
+  const b = boxFrame(fold);
+  if (!b) return null;
+  if (f.n[1] > 0.9) return 'boden';
+  if (f.n[1] < -0.9) return 'decke';
+  const z = dot(f.n, b.n);
+  if (z > 0.9) return 'vorne';
+  if (z < -0.9) return 'hinten';
+  const x = dot(f.n, b.ax);
+  if (x > 0.9) return 'links';
+  if (x < -0.9) return 'rechts';
+  return null;
+}
+
+/** A side of the room in the projector picture: its four corners (u, v 0..1; TL, TR, BR, BL of the face rect). */
+export interface WallQuad {
+  wall: RoomWall;
+  face: RoomFace;
+  /** Box corner keys of the four corners (vorne-links-oben …). */
+  keys: string[];
+  uv: [number, number][];
+  /** Which corners were measured (the others come from the computed projector position). */
+  measured: boolean[];
+}
+
+/**
+ * The chosen sides of the room in the projector picture. A measured corner is the truth: the side
+ * is pinned exactly onto its measured corners (like a 2D corner calibration); the computed
+ * projector position only fills in corners that could not be measured. Sides with a corner
+ * behind the projector are left out (they are drawn by the 3D view as before).
+ */
+export function wallQuads(
+  fold: RoomFold,
+  pose: Pose,
+  aspect: number,
+  anchors: readonly { c: string; u: number; v: number; q?: V3 | undefined }[],
+  walls: readonly RoomWall[],
+): WallQuad[] {
+  const b = boxFrame(fold);
+  if (!b) return [];
+  const out: WallQuad[] = [];
+  for (const f of fold.faces) {
+    const wall = faceWall(fold, f);
+    if (!wall || (walls.length && !walls.includes(wall))) continue;
+    const r = f.rect;
+    const pts = [
+      facePoint(f, r.x, r.y),
+      facePoint(f, r.x + r.w, r.y),
+      facePoint(f, r.x + r.w, r.y + r.h),
+      facePoint(f, r.x, r.y + r.h),
+    ];
+    const keys = pts.map((P) => boxKey(b, P));
+    if (keys.some((k) => !k)) continue;
+    const uv: [number, number][] = [];
+    const measured: boolean[] = [];
+    let ok = true;
+    pts.forEach((P, i) => {
+      const a = anchors.find((x) => x.c === `c|${keys[i]}` && !x.q);
+      if (a) {
+        uv.push([a.u, a.v]);
+        measured.push(true);
+        return;
+      }
+      const q = projectPose(pose, aspect, P);
+      if (!q) ok = false;
+      else uv.push([(q[0] + 1) / 2, (1 - q[1]) / 2]);
+      measured.push(false);
+    });
+    if (ok) out.push({ wall, face: f, keys: keys as string[], uv, measured });
+  }
+  return out;
 }

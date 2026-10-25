@@ -792,7 +792,14 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
     }
     case 'output.setAnchors': {
       const o = requireOutput(state, cmd.outputId);
-      activeProfile(o).anchors = cmd.anchors;
+      const pr = activeProfile(o);
+      pr.anchors = cmd.anchors;
+      // measuring in the room replaces an earlier flat 2D corner correction (it would distort twice)
+      if (cmd.anchors.length) {
+        pr.corners = structuredClone(UNIT_QUAD) as Profile['corners'];
+        pr.fold = null;
+        pr.mesh = null;
+      }
       solveMeasuredRoom(state, cmd.quick ? o.id : null);
       return res(`${o.name}: ${cmd.anchors.length} points measured`);
     }
@@ -807,8 +814,11 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       const pose = poseForWalls(roomFold(state.surfaces), walls, ref ? ref.w / ref.h : 16 / 9);
       if (!pose) return res(`${o.name}: these sides cannot be covered by one projector`);
       prof.pose = pose;
-      // the projector is set up anew: earlier measurements no longer belong to it
+      // the projector is set up anew: earlier measurements (and 2D corrections) no longer belong to it
       prof.anchors = [];
+      prof.corners = structuredClone(UNIT_QUAD) as Profile['corners'];
+      prof.fold = null;
+      prof.mesh = null;
       if (/^Beamer( |$)/.test(o.name) || /^Projector/.test(o.name)) o.name = wallsName(walls);
       return res(`${o.name}: covers ${walls.join(', ')}`);
     }

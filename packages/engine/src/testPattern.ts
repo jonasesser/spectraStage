@@ -1,5 +1,10 @@
 import {
+  cornerWalls,
   facePoint,
+  faceWall,
+  ROOM_WALL_LABEL,
+  wallQuads,
+  type RoomWall,
   objectEdges,
   polygonBBox,
   projectPose,
@@ -222,8 +227,10 @@ export function drawAlignOverlay(
   anchors: readonly Anchor[],
   sel: string | null,
   now: number,
+  walls: readonly RoomWall[] = [],
 ): void {
   const aspect = w / h;
+  const quads = walls.length ? wallQuads(fold, pose, aspect, anchors, walls) : [];
   const toPx = (P: V3): [number, number] | null => {
     const q = projectPose(pose, aspect, P);
     return q ? [((q[0] + 1) / 2) * w, ((1 - q[1]) / 2) * h] : null;
@@ -237,7 +244,14 @@ export function drawAlignOverlay(
   g.lineWidth = lw;
   g.shadowColor = '#3ff2ff';
   g.shadowBlur = lw * 3;
-  for (const f of fold.faces) {
+  // chosen sides: exactly where they are pinned (measured corners), straight lines between them
+  for (const q of quads) {
+    g.beginPath();
+    q.uv.forEach(([u, v], i) => (i ? g.lineTo(u * w, v * h) : g.moveTo(u * w, v * h)));
+    g.closePath();
+    g.stroke();
+  }
+  for (const f of quads.length || walls.length ? [] : fold.faces) {
     const r = f.rect;
     const edges: [number, number, number, number][] = [
       [r.x, r.y, r.x + r.w, r.y],
@@ -289,14 +303,42 @@ export function drawAlignOverlay(
     g.stroke();
   }
   g.shadowBlur = 0;
+  // the names of the sides (Vorne, Links …) in their middle
+  {
+    const fsl = Math.max(18, h / 16);
+    g.font = `800 ${fsl}px system-ui, sans-serif`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    const labels: { name: string; x: number; y: number }[] = quads.map((q) => ({
+      name: ROOM_WALL_LABEL[q.wall],
+      x: (q.uv.reduce((s, p) => s + p[0], 0) / 4) * w,
+      y: (q.uv.reduce((s, p) => s + p[1], 0) / 4) * h,
+    }));
+    if (!quads.length)
+      for (const f of fold.faces) {
+        const wl = faceWall(fold, f);
+        const c = toPx(facePoint(f, f.rect.x + f.rect.w / 2, f.rect.y + f.rect.h / 2));
+        if (wl && c) labels.push({ name: ROOM_WALL_LABEL[wl], x: c[0], y: c[1] });
+      }
+    for (const l of labels) {
+      if (l.x < 0 || l.x > w || l.y < 0 || l.y > h) continue;
+      g.fillStyle = 'rgba(63,242,255,0.55)';
+      g.fillText(l.name.toUpperCase(), l.x, l.y);
+    }
+  }
   // numbered room corners (where the app thinks they are)
   const fs = Math.max(14, h / 28);
   g.font = `700 ${fs}px system-ui, sans-serif`;
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   const corners = roomCorners(fold);
+  const onWall = (id: string) => !walls.length || cornerWalls(id).some((x) => walls.includes(x));
   for (const c of corners) {
-    const q = toPx(c.p);
+    if (!onWall(c.id)) continue;
+    const pinned = quads
+      .map((qd) => qd.keys.indexOf(c.id) >= 0 && qd.uv[qd.keys.indexOf(c.id)]!)
+      .find((x) => !!x);
+    const q: [number, number] | null = pinned ? [pinned[0] * w, pinned[1] * h] : toPx(c.p);
     if (!q || q[0] < 0 || q[0] > w || q[1] < 0 || q[1] > h) continue;
     const isSel = c.id === sel;
     g.fillStyle = isSel ? '#ffb347' : '#3ff2ff';

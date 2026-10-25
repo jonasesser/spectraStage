@@ -29,6 +29,8 @@ import {
   facePoint,
   roomRay,
   boxFrame,
+  faceWall,
+  wallQuads,
   stageBounds,
   mainAzimuth,
   type RoomFold,
@@ -1065,7 +1067,7 @@ export class StageRenderer {
     let vh = oh;
     let seen: Set<string> | null = null;
     if (pose) {
-      const atlas = this.poseAtlas(state, pose, ow, oh);
+      const atlas = this.poseAtlas(state, pose, ow, oh, profile?.walls ?? []);
       vp = atlas.vp;
       vw = atlas.w;
       vh = atlas.h;
@@ -1291,10 +1293,11 @@ export class StageRenderer {
     pose: NonNullable<Profile['pose']>,
     ow: number,
     oh: number,
+    walls: readonly string[] = [],
   ): { vp: Viewport; w: number; h: number; seen: Set<string> } {
     const world = this.worldFor(state);
     const fold = world.fold;
-    const key = `${world.key}|${JSON.stringify(pose)}|${ow}x${oh}`;
+    const key = `${world.key}|${JSON.stringify(pose)}|${ow}x${oh}|${walls.join(',')}`;
     if (this.atlasCache?.key !== key) {
       this.setPoseCamera(pose, ow / oh);
       const cam = this.poseCamera;
@@ -1340,6 +1343,17 @@ export class StageRenderer {
               Math.max(Math.hypot(bx[0] - a[0], bx[1] - a[1]), Math.hypot(by[0] - a[0], by[1] - a[1])) / d,
             );
         }
+      }
+      // the chosen sides always belong to the picture (they are pinned onto measured corners,
+      // even where the computed projector position would miss them)
+      for (const f of fold.faces) {
+        const wl = faceWall(fold, f);
+        if (!wl || !walls.includes(wl) || seen.has(f.id)) continue;
+        seen.add(f.id);
+        x0 = Math.min(x0, f.rect.x);
+        y0 = Math.min(y0, f.rect.y);
+        x1 = Math.max(x1, f.rect.x + f.rect.w);
+        y1 = Math.max(y1, f.rect.y + f.rect.h);
       }
       dens.sort((a, b) => a - b);
       const ppm = dens.length ? dens[Math.floor(dens.length * 0.9)]! : ow / 4;
@@ -1403,6 +1417,52 @@ export class StageRenderer {
       u.uTime!.value = (now / 1000) % 10000;
       u.uMode!.value = Math.max(0, looks.indexOf(o.look));
     }
+  }
+
+  /**
+   * One side as a flat quad in the projector picture, mapped projectively (exactly like a 2D
+   * corner calibration): picture corners TL, TR, BR, BL (0..1, y down) and the atlas uv there.
+   */
+  private flatScene = new THREE.Scene();
+  private flatMaterial = new THREE.ShaderMaterial({
+    uniforms: { map: { value: null } },
+    vertexShader:
+      'attribute vec3 uvq; varying vec3 vUvq; void main(){ vUvq = uvq; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader:
+      'uniform sampler2D map; varying vec3 vUvq; void main(){ gl_FragColor = vec4(texture2D(map, vUvq.xy / vUvq.z).rgb, 1.0); }',
+    side: THREE.DoubleSide,
+    depthTest: false,
+    depthWrite: false,
+  });
+  private flatQuad(i: number, uv: [number, number][], tex: readonly number[]): void {
+    let m = this.flatScene.children[i] as THREE.Mesh | undefined;
+    if (!m) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(12), 3));
+      g.setAttribute('uvq', new THREE.Float32BufferAttribute(new Float32Array(12), 3));
+      g.setIndex([0, 1, 2, 0, 2, 3]);
+      m = new THREE.Mesh(g, this.flatMaterial);
+      m.frustumCulled = false;
+      this.flatScene.add(m);
+    }
+    m.visible = true;
+    const pos = m.geometry.attributes.position as THREE.BufferAttribute;
+    const uvq = m.geometry.attributes.uvq as THREE.BufferAttribute;
+    const P = uv.map(([u, v]) => [u * 2 - 1, 1 - v * 2] as [number, number]);
+    // projective interpolation: weights from where the diagonals cross
+    const [a, b, c, d] = P as [[number, number], [number, number], [number, number], [number, number]];
+    const den = (c[0] - a[0]) * (d[1] - b[1]) - (c[1] - a[1]) * (d[0] - b[0]);
+    const t =
+      Math.abs(den) < 1e-9 ? 0.5 : ((b[0] - a[0]) * (d[1] - b[1]) - (b[1] - a[1]) * (d[0] - b[0])) / den;
+    const X: [number, number] = [a[0] + (c[0] - a[0]) * t, a[1] + (c[1] - a[1]) * t];
+    const dist = P.map((p) => Math.hypot(p[0] - X[0], p[1] - X[1]));
+    for (let k = 0; k < 4; k++) {
+      const q = dist[(k + 2) % 4]! > 1e-9 ? (dist[k]! + dist[(k + 2) % 4]!) / dist[(k + 2) % 4]! : 1;
+      pos.setXYZ(k, P[k]![0], P[k]![1], 0);
+      uvq.setXYZ(k, tex[k * 2]! * q, tex[k * 2 + 1]! * q, q);
+    }
+    pos.needsUpdate = true;
+    uvq.needsUpdate = true;
   }
 
   private setPoseCamera(pose: NonNullable<Profile['pose']>, aspect: number): void {
@@ -1493,17 +1553,43 @@ export class StageRenderer {
         g.setIndex([0, 3, 1, 1, 3, 2]);
         const m = new THREE.Mesh(g, this.poseMaterial);
         m.frustumCulled = false;
+        m.userData.face = f.id;
+        m.userData.uv = uv;
         this.poseRoom.add(m);
       }
     }
     this.syncPoseObjects(state.objects ?? [], now);
     this.poseMaterial.uniforms.map!.value = this.viewRT.texture;
+    this.flatMaterial.uniforms.map!.value = this.viewRT.texture;
     const cam = this.poseCamera;
     this.setPoseCamera(pose, ow / oh);
+    // The chosen sides are pinned exactly onto their measured corners (a measured corner is the
+    // truth; the computed projector position only fills in corners that were not measured and
+    // keeps the proportions on walls lit at an angle). Sides not chosen stay dark.
+    const walls = profile.walls ?? [];
+    const quads = wallQuads(fold, pose, ow / oh, profile.anchors ?? [], walls);
+    const flat = new Set(quads.map((q) => q.face.id));
+    for (const c of this.poseRoom.children) {
+      const id = c.userData.face as string;
+      const face = fold.faces.find((f) => f.id === id);
+      const wall = face ? faceWall(fold, face) : null;
+      c.visible = !flat.has(id) && !(walls.length && wall && !walls.includes(wall));
+    }
+    quads.forEach((q, i) => {
+      const mesh = this.poseRoom.children.find((c) => c.userData.face === q.face.id);
+      this.flatQuad(i, q.uv, (mesh?.userData.uv as number[] | undefined) ?? [0, 1, 1, 1, 1, 0, 0, 0]);
+    });
+    for (let i = quads.length; i < this.flatScene.children.length; i++)
+      this.flatScene.children[i]!.visible = false;
     r.setRenderTarget(this.poseRT);
     r.setClearColor(0x000000, 1);
     r.clear();
+    if (quads.length) r.render(this.flatScene, CLIP_CAMERA);
+    const prevClear = r.autoClear;
+    r.autoClear = false;
+    r.clearDepth();
     r.render(this.poseScene, cam);
+    r.autoClear = prevClear;
     const align = output?.align && output.align.until > now ? output.align : null;
     const editObj =
       state.objectEdit && state.objectEdit.until > now
@@ -1524,6 +1610,7 @@ export class StageRenderer {
           profile.anchors ?? [],
           align.sel,
           Date.now(),
+          profile.walls ?? [],
         );
       else if (markers) drawCornerMarkers(this.viewOverlay.g, ow, oh, this.previewFocus, now);
       if (editObj) drawObjectOutline(this.viewOverlay.g, ow, oh, pose, editObj, Date.now());

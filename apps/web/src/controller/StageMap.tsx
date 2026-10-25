@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { catalog } from '@spectrastage/catalog/manifests';
 import {
   activeProfile,
+  faceWall,
+  roomFold,
   activeScene,
   ambientActorCues,
   buildActorRoute,
@@ -35,6 +37,7 @@ export function StageMap({ state, presence, selected, allSelected, onToggle, now
     const pad = Math.max(raw.w, raw.h) * 0.06;
     return { x: raw.x - pad, y: raw.y - pad, w: raw.w + pad * 2, h: raw.h + pad * 2 };
   }, [state.surfaces, state.outputs]);
+  const fold = useMemo(() => roomFold(state.surfaces), [state.surfaces]);
   const [tick, setTick] = useState(0);
   const routes = useRef(new Map<string, Route | null>());
 
@@ -182,7 +185,22 @@ export function StageMap({ state, presence, selected, allSelected, onToggle, now
           );
         })}
         {state.outputs.map((o) => {
-          const vp = activeProfile(o).viewport;
+          const prof = activeProfile(o);
+          // a projector in the room: its frame is the sides it lights (they may have changed size)
+          let vp = prof.viewport;
+          if (prof.pose && prof.walls?.length) {
+            const faces = fold.faces.filter((f) => {
+              const w = faceWall(fold, f);
+              return w && prof.walls!.includes(w);
+            });
+            if (faces.length) {
+              const x0 = Math.min(...faces.map((f) => f.rect.x));
+              const y0 = Math.min(...faces.map((f) => f.rect.y));
+              const x1 = Math.max(...faces.map((f) => f.rect.x + f.rect.w));
+              const y1 = Math.max(...faces.map((f) => f.rect.y + f.rect.h));
+              vp = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+            }
+          }
           const h = outputHealth(o, state, presence, L);
           return (
             <g key={o.id} pointerEvents="none">

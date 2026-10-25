@@ -934,7 +934,12 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
               <button
                 className="btn small"
                 onClick={() =>
-                  setDraft((p) => ({ ...p, corners: structuredClone(UNIT_QUAD) as Profile['corners'] }))
+                  setDraft((p) => ({
+                    ...p,
+                    corners: structuredClone(UNIT_QUAD) as Profile['corners'],
+                    fold: null,
+                    mesh: null,
+                  }))
                 }
               >
                 {L('Reset corners', 'Ecken zurücksetzen')}

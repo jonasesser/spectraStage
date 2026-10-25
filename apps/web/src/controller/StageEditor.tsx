@@ -501,6 +501,29 @@ function RoomPanel({ state, L }: { state: SessionState; L: Tr }) {
   const lay = worldLayout(state.surfaces);
   const mainId = lay.find((x) => x.role === 'main')?.id;
   const extra = state.surfaces.filter((x) => x.id !== mainId);
+  // an earlier measurement may have changed the width of the front wall: back to the width it was
+  // planned with (the frame of the front projector)
+  const main = state.surfaces.find((x) => x.id === mainId);
+  const mainBox = main ? polygonBBox(main.polygon) : null;
+  const plannedW = state.outputs
+    .map((o) => activeProfile(o))
+    .find((pr) => pr.walls?.length === 1 && pr.walls[0] === 'vorne')?.viewport.w;
+  const widthOff = !!(mainBox && plannedW && Math.abs(mainBox.w - plannedW) / plannedW > 0.05);
+  const restoreWidth = async () => {
+    if (!main || !mainBox || !plannedW) return;
+    const k = plannedW / mainBox.w;
+    const x0 = mainBox.x;
+    const scale = (pts: { x: number; y: number }[]) => pts.map((p) => ({ x: x0 + (p.x - x0) * k, y: p.y }));
+    await store.send({ t: 'surface.update', surfaceId: main.id, polygon: scale(main.polygon) });
+    // floors / ceilings along the front wall follow
+    for (const sf of state.surfaces) {
+      const role = lay.find((x) => x.id === sf.id)?.role;
+      if (role !== 'ground' && role !== 'ceiling') continue;
+      const bb = polygonBBox(sf.polygon);
+      if (bb.x + bb.w <= mainBox.x || bb.x >= mainBox.x + mainBox.w) continue;
+      await store.send({ t: 'surface.update', surfaceId: sf.id, polygon: scale(sf.polygon) });
+    }
+  };
   const reset = async () => {
     if (
       !window.confirm(
@@ -531,11 +554,17 @@ function RoomPanel({ state, L }: { state: SessionState; L: Tr }) {
         </li>
         <li>
           {L(
-            '“Calibrate”: move the crosses onto the real corners and edges, step by step – the app finds the size of the room and where the projector stands by itself.',
-            '„Kalibrieren“: Schritt für Schritt die Kreuze auf die echten Ecken und Kanten schieben – Raumgröße und Standort findet die App selbst.',
+            '“Calibrate”: move the crosses onto the real corners of the chosen sides, step by step – each side sits exactly on its corners.',
+            '„Kalibrieren“: Schritt für Schritt die Kreuze auf die echten Ecken der gewählten Seiten schieben – jede Seite sitzt genau auf ihren Ecken.',
           )}
         </li>
       </ol>
+      {widthOff && (
+        <button className="btn small" onClick={() => void restoreWidth()}>
+          ↔ {L('Restore the width of the front wall', 'Breite der Vorderwand wiederherstellen')} (
+          {mainBox!.w.toFixed(1)} → {plannedW!.toFixed(1)} m)
+        </button>
+      )}
       {extra.length > 0 && (
         <button className="btn small" onClick={() => void reset()}>
           🧹 {L('Reset to the 6 fixed sides', 'Auf die 6 festen Seiten zurücksetzen')} ({extra.length}{' '}
