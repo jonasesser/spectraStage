@@ -590,7 +590,13 @@ export const CommandSchema = z.discriminatedUnion('t', [
     t: z.literal('output.setWalls'),
     outputId: id,
     walls: z.array(z.enum(['vorne', 'rechts', 'hinten', 'links', 'boden', 'decke'])).max(6),
+    /** Start measuring from scratch (else corners of sides that stay chosen are kept). */
+    reset: z.boolean().optional(),
   }),
+  /** Depth of the room (side walls, floor, ceiling): squeezes / stretches their pictures, which still fill them. */
+  z.object({ t: z.literal('room.setDepth'), depth: z.number().min(0.3).max(60) }),
+  /** Width of the front wall (its proportions); floors / ceilings along it follow. */
+  z.object({ t: z.literal('room.setWidth'), width: z.number().min(0.3).max(60) }),
   /**
    * How the projector is mounted (instead of setting it on the projector): front (table),
    * ceiling (upside down = turned 180°), rear (behind a screen = mirrored left/right),

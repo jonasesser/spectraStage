@@ -98,8 +98,10 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
   measured corners (projective mapping, like the 2D corner calibration); sides not chosen stay
   dark. The computed projector position only fills in corners that could not be measured and keeps
   proportions on walls lit at an angle. A corner that cannot be reached can be skipped; then a point
-  on one of the edges running into it stands in for it. The room's width/depth only change when
-  points away from the front wall were measured (one flat wall cannot tell its width). Measuring
+  on one of the edges running into it stands in for it. Calibration never changes the size of the
+  room or its surfaces: the proportions are set by the user with “wall width” (front/back) and
+  “room depth” (sides, floor, ceiling) – the pictures always fill the sides completely. Choosing
+  another side keeps the corners already measured (front + left = 6 corners, not 8). Measuring
   replaces an earlier flat 2D corner correction. “Measure again from scratch” resets points,
   position and 2D corrections; Stage → room panel can restore the planned width of the front wall.
 - **📦 Objects**: add a box or a pillar; while it is selected every projector shows its yellow

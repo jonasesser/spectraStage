@@ -4,7 +4,6 @@ import {
   anchorWalls,
   cornerWalls,
   findOutliers,
-  measureCount,
   projectPose,
   roomCorners,
   roomEdges,
@@ -204,7 +203,8 @@ export function MeasureWizard({
   const aspect = ref ? ref.w / ref.h : 16 / 9;
   const [draft, setDraft] = useState<Anchor[] | null>(null);
   const anchors = draft ?? profile.anchors ?? [];
-  const [history, setHistory] = useState<string[]>([]);
+  // corners measured before (e.g. the front wall, when the left wall is added) count as done
+  const [history, setHistory] = useState<string[]>(() => (profile.anchors ?? []).map((a) => a.c));
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
   const [fine, setFine] = useState(false);
   const padRef = useRef<HTMLDivElement>(null);
@@ -235,6 +235,17 @@ export function MeasureWizard({
   };
 
   const walls = profile.walls ?? (pose ? wallsOfPose(roomFold(state.surfaces), pose, aspect) : []);
+  const wallsKey = walls.join(',');
+  const firstWalls = useRef(wallsKey);
+  useEffect(() => {
+    if (firstWalls.current === wallsKey) return;
+    firstWalls.current = wallsKey;
+    // other sides chosen: the corners still measured stay done, the new ones come next
+    setHistory((profile.anchors ?? []).map((a) => a.c));
+    setSkipped(new Set());
+    setActive(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallsKey]);
   // only the corners of the sides this projector lights; a point on an edge only stands in for
   // a corner that could not be reached (skipped) – one per edge running into that corner
   const targets = (pose ? targetsFor(state, pose, aspect, L) : []).filter((t) => {
@@ -340,13 +351,16 @@ export function MeasureWizard({
       t: 'output.setWalls',
       outputId: output.id,
       walls: walls.length ? (walls as never) : ['vorne'],
+      reset: true,
     });
+    setHistory([]);
+    setSkipped(new Set());
+    setActive(null);
     setHistory([]);
     setSkipped(new Set());
     setActive(null);
   };
 
-  const count = measureCount(anchors);
   const doneSteps = history.length + skipped.size;
   const total = doneSteps + targets.filter((t) => !history.includes(t.id) && !skipped.has(t.id)).length;
 
@@ -479,7 +493,7 @@ export function MeasureWizard({
           </div>
         );
       })}
-      {count >= 7 && <ZoomSliders output={output} state={state} L={L} />}
+      <ZoomSliders output={output} state={state} L={L} />
       <div className="row">
         <button className="btn small" onClick={restart}>
           ↺ {L('Measure again from scratch', 'Komplett neu einmessen')}

@@ -331,8 +331,11 @@ export function drawAlignOverlay(
   g.font = `700 ${fs}px system-ui, sans-serif`;
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  const corners = roomCorners(fold);
   const onWall = (id: string) => !walls.length || cornerWalls(id).some((x) => walls.includes(x));
+  // numbered 1, 2, 3 … only over the corners of this projector's sides
+  const corners = roomCorners(fold)
+    .filter((c) => onWall(c.id))
+    .map((c, i) => ({ ...c, n: i + 1 }));
   for (const c of corners) {
     if (!onWall(c.id)) continue;
     const pinned = quads

@@ -25,6 +25,7 @@ import {
   worldLayout,
 } from './stage.ts';
 import {
+  anchorWalls,
   arrangementPoses,
   boxCorner,
   boxFrame,
@@ -275,6 +276,59 @@ export function createOutput(
  */
 const dot3 = (a: readonly number[], b: readonly number[]) => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!;
 
+/**
+ * Sets the depth of the room: virtual side walls follow main.roomDepth, own side walls get the
+ * width, own floors / ceilings the depth (from their edge at the front wall). The projectors stay
+ * pinned to their corners – only the proportions of the pictures change, they still fill the sides.
+ */
+export function setRoomDepth(state: SessionState, depth: number): void {
+  const lay = worldLayout(state.surfaces);
+  const mainId = lay.find((w) => w.role === 'main')?.id;
+  const main = state.surfaces.find((s) => s.id === mainId);
+  if (!main) return;
+  const fold = roomFold(state.surfaces);
+  const mainFace = fold.faces.find((f) => f.id === main.id);
+  const mb = polygonBBox(main.polygon);
+  main.roomDepth = depth;
+  for (const sf of state.surfaces) {
+    if (sf === main) continue;
+    const role = lay.find((x) => x.id === sf.id)?.role;
+    const bb = polygonBBox(sf.polygon);
+    const f = fold.faces.find((x) => x.id === sf.id);
+    if (role === 'side' && f && mainFace && Math.abs(dot3(f.n, mainFace.ax)) > 0.9) {
+      // a side wall: its width along the stage x is the depth (from its end at the front wall)
+      const atFront = Math.abs(bb.x + bb.w - mb.x) < Math.abs(bb.x - (mb.x + mb.w));
+      const k = depth / bb.w;
+      const x0 = atFront ? bb.x + bb.w : bb.x;
+      sf.polygon = sf.polygon.map((p) => ({ x: x0 + (p.x - x0) * k, y: p.y }));
+    } else if (role === 'ground' || role === 'ceiling') {
+      const k = depth / bb.h;
+      const y0 = role === 'ground' ? bb.y : bb.y + bb.h;
+      sf.polygon = sf.polygon.map((p) => ({ x: p.x, y: y0 + (p.y - y0) * k }));
+    }
+  }
+}
+
+/** Sets the width of the front wall; floors / ceilings along it follow, surfaces right of it move. */
+export function setFrontWidth(state: SessionState, width: number): void {
+  const lay = worldLayout(state.surfaces);
+  const mainId = lay.find((w) => w.role === 'main')?.id;
+  const main = state.surfaces.find((s) => s.id === mainId);
+  if (!main) return;
+  const mb = polygonBBox(main.polygon);
+  const k = width / mb.w;
+  const x0 = mb.x;
+  const right = mb.x + mb.w;
+  const delta = width - mb.w;
+  for (const sf of state.surfaces) {
+    const role = lay.find((x) => x.id === sf.id)?.role;
+    const bb = polygonBBox(sf.polygon);
+    if (sf === main || ((role === 'ground' || role === 'ceiling') && bb.x < right && bb.x + bb.w > x0))
+      sf.polygon = sf.polygon.map((p) => ({ x: x0 + (p.x - x0) * k, y: p.y }));
+    else if (bb.x >= right - 1e-6) sf.polygon = sf.polygon.map((p) => ({ x: p.x + delta, y: p.y }));
+  }
+}
+
 export function solveMeasuredRoom(state: SessionState, quickFor: string | null = null): void {
   const fold = roomFold(state.surfaces);
   const lay = worldLayout(state.surfaces);
@@ -293,7 +347,9 @@ export function solveMeasuredRoom(state: SessionState, quickFor: string | null =
     })
     .filter((x): x is NonNullable<typeof x> => !!x);
   if (!projectors.length) return;
-  const r = solveRoom({ fold, sizeFree: !!main, projectors, quick: !!quickFor });
+  // measuring only finds where the projectors stand – it never changes the size of the room or its
+  // surfaces (that is set by the user: wall width / room depth)
+  const r = solveRoom({ fold, sizeFree: false, projectors, quick: !!quickFor });
   for (const o of state.outputs) {
     const sol = r.poses[o.id];
     if (sol) activeProfile(o).pose = sol.pose;
@@ -522,6 +578,14 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
     case 'session.setRoom':
       state.room = cmd.room;
       return res(cmd.room ? 'room mode on' : 'room mode off');
+    case 'room.setWidth': {
+      setFrontWidth(state, cmd.width);
+      return res(`front wall ${cmd.width.toFixed(2)} m wide`);
+    }
+    case 'room.setDepth': {
+      setRoomDepth(state, cmd.depth);
+      return res(`room depth ${cmd.depth.toFixed(2)} m`);
+    }
     case 'ghost.release': {
       const have = new Set((state.ghosts ?? []).map((g) => g.id));
       // where each one rises (a group photo: everybody from their own place)
@@ -814,11 +878,18 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       const pose = poseForWalls(roomFold(state.surfaces), walls, ref ? ref.w / ref.h : 16 / 9);
       if (!pose) return res(`${o.name}: these sides cannot be covered by one projector`);
       prof.pose = pose;
-      // the projector is set up anew: earlier measurements (and 2D corrections) no longer belong to it
-      prof.anchors = [];
-      prof.corners = structuredClone(UNIT_QUAD) as Profile['corners'];
-      prof.fold = null;
-      prof.mesh = null;
+      // corners already measured on sides that stay chosen are kept (adding the left wall to the
+      // front wall only adds the left wall's corners); "from scratch" drops everything
+      const keep = cmd.reset
+        ? []
+        : (prof.anchors ?? []).filter((a) => anchorWalls(a.c).some((w) => walls.includes(w)));
+      prof.anchors = keep;
+      if (cmd.reset) {
+        prof.corners = structuredClone(UNIT_QUAD) as Profile['corners'];
+        prof.fold = null;
+        prof.mesh = null;
+      }
+      if (keep.length) solveMeasuredRoom(state, o.id);
       if (/^Beamer( |$)/.test(o.name) || /^Projector/.test(o.name)) o.name = wallsName(walls);
       return res(`${o.name}: covers ${walls.join(', ')}`);
     }

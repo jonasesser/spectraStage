@@ -774,7 +774,8 @@ export function solveRoom(input: RoomSolveInput): {
   if (!offFront) return { poses: out, size: null };
   // 2) together with the room size
   const resid = (x: number[]): number[] => {
-    const w = Math.exp(x[0]!);
+    // the front wall keeps its width (it was set up and looked right); only the depth follows
+    const w = box.w;
     const d = Math.exp(x[1]!);
     const r: number[] = [];
     solved.forEach((pr, k) => {
@@ -787,7 +788,7 @@ export function solveRoom(input: RoomSolveInput): {
       r.push(0.01 * x[2 + k * 9 + 7]!, 0.01 * x[2 + k * 9 + 8]!);
     });
     // a gentle pull towards the current size keeps an unseen direction where it is
-    r.push(0.003 * (x[0]! - Math.log(box.w)), 0.003 * (x[1]! - Math.log(box.d)));
+    r.push(1 * (x[0]! - Math.log(box.w)), 0.003 * (x[1]! - Math.log(box.d)));
     return r;
   };
   // alternate: projectors alone (with several start poses) for the current size, then all
@@ -806,7 +807,7 @@ export function solveRoom(input: RoomSolveInput): {
     }
     const x0 = [Math.log(w), Math.log(d), ...solved.flatMap((pr) => xFromPose(out[pr.id]!.pose))];
     res = minimizeLM(resid, x0, 120);
-    w = Math.exp(res.x[0]!);
+    w = box.w;
     d = Math.exp(res.x[1]!);
     solved.forEach((pr, k) => {
       out[pr.id] = { pose: poseFromX(res!.x, 2 + k * 9), errPx: out[pr.id]!.errPx };

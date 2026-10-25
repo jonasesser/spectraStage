@@ -34,6 +34,7 @@ import {
   roomFold,
   roomHit,
   roomRay,
+  wallQuads,
 } from './room.ts';
 import {
   buildActorRoute,
@@ -296,6 +297,40 @@ describe('reducer', () => {
     const idx = r.state.surfaces.map((x) => (x.playback.mode === 'playlist' ? x.playback.anchorIndex : -1));
     expect(idx).toEqual([0, 0]); // template has a single item → both at 0, no crash
   });
+  it('pins a side exactly onto its measured corners and keeps them when a side is added', () => {
+    let s = base();
+    const c1 = ctx();
+    s = applyCommand(s, { t: 'surface.create', name: 'Wall', kind: 'wall' }, c1).state;
+    s = applyCommand(s, { t: 'output.create', name: 'Beamer' }, c1).state;
+    const id = s.outputs[0]!.id;
+    s = applyCommand(s, { t: 'output.setWalls', outputId: id, walls: ['vorne'] }, c1).state;
+    const fold = roomFold(s.surfaces);
+    const uv: Record<string, [number, number]> = {
+      'vorne-links-oben': [0.1, 0.12],
+      'vorne-rechts-oben': [0.88, 0.08],
+      'vorne-rechts-unten': [0.93, 0.9],
+      'vorne-links-unten': [0.05, 0.86],
+    };
+    const anchors = Object.entries(uv).map(([k, [u, v]]) => ({
+      c: `c|${k}`,
+      p: roomCorners(fold).find((c) => c.id === k)!.p,
+      u,
+      v,
+    }));
+    const w0 = polygonBBox(s.surfaces[0]!.polygon).w;
+    s = applyCommand(s, { t: 'output.setAnchors', outputId: id, anchors }, c1).state;
+    const pr = s.outputs[0]!.profiles[0]!;
+    const q = wallQuads(fold, pr.pose!, 16 / 9, pr.anchors!, ['vorne']);
+    expect(q).toHaveLength(1);
+    q[0]!.keys.forEach((k, i) => expect(q[0]!.uv[i]).toEqual(uv[k]));
+    // one wall alone does not change the room's size
+    expect(polygonBBox(s.surfaces[0]!.polygon).w).toBeCloseTo(w0, 6);
+    // adding the left wall keeps the measured front corners
+    s = applyCommand(s, { t: 'output.setWalls', outputId: id, walls: ['vorne', 'links'] }, c1).state;
+    expect(s.outputs[0]!.profiles[0]!.anchors).toHaveLength(4);
+    s = applyCommand(s, { t: 'output.setWalls', outputId: id, walls: ['vorne'], reset: true }, c1).state;
+    expect(s.outputs[0]!.profiles[0]!.anchors).toHaveLength(0);
+  });
   it('measured corners move the projector to where it really stands', () => {
     let s = base();
     s = applyCommand(s, { t: 'surface.create', name: 'Wall', kind: 'wall' }, ctx()).state;
@@ -316,7 +351,7 @@ describe('reducer', () => {
       expect((1 - q[1]) / 2).toBeCloseTo(a.v, 3);
     }
   });
-  it('measuring finds the room size by itself (nobody enters dimensions)', () => {
+  it('measuring finds the projectors but never changes the size of the room', () => {
     let s = base();
     const c1 = ctx();
     s = applyCommand(s, { t: 'surface.create', name: 'Wall', kind: 'wall' }, c1).state;
@@ -325,7 +360,8 @@ describe('reducer', () => {
     const fold0 = roomFold(s.surfaces);
     const box = boxFrame(fold0)!;
     expect(box).not.toBeNull();
-    const [W, D, H] = [box.w * 1.2, box.w * 0.7, box.h];
+    const [W, D, H] = [box.w, box.d, box.h];
+    const before = JSON.stringify(s.surfaces.map((x) => x.polygon));
     const corners = roomCorners(fold0);
     const edges = roomEdges(fold0);
     const truths = [
@@ -359,73 +395,29 @@ describe('reducer', () => {
       }
       s = applyCommand(s, { t: 'output.setAnchors', outputId: s.outputs[k]!.id, anchors }, c1).state;
     });
-    const main = s.surfaces[0]!;
-    const b = polygonBBox(main.polygon);
-    // width and depth come out of the measurements (no dimensions entered); the picture fit is
-    // what matters, so a few percent are fine
-    expect(Math.abs(b.w - W) / W).toBeLessThan(0.05);
-    expect(Math.abs(main.roomDepth! - D) / D).toBeLessThan(0.05);
+    // sizes are the user's business – calibration only finds where the projectors stand
+    expect(JSON.stringify(s.surfaces.map((x) => x.polygon))).toBe(before);
+    expect(s.surfaces[0]!.roomDepth).toBeUndefined();
     for (const o of s.outputs) {
       const pr = o.profiles[0]!;
       expect(poseErrorPx(pr.pose!, 16 / 9, pr.anchors!)!).toBeLessThan(1);
     }
   });
-  it('measured depth also resizes own side walls', () => {
+  it('room depth and wall width are set by the user, own surfaces follow', () => {
     let s = base();
     const c1 = ctx();
     s = applyCommand(s, { t: 'surface.create', name: 'Wall', kind: 'wall' }, c1).state;
     s = applyCommand(s, { t: 'surface.create', name: 'Right', kind: 'wall' }, c1).state;
-    s = applyCommand(s, { t: 'output.create', name: 'A' }, c1).state;
-    s = applyCommand(s, { t: 'output.create', name: 'B' }, c1).state;
-    const fold0 = roomFold(s.surfaces);
-    const box = boxFrame(fold0)!;
-    expect(box).not.toBeNull();
-    const [W, D, H] = [box.w * 1.2, box.w * 0.7, box.h];
-    const corners = roomCorners(fold0);
-    const edges = roomEdges(fold0);
-    const truths = [
-      { ...aimPose([W * 0.5, H * 0.8, D * 0.95], [W * 0.5, H * 0.45, 0], 116, 0.01), shiftY: 0.15 },
-      aimPose([W * 0.2, H * 0.7, D * 0.3], [W, H * 0.4, D * 0.7], 95, -0.02),
-    ];
-    const inImg = (q: [number, number] | null) => !!q && Math.abs(q[0]) < 0.97 && Math.abs(q[1]) < 0.97;
-    truths.forEach((truth, k) => {
-      const anchors: { c: string; p: V3; q?: V3; u: number; v: number }[] = [];
-      for (const c of corners) {
-        const P = boxCorner(box, c.id, W, D, H)!;
-        const q = projectPose(truth, 16 / 9, P);
-        if (inImg(q)) anchors.push({ c: `c|${c.id}`, p: c.p, u: (q![0] + 1) / 2, v: (1 - q![1]) / 2 });
-      }
-      for (const e of edges) {
-        const [ka, kb] = e.id.split('|');
-        const A = boxCorner(box, ka!, W, D, H)!;
-        const B = boxCorner(box, kb!, W, D, H)!;
-        for (const [n, t] of [
-          ['A', 0.3],
-          ['B', 0.7],
-        ] as const) {
-          const q = projectPose(truth, 16 / 9, [
-            A[0] + (B[0] - A[0]) * t,
-            A[1] + (B[1] - A[1]) * t,
-            A[2] + (B[2] - A[2]) * t,
-          ]);
-          if (inImg(q))
-            anchors.push({ c: `e|${e.id}|${n}`, p: e.a, q: e.b, u: (q![0] + 1) / 2, v: (1 - q![1]) / 2 });
-        }
-      }
-      s = applyCommand(s, { t: 'output.setAnchors', outputId: s.outputs[k]!.id, anchors }, c1).state;
-    });
-    const main = s.surfaces[0]!;
-    const b = polygonBBox(main.polygon);
-    // width and depth come out of the measurements (no dimensions entered); the picture fit is
-    // what matters, so a few percent are fine
-    expect(Math.abs(b.w - W) / W).toBeLessThan(0.05);
+    const b0 = polygonBBox(s.surfaces[0]!.polygon);
+    s = applyCommand(s, { t: 'room.setDepth', depth: 3.3 }, c1).state;
     const right = polygonBBox(s.surfaces[1]!.polygon);
-    expect(Math.abs(right.w - D) / D).toBeLessThan(0.05);
-    expect(right.x).toBeCloseTo(b.x + b.w, 3);
-    for (const o of s.outputs) {
-      const pr = o.profiles[0]!;
-      expect(poseErrorPx(pr.pose!, 16 / 9, pr.anchors!)!).toBeLessThan(1);
-    }
+    expect(right.w).toBeCloseTo(3.3, 6);
+    expect(s.surfaces[0]!.roomDepth).toBe(3.3);
+    s = applyCommand(s, { t: 'room.setWidth', width: b0.w * 1.5 }, c1).state;
+    const b1 = polygonBBox(s.surfaces[0]!.polygon);
+    expect(b1.w).toBeCloseTo(b0.w * 1.5, 6);
+    expect(b1.x).toBeCloseTo(b0.x, 6);
+    expect(polygonBBox(s.surfaces[1]!.polygon).x).toBeGreaterThanOrEqual(b1.x + b1.w - 1e-6);
   });
   it('sets the mounting of a projector from the app', () => {
     let s = base();

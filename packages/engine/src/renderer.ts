@@ -1501,7 +1501,8 @@ export class StageRenderer {
       this.poseScene.add(this.poseRoom, this.poseObjects);
     } else if (this.poseRT.width !== ow || this.poseRT.height !== oh) this.poseRT.setSize(ow, oh);
     const fold = this.worldFor(state).fold;
-    const zoom = profile.zoom ?? {};
+    // (the old squeeze/stretch per side is replaced by the room depth: pictures always fill the sides)
+    const zoom: Partial<Record<string, number>> = {};
     const key = JSON.stringify([vp, zoom, fold.faces.map((f) => [f.id, f.o, f.ax, f.ay, f.rect])]);
     if (key !== this.poseKey) {
       // squeeze/stretch per side along the room depth, from the transition to the front wall
