@@ -30,7 +30,16 @@ function cornerAt(p: Profile, i: number): Pt | undefined {
   return i < 4 ? p.corners[i] : i === 4 ? p.fold?.a : p.fold?.b;
 }
 
-export function CalibrationEditor({ output, onClose }: { output: Output; onClose: () => void }) {
+export function CalibrationEditor({
+  output,
+  onClose,
+  masksOnly = false,
+}: {
+  output: Output;
+  onClose: () => void;
+  /** Only the masks tab – used from the 3D measuring wizard (masks live in output pixel space, independent of the pose). */
+  masksOnly?: boolean;
+}) {
   const L = useT();
   const store = useStore();
   const { state } = useShow();
@@ -38,7 +47,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
   const [draft, setDraftRaw] = useState<Profile>(() => structuredClone(saved));
   const [history, setHistory] = useState<Profile[]>([]);
   const [future, setFuture] = useState<Profile[]>([]);
-  const [mode, setMode] = useState<Mode>('corners');
+  const [mode, setMode] = useState<Mode>(masksOnly ? 'masks' : 'corners');
   const [handle, setHandle] = useState<Handle>({ kind: 'corner', i: 0 });
   const [maskId, setMaskId] = useState<string | null>(null);
   const [drawing, setDrawing] = useState<Pt[] | null>(null);
@@ -296,7 +305,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
   };
 
   const apply = async () => {
-    if (!isConvexQuad(draft.corners)) return;
+    if (!masksOnly && !isConvexQuad(draft.corners)) return;
     if (
       !testOn &&
       !window.confirm(
@@ -310,7 +319,8 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
     const ok = await store.send({
       t: 'output.saveProfile',
       outputId: output.id,
-      profile: draft,
+      // masks only: never overwrite pose/corners measured in the meantime
+      profile: masksOnly ? { ...structuredClone(activeProfile(output)), masks: draft.masks } : draft,
       activate: true,
     });
     if (ok) store.toast(L('Calibration saved', 'Kalibrierung gespeichert'));
@@ -546,7 +556,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
           ‹ {L('Back', 'Zurück')}
         </button>
         <h2 style={{ margin: 0 }}>
-          {L('Calibrate', 'Kalibrieren')}: {output.name}
+          {masksOnly ? L('Masks', 'Masken') : L('Calibrate', 'Kalibrieren')}: {output.name}
         </h2>
         <div className="row">
           <button
@@ -603,7 +613,7 @@ export function CalibrationEditor({ output, onClose }: { output: Output; onClose
                 ['masks', L('Masks', 'Masken')],
                 ['image', L('Image', 'Bild')],
               ] as [Mode, string][]
-            ).map(([m, label]) => (
+            ).filter(([m]) => !masksOnly || m === 'masks').map(([m, label]) => (
               <button
                 key={m}
                 className={`chip${mode === m ? ' on' : ''}`}

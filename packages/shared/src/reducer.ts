@@ -798,10 +798,13 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       if (!walls.length) return res(`${o.name}: no sides`);
       const ref = prof.referenceResolution;
       const pose = poseForWalls(roomFold(state.surfaces), walls, ref ? ref.w / ref.h : 16 / 9);
-      if (!pose) return res(`${o.name}: these sides cannot be covered by one projector`);
-      prof.pose = pose;
-      // the projector is set up anew: earlier measurements no longer belong to it
-      prof.anchors = [];
+      if (pose) {
+        prof.pose = pose;
+        // the projector is set up anew: earlier measurements no longer belong to it
+        prof.anchors = [];
+      }
+      // no automatic position found: the sides are still allowed, the projector keeps its
+      // position and is placed by measuring
       if (/^Beamer( |$)/.test(o.name) || /^Projector/.test(o.name)) o.name = wallsName(walls);
       return res(`${o.name}: covers ${walls.join(', ')}`);
     }

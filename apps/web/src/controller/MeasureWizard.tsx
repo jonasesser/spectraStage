@@ -13,11 +13,13 @@ import {
   type Anchor,
   type Output,
   type Pose,
+  type RoomWall,
   type SessionState,
   type V3,
 } from '@spectrastage/shared';
 import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
+import { CalibrationEditor } from './CalibrationEditor.tsx';
 import { WallPicker } from './WallPicker.tsx';
 import { ZoomSliders } from './ZoomSliders.tsx';
 
@@ -119,7 +121,17 @@ function targetsFor(state: SessionState, pose: Pose, aspect: number, L: Tr): Tar
 }
 
 /** The room seen from inside towards the front wall, with the corner or edge to hit marked. */
-function RoomSketch({ keys, L }: { keys: string[]; L: Tr }) {
+const SKETCH_FACES: Record<Exclude<RoomWall, 'hinten'>, string> = {
+  vorne: '70,42 150,42 150,98 70,98',
+  links: '6,6 70,42 70,98 6,134',
+  rechts: '214,6 150,42 150,98 214,134',
+  decke: '6,6 214,6 150,42 70,42',
+  boden: '6,134 70,98 150,98 214,134',
+};
+
+function RoomSketch({ keys, walls, L }: { keys: string[]; walls: readonly RoomWall[]; L: Tr }) {
+  // the chosen sides are highlighted, the others drawn faintly for orientation
+  const on = (w: RoomWall) => !walls.length || walls.includes(w);
   const pos = (k: string): [number, number] | null => {
     const [z, x, y] = k.split('-');
     if (!z || !x || !y) return null;
@@ -140,6 +152,10 @@ function RoomSketch({ keys, L }: { keys: string[]; L: Tr }) {
       aria-label={L('Sketch of the room', 'Skizze des Raums')}
     >
       <rect x="0" y="0" width="220" height="140" rx="8" fill="#0b0918" />
+      {walls.length > 0 &&
+        (Object.keys(SKETCH_FACES) as (keyof typeof SKETCH_FACES)[])
+          .filter(on)
+          .map((w) => <polygon key={w} points={SKETCH_FACES[w]} fill="#3ff2ff" opacity="0.12" />)}
       <g stroke={c} strokeWidth="1.5" fill="none" opacity="0.7">
         <rect x="70" y="42" width="80" height="56" />
         <line x1="6" y1="6" x2="70" y2="42" />
@@ -148,19 +164,19 @@ function RoomSketch({ keys, L }: { keys: string[]; L: Tr }) {
         <line x1="214" y1="134" x2="150" y2="98" />
       </g>
       <g fill="#9d93d9" fontSize="10" textAnchor="middle" fontFamily="system-ui, sans-serif">
-        <text x="110" y="74">
+        <text x="110" y="74" opacity={on('vorne') ? 1 : 0.3}>
           {L('front', 'vorne')}
         </text>
-        <text x="30" y="74">
+        <text x="30" y="74" opacity={on('links') ? 1 : 0.3}>
           {L('left', 'links')}
         </text>
-        <text x="190" y="74">
+        <text x="190" y="74" opacity={on('rechts') ? 1 : 0.3}>
           {L('right', 'rechts')}
         </text>
-        <text x="110" y="124">
+        <text x="110" y="124" opacity={on('boden') ? 1 : 0.3}>
           {L('floor', 'Boden')}
         </text>
-        <text x="110" y="24">
+        <text x="110" y="24" opacity={on('decke') ? 1 : 0.3}>
           {L('ceiling', 'Decke')}
         </text>
       </g>
@@ -202,6 +218,7 @@ export function MeasureWizard({
   const pose = profile.pose ?? null;
   const ref = profile.referenceResolution;
   const aspect = ref ? ref.w / ref.h : 16 / 9;
+  const [showMasks, setShowMasks] = useState(false);
   const [draft, setDraft] = useState<Anchor[] | null>(null);
   const anchors = draft ?? profile.anchors ?? [];
   const [history, setHistory] = useState<string[]>([]);
@@ -347,9 +364,16 @@ export function MeasureWizard({
   const doneSteps = history.length + skipped.size;
   const total = doneSteps + targets.filter((t) => !history.includes(t.id) && !skipped.has(t.id)).length;
 
+  if (showMasks) return <CalibrationEditor output={output} masksOnly onClose={() => setShowMasks(false)} />;
+
   return (
     <div className="panel stack">
-      <strong>📐 {L('Measure projector', 'Beamer einmessen')}</strong>
+      <div className="row between">
+        <strong>📐 {L('Measure projector', 'Beamer einmessen')}</strong>
+        <button className="btn small" onClick={() => setShowMasks(true)}>
+          ⬛ {L('Masks', 'Masken')} ({activeProfile(output).masks.length})
+        </button>
+      </div>
       <WallPicker output={output} state={state} L={L} />
       {target ? (
         <>
@@ -358,7 +382,7 @@ export function MeasureWizard({
           </div>
           <div style={{ fontWeight: 700 }}>{target.title}</div>
           {target.hint && <div className="small">{target.hint}</div>}
-          <RoomSketch keys={target.keys} L={L} />
+          <RoomSketch keys={target.keys} walls={walls} L={L} />
           <p className="small" style={{ margin: 0 }}>
             {target.kind === 'corner'
               ? L(
