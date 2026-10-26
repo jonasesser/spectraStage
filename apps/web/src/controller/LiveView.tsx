@@ -1,7 +1,15 @@
 import { ZombieCam } from './ZombieCam.tsx';
 import { useContext, useState } from 'react';
 import { catalog } from '@spectrastage/catalog/manifests';
-import { activeScene, playlistPosition, type SessionState, type Surface } from '@spectrastage/shared';
+import {
+  activeScene,
+  playlistPosition,
+  ROOM_WALL_LABEL,
+  ROOM_WALLS,
+  type RoomWall,
+  type SessionState,
+  type Surface,
+} from '@spectrastage/shared';
 import { useT, type Tr } from '../lib/i18n.tsx';
 import { useShow, useStore } from './store.ts';
 import { StageMap } from './StageMap.tsx';
@@ -20,6 +28,7 @@ export function LiveView() {
   const theme = catalog.get(themeId) ?? catalog.themes[0]!;
   const [fired, setFired] = useState<string | null>(null);
   const anyOnline = state.devices.some((d) => d.status === 'approved' && presence.devices[d.id]?.online);
+  const [previewSide, setPreviewSide] = useState<RoomWall | null>(null);
   const [preview, setPreviewState] = useState(() => {
     const stored = storage.get('ss.preview');
     return stored ? stored === '1' : !anyOnline;
@@ -71,7 +80,20 @@ export function LiveView() {
           </button>
         </div>
         {preview ? (
-          <StagePreview state={state} now={now} />
+          <div className="stack" style={{ gap: '0.5rem' }}>
+            <div className="row" role="group" aria-label={L('Side', 'Seite')}>
+              {([null, ...ROOM_WALLS] as const).map((w) => (
+                <button
+                  key={w ?? 'all'}
+                  className={`chip${previewSide === w ? ' on' : ''}`}
+                  onClick={() => setPreviewSide(w)}
+                >
+                  {w ? ROOM_WALL_LABEL[w] : L('Whole room', 'Ganzer Raum')}
+                </button>
+              ))}
+            </div>
+            <StagePreview state={state} now={now} side={previewSide} />
+          </div>
         ) : (
           <p className="muted small">
             {L(

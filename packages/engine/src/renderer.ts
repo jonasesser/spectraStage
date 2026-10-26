@@ -926,7 +926,7 @@ export class StageRenderer {
       const vp =
         this.previewViewport ??
         (this.state
-          ? padViewport(stageBounds(this.state.surfaces), this.width / Math.max(1, this.height))
+          ? padViewport(stageBounds(completeRoom(this.state.surfaces)), this.width / Math.max(1, this.height))
           : null);
       if (!vp) return null;
       return {
@@ -1119,7 +1119,9 @@ export class StageRenderer {
     const ppmView = vw / vp.w;
 
     // 1) Surface layers
-    let visible = (pose ? completeRoom(state.surfaces) : state.surfaces).filter((s) =>
+    // the room always has its 6 sides: in the room view and in the stage preview the ones the app
+    // adds itself are drawn too
+    let visible = (pose || this.opts.preview ? completeRoom(state.surfaces) : state.surfaces).filter((s) =>
       bboxIntersects(polygonBBox(s.polygon), vp),
     );
     if (seen) visible = visible.filter((s) => seen.has(s.id));
