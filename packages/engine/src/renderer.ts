@@ -129,6 +129,16 @@ varying vec2 vUv;
 void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
 `;
 
+/** Proportions of a side: virtual size factors, anchor, and the easing warp for the layer shader. */
+interface Proportion {
+  fx: number;
+  fy: number;
+  ax: number;
+  ay: number;
+  warp: [number, number, number, number];
+  key: string;
+}
+
 const LAYER_FRAG = /* glsl */ `
 uniform sampler2D texA;
 uniform sampler2D texB;
@@ -137,9 +147,31 @@ uniform float mixB;     // 0 = only A (current), 1 = only B (previous)
 uniform float fadeBlack; // 1 = fade through black mode
 uniform float hasB;
 uniform float hasOverlay;
+// proportions that ease in from the edge towards the front wall: x = mode (0 none, 1 the edge is
+// vertical / depth runs along x, 2 the edge is horizontal / depth runs along y), y = where the
+// edge is (0 or 1), z = proportion along the depth, w = proportion along the edge
+uniform vec4 uWarp;
 varying vec2 vUv;
+vec2 warpUv(vec2 uv) {
+  if (uWarp.x < 0.5) return uv;
+  float X = uv.x;
+  float Yd = 1.0 - uv.y;
+  bool alongX = uWarp.x < 1.5;
+  float d = abs((alongX ? X : Yd) - uWarp.y);
+  float pd = uWarp.z;
+  float pa = uWarp.w;
+  // depth: the scale grows from 100 % at the edge to the set value at the far end
+  float ld = (1.0 + 1.0 / pd) * 0.5;
+  float cd = (d + (1.0 / pd - 1.0) * d * d * 0.5) / ld;
+  float depthC = uWarp.y > 0.5 ? 1.0 - cd : cd;
+  // along the edge: the same, around the middle
+  float la = max(1.0, 1.0 / pa);
+  float s = 1.0 + (1.0 / pa - 1.0) * d;
+  if (alongX) return vec2(depthC, 1.0 - (0.5 + (Yd - 0.5) * s / la));
+  return vec2(0.5 + (X - 0.5) * s / la, 1.0 - depthC);
+}
 void main() {
-  vec3 a = texture2D(texA, vUv).rgb;
+  vec3 a = texture2D(texA, warpUv(vUv)).rgb;
   vec3 col = a;
   if (hasB > 0.5) {
     vec3 b = texture2D(texB, vUv).rgb;
@@ -341,6 +373,7 @@ class SurfaceLayer {
         fadeBlack: { value: 0 },
         hasB: { value: 0 },
         hasOverlay: { value: 0 },
+        uWarp: { value: new THREE.Vector4(0, 0, 1, 1) },
       },
       vertexShader: CLIP_VERT,
       fragmentShader: LAYER_FRAG,
@@ -1666,22 +1699,28 @@ export class StageRenderer {
    * and then put onto the real side – things get narrower (more of them) or wider, the side stays
    * filled completely. The anchor is the edge towards the front wall.
    */
-  private proportionFor(
-    s: Surface,
-    profile: Profile,
-    world: WorldInfo,
-    room: boolean,
-  ): { x: number; y: number; ax: number; ay: number } {
-    const none = { x: 1, y: 1, ax: 0.5, ay: 0.5 };
+  private proportionFor(s: Surface, profile: Profile, world: WorldInfo, room: boolean): Proportion {
+    const none: Proportion = { fx: 1, fy: 1, ax: 0.5, ay: 0.5, warp: [0, 0, 1, 1], key: '' };
     if (!room || !profile.proportions) return none;
     const face = world.fold.faces.find((f) => f.id === s.id);
     const wall = face ? faceWall(world.fold, face) : null;
     const p = wall ? profile.proportions[wall] : undefined;
     if (!p || (Math.abs(p.x - 1) < 1e-3 && Math.abs(p.y - 1) < 1e-3)) return none;
-    // anchor: the edge that meets the front wall (in the unfolded stage layout)
-    const ax = wall === 'links' ? 1 : wall === 'rechts' ? 0 : 0.5;
-    const ay = wall === 'boden' ? 0 : wall === 'decke' ? 1 : 0.5;
-    return { x: p.x, y: p.y, ax, ay };
+    const key = `${p.x.toFixed(3)},${p.y.toFixed(3)}`;
+    // front / back wall: the whole wall evenly
+    if (wall === 'vorne' || wall === 'hinten')
+      return { fx: 1 / p.x, fy: 1 / p.y, ax: 0.5, ay: 0.5, warp: [0, 0, 1, 1], key };
+    // the other sides: 100 % at the edge to the front wall (things go round the corner seamlessly),
+    // easing to the set proportion at the far end. Where the edge lies in the unfolded stage:
+    // left wall – its right end, right wall – its left end, floor – top, ceiling – bottom.
+    const ld = (pd: number) => (1 + 1 / pd) / 2;
+    const la = (pa: number) => Math.max(1, 1 / pa);
+    if (wall === 'links' || wall === 'rechts') {
+      const seam = wall === 'links' ? 1 : 0;
+      return { fx: ld(p.x), fy: la(p.y), ax: seam, ay: 0.5, warp: [1, seam, p.x, p.y], key };
+    }
+    const seam = wall === 'boden' ? 0 : 1;
+    return { fx: la(p.x), fy: ld(p.y), ax: 0.5, ay: seam, warp: [2, seam, p.y, p.x], key };
   }
 
   private renderSurface(
@@ -1693,7 +1732,7 @@ export class StageRenderer {
     output: Output | null,
     outputs: readonly Output[],
     world: WorldInfo,
-    prop: { x: number; y: number; ax: number; ay: number } = { x: 1, y: 1, ax: 0.5, ay: 0.5 },
+    prop: Proportion = { fx: 1, fy: 1, ax: 0.5, ay: 0.5, warp: [0, 0, 1, 1], key: '' },
   ): void {
     let layer = this.layers.get(s.id);
     if (!layer) {
@@ -1718,28 +1757,28 @@ export class StageRenderer {
     // the scene's own size: bigger / smaller than the side for other proportions
     let sw = lw;
     let sh = lh;
-    if (prop.x !== 1 || prop.y !== 1) {
-      sw = Math.max(16, Math.round(lw / prop.x));
-      sh = Math.max(16, Math.round(lh / prop.y));
+    if (prop.key) {
+      sw = Math.max(16, Math.round(lw * prop.fx));
+      sh = Math.max(16, Math.round(lh * prop.fy));
       const fs = Math.min(1, maxDim / Math.max(sw, sh));
       sw = Math.round(sw * fs);
       sh = Math.round(sh * fs);
     }
-    const worldKey = `${world.key}|${prop.x.toFixed(3)},${prop.y.toFixed(3)}`;
+    const worldKey = `${world.key}|${prop.key}`;
     if (active && now >= active.startedAt - 50) {
       const runtime = this.runtimes.get(active.scene.themeId);
       const mod = runtime?.scenes[active.scene.sceneId];
       const self0 = world.surfaces.find((w) => w.id === s.id);
       // in the shared world the side covers a bigger / smaller area, from its edge at the front wall
       const self =
-        self0 && (prop.x !== 1 || prop.y !== 1)
+        self0 && prop.key
           ? {
               ...self0,
               rect: {
-                x: self0.rect.x + self0.rect.w * prop.ax * (1 - 1 / prop.x),
-                y: self0.rect.y + self0.rect.h * prop.ay * (1 - 1 / prop.y),
-                w: self0.rect.w / prop.x,
-                h: self0.rect.h / prop.y,
+                x: self0.rect.x + self0.rect.w * prop.ax * (1 - prop.fx),
+                y: self0.rect.y + self0.rect.h * prop.ay * (1 - prop.fy),
+                w: self0.rect.w * prop.fx,
+                h: self0.rect.h * prop.fy,
               },
             }
           : self0;
@@ -1773,7 +1812,7 @@ export class StageRenderer {
           renderer: r,
           width: sw,
           height: sh,
-          ppm: sw / Math.max(1, (self0?.rect.w ?? b.w) / prop.x) || layer.ppm,
+          ppm: sw / Math.max(1e-3, (self0?.rect.w ?? b.w) * prop.fx) || layer.ppm,
           seed: active.seed,
           params: active.scene.params,
           kind: s.kind,
@@ -1833,6 +1872,7 @@ export class StageRenderer {
 
     const u = layer.material.uniforms;
     u.texA!.value = cur?.rt.texture ?? null;
+    (u.uWarp!.value as THREE.Vector4).set(...prop.warp);
     u.texB!.value = layer.previous?.rt.texture ?? null;
     u.hasB!.value = layer.previous ? 1 : 0;
     u.mixB!.value = mixB;
