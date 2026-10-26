@@ -112,7 +112,17 @@ function world(
   icon: string,
   colors: [string, string],
 ): SceneManifest {
-  const sc = scene(id, name, description, ['wall', 'floor', 'other'], icon, colors);
+  const sc = scene(id, name, description, ['wall', 'floor', 'other'], icon, colors, [
+    {
+      key: 'floorPath',
+      label: L(
+        'Path and pumpkins on the floor (when a projector lights the floor)',
+        'Weg und Kürbisse auf dem Boden (wenn ein Beamer den Boden bestrahlt)',
+      ),
+      type: 'boolean',
+      default: true,
+    },
+  ]);
   if (id === 'neonWorld')
     sc.params = sc.params.map((p) =>
       p.key === 'mood' && p.type === 'select' ? { ...p, default: 'neon' } : p,

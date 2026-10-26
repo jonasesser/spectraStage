@@ -96,6 +96,8 @@ interface Frame {
   groundBelowSelf: boolean;
   /** Centerpieces of all walls in world x. */
   pieces: { id: PieceId; X: number }[];
+  /** The real floor is lit: the yard of the main wall is short, path and pumpkins lie on the floor. */
+  floorPath: boolean;
 }
 
 const FACES: GhostFace[] = ['happy', 'oo', 'wow', 'sleepy'];
@@ -110,21 +112,26 @@ function frame(s: DrawState, o: PanoOpts): Frame {
     const x0 = walls.length ? Math.min(...walls.map((x) => x.rect.x)) : r.x;
     const x1 = walls.length ? Math.max(...walls.map((x) => x.rect.x + x.rect.w)) : r.x + r.w;
     const U = Math.max(0.5, main.h);
+    const yard = frontYard(w?.surfaces ?? [], main);
+    // a projector lights the floor: the house comes down to the bottom of the wall (short yard),
+    // the path with its pumpkins runs on the real floor towards the viewer (can be switched off)
+    const floorPath = !!w?.floorLit && !!yard && s.params.floorPath !== false;
     return {
+      floorPath,
       r,
       ppm: s.ppm,
       P: ring ? ring.w : Math.max(x1 - x0, U * 4),
       X0: ring ? ring.x : x0,
       wrap: !!ring,
       U,
-      hzY: main.y + U * 0.68,
-      groundY: main.y + U * 0.8,
-      fenceY: main.y + U * 0.9,
+      hzY: main.y + U * (floorPath ? 0.86 : 0.68),
+      groundY: main.y + U * (floorPath ? 0.94 : 0.8),
+      fenceY: main.y + U * (floorPath ? 0.975 : 0.9),
       houseX: main.x + main.w / 2,
       houseW: o.house || o.portal ? Math.min(main.w * 0.56, U * 0.66) : 0,
       seed: (w?.seed ?? s.seed) & 0xffff,
       mainBottom: main.y + main.h,
-      frontGround: frontYard(w?.surfaces ?? [], main),
+      frontGround: yard,
       groundBelowSelf: !!below(w?.surfaces ?? [], r),
       pieces: [
         ...(o.mainPiece ? [{ id: o.mainPiece, X: main.x + main.w / 2 }] : []),
@@ -195,7 +202,8 @@ function pathPumpkins(F: Frame, d: number): PathPumpkin[] {
   const out: PathPumpkin[] = [];
   if (!F.houseW) return out;
   const dw = F.houseW * 0.09;
-  const nW = Math.max(1, Math.round(Math.min(4, d * 3)));
+  // with the path on the real floor, the wall keeps no pumpkins of its own
+  const nW = F.floorPath ? 0 : Math.max(1, Math.round(Math.min(4, d * 3)));
   for (let k = 0; k < nW; k++) {
     const v = (k + 0.6) / nW;
     const Y = F.groundY + (F.mainBottom - F.groundY) * v * 0.85;

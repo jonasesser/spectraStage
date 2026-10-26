@@ -331,6 +331,7 @@ class Overlay2D {
 
 interface WorldInfo {
   key: string;
+  floorLit: boolean;
   fold: RoomFold;
   wrap: { x: number; w: number } | null;
   surfaces: WorldSurface[];
@@ -1673,9 +1674,20 @@ export class StageRenderer {
   private worldCache: WorldInfo | null = null;
   /** Shared world layout (roles + rects of all surfaces), cached while the stage is unchanged. */
   private worldFor(state: SessionState): WorldInfo {
+    // does any projector in the room light the floor?
+    // (only projectors with a projector PC assigned count – planned ones do not light anything)
+    const floorLit = state.outputs.some((o) => {
+      const pr = activeProfile(o);
+      return (
+        !!pr.pose &&
+        !!pr.walls?.includes('boden') &&
+        state.devices.some((d) => d.outputId === o.id && d.status === 'approved')
+      );
+    });
     const key = JSON.stringify([
       state.room ?? false,
       state.surfaces.map((s) => [s.id, s.kind, s.role ?? 'auto', s.polygon]),
+      floorLit,
     ]);
     if (this.worldCache?.key !== key) {
       // The world always spans the complete room (virtual faces fill sides without a projector).
@@ -1691,7 +1703,14 @@ export class StageRenderer {
         y1 = Math.max(y1, w.rect.y + w.rect.h);
       }
       const bounds = surfaces.length ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : { x: 0, y: 0, w: 1, h: 1 };
-      this.worldCache = { key, surfaces, bounds, wrap: wallRing(surfaces), fold: roomFold(state.surfaces) };
+      this.worldCache = {
+        key,
+        floorLit,
+        surfaces,
+        bounds,
+        wrap: wallRing(surfaces),
+        fold: roomFold(state.surfaces),
+      };
     }
     return this.worldCache;
   }
@@ -1796,6 +1815,7 @@ export class StageRenderer {
                 surfaces: world.surfaces.map((w) => (w.id === s.id ? self : w)),
                 bounds: world.bounds,
                 wrap: world.wrap,
+                floorLit: world.floorLit,
                 room:
                   self && self0 && self !== self0
                     ? {

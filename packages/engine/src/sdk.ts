@@ -66,6 +66,12 @@ export interface WorldContext {
   wrap: { x: number; w: number } | null;
   /** The whole stage folded into a 3D room (faces, viewer position) – for the sky and paths. */
   room: RoomFold;
+  /**
+   * A projector lights the floor of the room: what lies on the ground in front of the main wall
+   * (a garden path, pumpkins …) can go onto the real floor instead of being painted on the wall.
+   * Same on every projector PC (from the shared show state).
+   */
+  floorLit?: boolean;
 }
 
 export interface SceneInstance {
