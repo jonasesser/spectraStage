@@ -22,12 +22,14 @@ import {
   leaf,
   pawPrint,
   ghost,
+  objScale,
   pumpkin,
   skeleton,
   star,
   type GhostFace,
 } from '../shapes.ts';
 import { web } from './floor.ts';
+import { drawStanding, floorView } from './anamorph.ts';
 import { monster } from './wall.ts';
 import { drawPiece, paintPiece, PIECE_HALF, type PieceId } from './pieces.ts';
 import { FOG_FRAG, LIME, neonUniforms } from './neon.ts';
@@ -1377,12 +1379,21 @@ export function groundScene(id: string, o: PanoOpts): SceneModule {
     g.drawImage(st, 0, 0);
 
     // jack-o'-lanterns continuing along the path + their light on the stones
+    const view = floorView(s);
     if (o.pumpkins > 0)
       for (const p of pathPumpkins(F, d)) {
         if (p.Y < r.y - p.size || p.Y > r.y + r.h + p.size) continue;
         if (p.X < r.x - p.size || p.X > r.x + r.w + p.size) continue;
         lightPool(g, px(F, p.X), py(F, p.Y), p.size * 2.2 * F.ppm, p.size * 1.6 * F.ppm, env.winEdge, 0.22);
-        pumpkin(g, px(F, p.X), py(F, p.Y), p.size * F.ppm, { pal, face: p.face, t: t + p.face, glow: 0.9 });
+        const opts = { pal, face: p.face, t: t + p.face, glow: 0.9 };
+        if (view) {
+          // standing on the real floor: painted so it looks upright from where the audience stands
+          const hPx = p.size * F.ppm * objScale();
+          const S = hPx * 2.4;
+          drawStanding(g, s, view, p.X, p.Y, S, S / 2 + hPx / 2, (q) =>
+            pumpkin(q, S / 2, S / 2, p.size * F.ppm, opts),
+          );
+        } else pumpkin(g, px(F, p.X), py(F, p.Y), p.size * F.ppm, opts);
       }
 
     if (o.party) {

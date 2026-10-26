@@ -431,6 +431,18 @@ export const RoomObjectSchema = z.object({
 });
 export type RoomObject = z.infer<typeof RoomObjectSchema>;
 
+/**
+ * Where the audience stands (for things painted onto the floor so they look upright from there):
+ * x across the front wall (0 = left, 1 = right), z from the front wall to the back wall (0 … 1),
+ * eye height in meters.
+ */
+export const ViewerSchema = z.object({
+  x: z.number().min(0).max(1),
+  z: z.number().min(0).max(1),
+  eye: z.number().min(0.3).max(3),
+});
+export type Viewer = z.infer<typeof ViewerSchema>;
+
 export const SessionStateSchema = z.object({
   id,
   name,
@@ -450,6 +462,8 @@ export const SessionStateSchema = z.object({
   boost: unit.optional(),
   /** Room mode: the walls go all the way around – the world wraps from the last wall to the first. */
   room: z.boolean().optional(),
+  /** Standpoint of the audience (default: middle of the back wall, eyes at 1.6 m). */
+  viewer: ViewerSchema.optional(),
   /** Real things in the room (box, pillar, …) that projectors light directly. */
   objects: z
     .array(z.lazy(() => RoomObjectSchema))
@@ -621,6 +635,8 @@ export const CommandSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('room.setWidth'), width: z.number().min(0.3).max(60) }),
   /** Back to standard proportions: front wall 4 m wide, room 4 m deep (fine-tune with the sliders). */
   z.object({ t: z.literal('room.resetSize') }),
+  /** Standpoint of the audience (null = default: middle of the back wall). */
+  z.object({ t: z.literal('room.setViewer'), viewer: ViewerSchema.nullable() }),
   /**
    * How the projector is mounted (instead of setting it on the projector): front (table),
    * ceiling (upside down = turned 180°), rear (behind a screen = mirrored left/right),

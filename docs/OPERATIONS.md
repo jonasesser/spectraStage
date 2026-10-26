@@ -111,7 +111,10 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
   **Object size** (per side, 25 %–400 %): pumpkins, graves, figures and animals bigger or smaller,
   their places and spacing stay. **Shift** (per side, ↔ and ↕): moves the picture of the side, e.g.
   the floor so the path lies under the real door; things crossing over from other sides (bats,
-  world events) are drawn where they really are, so they still meet at the corner. “Measure again from scratch” resets points,
+  world events) are drawn where they really are, so they still meet at the corner.
+  **Audience standpoint** (Stage → room panel; default: middle of the back wall, eyes at 1.6 m):
+  jack-o'-lanterns on the real floor are painted stretched away from there (like 3D street art), so
+  from that spot they look upright; from elsewhere they look stretched. “Measure again from scratch” resets points,
   position and 2D corrections; Stage → room panel can restore the planned width of the front wall.
 - **📦 Objects**: add a box or a pillar; while it is selected every projector shows its yellow
   outline – drag it on the floor in the 3D view, nudge and size it until the outline sits on the real

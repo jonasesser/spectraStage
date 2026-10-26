@@ -6,7 +6,7 @@
  *  - the 3D room view in the controller.
  * Room space: x/z on the ground, y up, the viewer stands in `center`.
  */
-import type { Pose, RoomObject, Surface } from './schema.ts';
+import type { Pose, RoomObject, Surface, Viewer } from './schema.ts';
 import { completeRoom, worldLayout, type BBox } from './stage.ts';
 
 export type V3 = [number, number, number];
@@ -1297,4 +1297,16 @@ export function virtualSides(fold: RoomFold): { id: string; rect: BBox; wall: Ro
   return fold.faces
     .filter((f) => f.id.startsWith('virtual:'))
     .map((f) => ({ id: f.id, rect: f.rect, wall: faceWall(fold, f) }));
+}
+
+/** Default standpoint of the audience: middle of the back wall (out of the projector light), eyes at 1.6 m. */
+export const DEFAULT_VIEWER: Viewer = { x: 0.5, z: 1, eye: 1.6 };
+
+/** Eye point of the audience in room space. */
+export function viewerPoint(fold: RoomFold, v: Viewer = DEFAULT_VIEWER): V3 {
+  const b = boxFrame(fold);
+  if (!b) return [fold.center[0], v.eye, fold.center[2]];
+  const x = v.x * b.w;
+  const z = v.z * b.d;
+  return [b.o[0] + b.ax[0] * x + b.n[0] * z, v.eye, b.o[2] + b.ax[2] * x + b.n[2] * z];
 }

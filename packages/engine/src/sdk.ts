@@ -78,6 +78,11 @@ export interface WorldContext {
    */
   objectScale?: number;
   /**
+   * Eye point of the audience in room space (`room` coordinates): things standing on the floor
+   * are painted stretched so they look upright from there.
+   */
+  viewer?: [number, number, number];
+  /**
    * The picture of this side is shifted (projector setting): `self` is the shifted window for the
    * static picture, `events` the real one – things that cross over from other sides (overlay) are
    * drawn with it so they stay where they really are.

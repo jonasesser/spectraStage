@@ -23,6 +23,7 @@ import {
   worldLayout,
   completeRoom,
   roomFold,
+  viewerPoint,
   roomHit,
   faceLocal,
   dirFromAngles,
@@ -349,6 +350,7 @@ interface WorldInfo {
   key: string;
   floorLit: boolean;
   fold: RoomFold;
+  viewer: [number, number, number];
   wrap: { x: number; w: number } | null;
   surfaces: WorldSurface[];
   bounds: { x: number; y: number; w: number; h: number };
@@ -1704,6 +1706,7 @@ export class StageRenderer {
       state.room ?? false,
       state.surfaces.map((s) => [s.id, s.kind, s.role ?? 'auto', s.polygon]),
       floorLit,
+      state.viewer ?? null,
     ]);
     if (this.worldCache?.key !== key) {
       // The world always spans the complete room (virtual faces fill sides without a projector).
@@ -1719,13 +1722,15 @@ export class StageRenderer {
         y1 = Math.max(y1, w.rect.y + w.rect.h);
       }
       const bounds = surfaces.length ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : { x: 0, y: 0, w: 1, h: 1 };
+      const fold = roomFold(state.surfaces);
       this.worldCache = {
         key,
         floorLit,
         surfaces,
         bounds,
         wrap: wallRing(surfaces),
-        fold: roomFold(state.surfaces),
+        fold,
+        viewer: viewerPoint(fold, state.viewer),
       };
     }
     return this.worldCache;
@@ -1833,6 +1838,7 @@ export class StageRenderer {
           wrap: world.wrap,
           floorLit: world.floorLit,
           objectScale: prop.obj,
+          viewer: world.viewer,
           room:
             self !== self0
               ? {
