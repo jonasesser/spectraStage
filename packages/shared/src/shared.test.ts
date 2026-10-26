@@ -818,6 +818,14 @@ describe('corner measuring (projector pose from room corners)', () => {
       }
     }
     expect(poseForWalls(fold, ['vorne', 'hinten'])).toBeNull();
+    // a wide projector in the room: front, both sides, floor and ceiling – possible, the corners
+    // are measured anyway
+    const five = poseForWalls(fold, ['links', 'vorne', 'rechts', 'boden', 'decke'])!;
+    expect(five).not.toBeNull();
+    for (const c of corners.filter((k) => k.id.startsWith('vorne'))) {
+      const q = projectPose(five, 16 / 9, boxCorner(b, c.id, b.w, b.d, b.h)!);
+      expect(q).not.toBeNull();
+    }
   });
   it('a single wall (4 coplanar corners) still lines up exactly', () => {
     const truth = aimPose([1.5, 1.0, 3.0], [2.1, 1.2, 0], 60, -0.05);

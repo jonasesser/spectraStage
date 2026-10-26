@@ -1075,52 +1075,70 @@ export function poseForWalls(fold: RoomFold, walls: readonly RoomWall[], aspect 
     b.h * fy,
     b.o[2] + b.ax[2] * b.w * fx + b.n[2] * b.d * fz,
   ];
-  let best: { pose: Pose; cover: number; fov: number } | null = null;
-  for (const fx of [0.1, 0.3, 0.5, 0.7, 0.9])
-    for (const fz of [0.05, 0.25, 0.5, 0.75, 0.95])
-      for (const fy of [0.2, 0.5, 0.85]) {
-        const from = at(fx, fy, fz);
-        const m: V3 = [0, 0, 0];
-        for (const p of need) {
-          const d = sub(p, from);
-          const l = Math.hypot(...d) || 1;
-          for (let k = 0; k < 3; k++) m[k]! += d[k]! / l;
-        }
-        if (Math.hypot(...m) < 0.2 * need.length) continue;
-        const aim = aimPose(from, add(from, m), 90);
-        let tx = 0;
-        let ok = true;
-        const R = poseDirFrame(aim);
-        for (const p of need) {
-          const d = sub(p, from);
-          const z = -dot(d, R.f);
-          if (z < 0.05) {
-            ok = false;
-            break;
+  const search = (needed: V3[], minEach: number): Pose | null => {
+    let best: { pose: Pose; cover: number; fov: number } | null = null;
+    for (const fx of [0.1, 0.3, 0.5, 0.7, 0.9])
+      for (const fz of [0.05, 0.25, 0.5, 0.75, 0.95])
+        for (const fy of [0.2, 0.5, 0.85]) {
+          const from = at(fx, fy, fz);
+          const m: V3 = [0, 0, 0];
+          for (const p of needed) {
+            const d = sub(p, from);
+            const l = Math.hypot(...d) || 1;
+            for (let k = 0; k < 3; k++) m[k]! += d[k]! / l;
           }
-          tx = Math.max(tx, Math.abs(dot(d, R.r)) / z, (Math.abs(dot(d, R.u)) / z) * aspect);
-        }
-        if (!ok) continue;
-        // open the picture a bit more (up to 150°) when that shows more of the chosen sides
-        const fov0 = (2 * Math.atan(tx * 1.04) * 180) / Math.PI;
-        if (fov0 > 150) continue;
-        for (const fov of [fov0, Math.min(150, fov0 + 15), Math.min(150, fov0 + 30)]) {
-          const pose = { ...aim, fov };
-          const perWall = new Map<RoomWall, number>();
-          for (const sm of samples) {
-            const q = projectPose(pose, aspect, sm.p);
-            if (q && Math.abs(q[0]) <= 1.001 && Math.abs(q[1]) <= 1.001)
-              perWall.set(sm.wall, (perWall.get(sm.wall) ?? 0) + 1);
+          if (Math.hypot(...m) < 0.2 * needed.length) continue;
+          const aim = aimPose(from, add(from, m), 90);
+          let tx = 0;
+          let ok = true;
+          const R = poseDirFrame(aim);
+          for (const p of needed) {
+            const d = sub(p, from);
+            const z = -dot(d, R.f);
+            if (z < 0.05) {
+              ok = false;
+              break;
+            }
+            tx = Math.max(tx, Math.abs(dot(d, R.r)) / z, (Math.abs(dot(d, R.u)) / z) * aspect);
           }
-          // every chosen side must show up; then: as much of them as possible
-          const each = walls.map((w) => (perWall.get(w) ?? 0) / 36);
-          if (Math.min(...each) < 0.15) continue;
-          const cover = each.reduce((a, c) => a + c, 0) / walls.length;
-          if (!best || cover > best.cover + 0.02 || (cover > best.cover - 0.02 && fov < best.fov - 0.5))
-            best = { pose, cover, fov };
+          if (!ok) continue;
+          // open the picture a bit more (up to 150°) when that shows more of the chosen sides
+          const fov0 = (2 * Math.atan(tx * 1.04) * 180) / Math.PI;
+          if (fov0 > 150) continue;
+          for (const fov of [fov0, Math.min(150, fov0 + 15), Math.min(150, fov0 + 30)]) {
+            const pose = { ...aim, fov };
+            const perWall = new Map<RoomWall, number>();
+            for (const sm of samples) {
+              const q = projectPose(pose, aspect, sm.p);
+              if (q && Math.abs(q[0]) <= 1.001 && Math.abs(q[1]) <= 1.001)
+                perWall.set(sm.wall, (perWall.get(sm.wall) ?? 0) + 1);
+            }
+            // every chosen side must show up; then: as much of them as possible
+            const each = walls.map((w) => (perWall.get(w) ?? 0) / 36);
+            if (Math.min(...each) < minEach) continue;
+            const cover = each.reduce((a, c) => a + c, 0) / walls.length;
+            if (!best || cover > best.cover + 0.02 || (cover > best.cover - 0.02 && fov < best.fov - 0.5))
+              best = { pose, cover, fov };
+          }
         }
-      }
-  return best?.pose ?? null;
+    return best?.pose ?? null;
+  };
+  // the strict wish: all transitions between the chosen sides in the picture
+  const strict = search(need, 0.15);
+  if (strict) return strict;
+  // many sides (e.g. front, left, right, floor, ceiling): the picture cannot hold every
+  // transition – start from the main one of them and show as much of the others as possible
+  // (the corners are measured anyway, so this is only where measuring starts)
+  const order: RoomWall[] = ['vorne', 'hinten', 'links', 'rechts', 'boden', 'decke'];
+  const mainWall = order.find((w) => walls.includes(w))!;
+  const mainCorners = keys.filter((k) => cornerWalls(k).includes(mainWall)).map(P);
+  const loose = search(mainCorners, 0.03) ?? search(mainCorners, 0);
+  if (loose) return loose;
+  // last resort: from the middle of the opposite side, wide open, towards the main side
+  const c = mainCorners.reduce<V3>((m, p) => [m[0] + p[0] / 4, m[1] + p[1] / 4, m[2] + p[2] / 4], [0, 0, 0]);
+  const centre = at(0.5, 0.5, 0.5);
+  const from: V3 = [centre[0] * 2 - c[0] * 1, centre[1], centre[2] * 2 - c[2] * 1];
+  return aimPose(from, c, 140);
 }
 
 /** Forward (into the picture, negated: points have −z), right and up vectors of a pose. */
