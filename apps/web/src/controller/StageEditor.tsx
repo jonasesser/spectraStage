@@ -3,7 +3,10 @@ import {
   activeProfile,
   fitViewport,
   polygonBBox,
+  roomFold,
+  ROOM_WALL_LABEL,
   stageBounds,
+  virtualSides,
   worldLayout,
   type Output,
   type SessionState,
@@ -48,7 +51,14 @@ export function StageEditor() {
   const pinch = useRef<{ dist: number; box: Box } | null>(null);
 
   const fitBox = useMemo((): Box => {
-    const b = stageBounds(state.surfaces, state.outputs);
+    let b = stageBounds(state.surfaces, state.outputs);
+    for (const v of virtualSides(roomFold(state.surfaces))) {
+      const x0 = Math.min(b.x, v.rect.x);
+      const y0 = Math.min(b.y, v.rect.y);
+      const x1 = Math.max(b.x + b.w, v.rect.x + v.rect.w);
+      const y1 = Math.max(b.y + b.h, v.rect.y + v.rect.h);
+      b = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    }
     const pad = Math.max(b.w, b.h) * 0.12 + 0.5;
     return { x: b.x - pad, y: b.y - pad, w: b.w + pad * 2, h: b.h + pad * 2 };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -280,6 +290,36 @@ export function StageEditor() {
                     strokeWidth={unit * 0.08}
                     pointerEvents="none"
                   />
+                ))}
+                {virtualSides(roomFold(state.surfaces)).map((v) => (
+                  <g key={v.id} pointerEvents="none">
+                    <rect
+                      x={v.rect.x}
+                      y={v.rect.y}
+                      width={v.rect.w}
+                      height={v.rect.h}
+                      fill="rgba(120,100,220,0.1)"
+                      stroke="rgba(160,140,255,0.4)"
+                      strokeWidth={unit * 0.1}
+                      strokeDasharray={`${unit * 0.4} ${unit * 0.3}`}
+                    />
+                    <text
+                      x={v.rect.x + v.rect.w / 2}
+                      y={v.rect.y + v.rect.h / 2}
+                      fontSize={Math.min(v.rect.h * 0.14, v.rect.w * 0.12)}
+                      textAnchor="middle"
+                      fill="rgba(200,190,255,0.7)"
+                    >
+                      {v.wall ? ROOM_WALL_LABEL[v.wall] : ''}
+                      <tspan
+                        x={v.rect.x + v.rect.w / 2}
+                        dy={Math.min(v.rect.h * 0.14, v.rect.w * 0.12) * 1.2}
+                        fontSize={Math.min(v.rect.h * 0.1, v.rect.w * 0.08)}
+                      >
+                        {`${v.rect.w.toFixed(2)} × ${v.rect.h.toFixed(2)} m`}
+                      </tspan>
+                    </text>
+                  </g>
                 ))}
                 {state.surfaces.map((s) => {
                   const poly = polyOf(s);

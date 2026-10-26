@@ -4,6 +4,8 @@ import {
   activeProfile,
   faceWall,
   roomFold,
+  ROOM_WALL_LABEL,
+  virtualSides,
   activeScene,
   ambientActorCues,
   buildActorRoute,
@@ -32,12 +34,22 @@ const LIGHT: Record<string, string> = { ok: '#3ddc97', warn: '#ffd23f', bad: '#f
 
 /** Glanceable stage overview: surfaces glow in their scene colors, outputs show a status light, creatures move live. */
 export function StageMap({ state, presence, selected, allSelected, onToggle, now, L }: Props) {
+  const fold = useMemo(() => roomFold(state.surfaces), [state.surfaces]);
+  // the sides the app adds itself are part of the room too (a projector may light them)
+  const virt = useMemo(() => virtualSides(fold), [fold]);
   const b = useMemo(() => {
-    const raw = stageBounds(state.surfaces, state.outputs);
+    const raw0 = stageBounds(state.surfaces, state.outputs);
+    let raw = raw0;
+    for (const v of virt) {
+      const x0 = Math.min(raw.x, v.rect.x);
+      const y0 = Math.min(raw.y, v.rect.y);
+      const x1 = Math.max(raw.x + raw.w, v.rect.x + v.rect.w);
+      const y1 = Math.max(raw.y + raw.h, v.rect.y + v.rect.h);
+      raw = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    }
     const pad = Math.max(raw.w, raw.h) * 0.06;
     return { x: raw.x - pad, y: raw.y - pad, w: raw.w + pad * 2, h: raw.h + pad * 2 };
-  }, [state.surfaces, state.outputs]);
-  const fold = useMemo(() => roomFold(state.surfaces), [state.surfaces]);
+  }, [state.surfaces, state.outputs, virt]);
   const [tick, setTick] = useState(0);
   const routes = useRef(new Map<string, Route | null>());
 
@@ -124,6 +136,30 @@ export function StageMap({ state, presence, selected, allSelected, onToggle, now
             );
           })}
         </defs>
+        {virt.map((v) => (
+          <g key={v.id} pointerEvents="none">
+            <rect
+              x={v.rect.x}
+              y={v.rect.y}
+              width={v.rect.w}
+              height={v.rect.h}
+              fill="rgba(120,100,220,0.12)"
+              stroke="rgba(160,140,255,0.35)"
+              strokeWidth={fontSize * 0.05}
+            />
+            <text
+              className="label"
+              x={v.rect.x + v.rect.w / 2}
+              y={v.rect.y + v.rect.h / 2}
+              fontSize={fontSize * 0.8}
+              textAnchor="middle"
+              strokeWidth={fontSize * 0.2}
+              style={{ opacity: 0.75 }}
+            >
+              {v.wall ? ROOM_WALL_LABEL[v.wall] : ''}
+            </text>
+          </g>
+        ))}
         {state.surfaces.map((s) => {
           const on = allSelected || selected.includes(s.id);
           const bb = polygonBBox(s.polygon);

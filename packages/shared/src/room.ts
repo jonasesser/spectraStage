@@ -1291,3 +1291,10 @@ export function wallQuads(
   }
   return out;
 }
+
+/** The sides the app adds itself (no own surface): rect in the stage and their name. */
+export function virtualSides(fold: RoomFold): { id: string; rect: BBox; wall: RoomWall | null }[] {
+  return fold.faces
+    .filter((f) => f.id.startsWith('virtual:'))
+    .map((f) => ({ id: f.id, rect: f.rect, wall: faceWall(fold, f) }));
+}
