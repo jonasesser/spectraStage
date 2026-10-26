@@ -92,6 +92,20 @@ export const AnchorSchema = z.object({
 });
 export type Anchor = z.infer<typeof AnchorSchema>;
 
+/**
+ * How a side looks on one projector: proportions (x, y), object size (size: pumpkins, graves,
+ * figures, animals bigger / smaller, their spacing stays) and shift (dx, dy: the picture moves by
+ * this fraction of the side; things crossing over from other sides stay where they really are).
+ */
+export const SideLookSchema = z.object({
+  x: z.number().min(0.05).max(20),
+  y: z.number().min(0.05).max(20),
+  size: z.number().min(0.1).max(10).optional(),
+  dx: z.number().min(-2).max(2).optional(),
+  dy: z.number().min(-2).max(2).optional(),
+});
+export type SideLook = z.infer<typeof SideLookSchema>;
+
 export const ProfileSchema = z.object({
   id,
   name,
@@ -156,10 +170,7 @@ export const ProfileSchema = z.object({
    * always filled completely. Does not change the sizes of the room.
    */
   proportions: z
-    .record(
-      z.enum(['vorne', 'rechts', 'hinten', 'links', 'boden', 'decke']),
-      z.object({ x: z.number().min(0.05).max(20), y: z.number().min(0.05).max(20) }),
-    )
+    .record(z.enum(['vorne', 'rechts', 'hinten', 'links', 'boden', 'decke']), SideLookSchema)
     .optional(),
   /** Measured room corners and edge points → the pose is computed from them. */
   anchors: z.array(AnchorSchema).max(40).optional(),
@@ -635,10 +646,7 @@ export const CommandSchema = z.discriminatedUnion('t', [
   z.object({
     t: z.literal('output.setProportions'),
     outputId: id,
-    proportions: z.record(
-      z.enum(['vorne', 'rechts', 'hinten', 'links', 'boden', 'decke']),
-      z.object({ x: z.number().min(0.05).max(20), y: z.number().min(0.05).max(20) }),
-    ),
+    proportions: z.record(z.enum(['vorne', 'rechts', 'hinten', 'links', 'boden', 'decke']), SideLookSchema),
   }),
   /** Start/stop corner measuring on the projector (sel = highlighted corner). */
   z.object({

@@ -8,7 +8,7 @@
  */
 import { hash01, noise1, smoothstep, TAU } from '@spectrastage/engine';
 import type { Palette } from '../palette.ts';
-import { dancePose, ghost, pumpkin, skeleton } from '../shapes.ts';
+import { dancePose, ghost, objScale, pumpkin, skeleton, withObjectScale } from '../shapes.ts';
 import { addGlow, mixHex, paintTombstone, paintTree, type EnvPalette, type StoneKind } from './env.ts';
 import { monster } from './wall.ts';
 
@@ -215,6 +215,9 @@ function fire(g: CanvasRenderingContext2D, x: number, y: number, s: number, t: n
 
 /** Static part of a piece (painted once into the panorama layer). */
 export function paintPiece(g: CanvasRenderingContext2D, id: PieceId, c: PieceCtx): void {
+  // object size: the whole piece bigger / smaller (its parts are not scaled twice)
+  const k = objScale();
+  if (k !== 1) return withObjectScale(1, () => paintPiece(g, id, { ...c, u: c.u * k }));
   const { x, y, u, env } = c;
   switch (id) {
     case 'graveyard':
@@ -288,6 +291,8 @@ export function paintPiece(g: CanvasRenderingContext2D, id: PieceId, c: PieceCtx
 
 /** Animated part of a piece. */
 export function drawPiece(g: CanvasRenderingContext2D, id: PieceId, c: PieceCtx, t: number): void {
+  const k = objScale();
+  if (k !== 1) return withObjectScale(1, () => drawPiece(g, id, { ...c, u: c.u * k }, t));
   const { x, y, u, pal } = c;
   switch (id) {
     case 'graveyard':

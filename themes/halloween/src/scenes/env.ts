@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { createRng, facePoint, type ParamValues, type Rng } from '@spectrastage/shared';
 import { TAU, type DrawState } from '@spectrastage/engine';
-import { glowSprite } from '../shapes.ts';
+import { glowSprite, objScale } from '../shapes.ts';
 import { FBM_GLSL } from './glsl.ts';
 
 // ---------------------------------------------------------------------------
@@ -1371,6 +1371,7 @@ export function paintTombstone(
   seed: number,
   tilt = 0,
 ): void {
+  w *= objScale();
   const h = kind === 'obelisk' ? w * 2.2 : kind === 'cross' ? w * 1.7 : w * 1.3;
   g.save();
   g.translate(x, y);

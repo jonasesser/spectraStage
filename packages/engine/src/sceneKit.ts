@@ -147,6 +147,8 @@ interface KitOptions {
 
 class KitScene implements SceneInstance {
   private state: DrawState;
+  /** State for the overlay when the picture is shifted (the real, unshifted window). */
+  private overlayState: DrawState | null = null;
   private canvas: CanvasLayer | null = null;
   private shader: ShaderLayer | null = null;
   private lowRT: THREE.WebGLRenderTarget | null = null;
@@ -232,7 +234,7 @@ class KitScene implements SceneInstance {
       this.opts.draw(g, this.state, frame);
       if (this.ctx.overlay) {
         g.save();
-        this.ctx.overlay(g, this.state, frame);
+        this.ctx.overlay(g, this.overlayFor(), frame);
         g.restore();
       }
       g.restore();
@@ -242,12 +244,25 @@ class KitScene implements SceneInstance {
     r.autoClear = prevAuto;
   }
 
+  private overlayFor(): DrawState {
+    const ev = this.ctx.world?.events;
+    if (!ev) return this.state;
+    if (!this.overlayState) this.overlayState = { ...this.state, world: ev, cache: {} };
+    const o = this.overlayState;
+    o.w = this.state.w;
+    o.h = this.state.h;
+    o.ppm = this.state.ppm;
+    o.params = this.state.params;
+    return o;
+  }
+
   resize(width: number, height: number, ppm: number): void {
     if (width === this.state.w && height === this.state.h && ppm === this.state.ppm) return;
     this.state.w = width;
     this.state.h = height;
     this.state.ppm = ppm;
     this.state.cache = {};
+    this.overlayState = null;
     if (this.canvas) {
       const s = this.opts.canvasScale ?? 1;
       this.canvas.resize(Math.max(2, Math.round(width * s)), Math.max(2, Math.round(height * s)));
@@ -257,6 +272,7 @@ class KitScene implements SceneInstance {
   setParams(params: ParamValues): void {
     this.state.params = params;
     this.state.cache = {};
+    this.overlayState = null;
   }
 
   dispose(): void {

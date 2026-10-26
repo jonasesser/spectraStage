@@ -14,6 +14,7 @@
  *  - cat(g, size, walk, moving, t, pal)   side view facing +x at the origin, feet at y = size*0.32.
  *  - tombstone(g, x, y, w, h, pal, tilt?, style 0..2)   base centre at (x, y).
  *  - leaf(g, x, y, size, angle, color, alpha?, glow?), footprint(...), pawPrint(...), star(...).
+ *  - Object size: withObjectScale(v, fn) scales all sizes above inside fn (positions stay).
  *  - Helpers: px, sky, glowSprite, glowAt, glowEllipse, withRim, fadeInOut, sizeBucket,
  *    mixColor, clearSpriteCache.
  *
@@ -30,6 +31,23 @@ import type { Palette } from './palette.ts';
 // ---------------------------------------------------------------------------
 // Sizing & glow sprites
 // ---------------------------------------------------------------------------
+
+// Object size of the side being drawn (projector setting): characters and props get bigger or
+// smaller around their anchor; where they are placed does not change. Set per render call.
+let OBJ = 1;
+export function objScale(): number {
+  return OBJ;
+}
+/** Run `fn` with the object size `v` (restored afterwards). */
+export function withObjectScale<T>(v: number, fn: () => T): T {
+  const prev = OBJ;
+  OBJ = v > 0 && Number.isFinite(v) ? v : 1;
+  try {
+    return fn();
+  } finally {
+    OBJ = prev;
+  }
+}
 
 /** Physical size in meters → pixels, clamped to stay sensible on tiny previews and huge surfaces. */
 export function px(
@@ -590,6 +608,7 @@ function ghostFace(face: GhostFace, blink: boolean, blush: string, U: number): S
 
 /** Ghost of total height `size`, centered at (x, y). */
 export function ghost(g: CanvasRenderingContext2D, x: number, y: number, size: number, o: GhostOpts): void {
+  size *= OBJ;
   const alpha = o.alpha ?? 1;
   if (alpha <= 0.01 || size < 2) return;
   const U = sizeBucket(size);
@@ -759,6 +778,7 @@ export function pumpkin(
   size: number,
   o: PumpkinOpts,
 ): void {
+  size *= OBJ;
   if (size < 2) return;
   const alpha = o.alpha ?? 1;
   if (alpha <= 0.01) return;
@@ -1046,6 +1066,7 @@ export function skeleton(
   color = '#f4f1ea',
   glowColor = '#c9a6ff',
 ): void {
+  size *= OBJ;
   if (size < 4) return;
   const u = size / 10;
   const U10 = sizeBucket(size);
@@ -1294,6 +1315,7 @@ export function bat(
   pal: Palette,
   alpha = 1,
 ): void {
+  size *= OBJ;
   if (size < 2 || alpha <= 0.01) return;
   const fq = Math.round((Math.max(-1, Math.min(1, flap)) + 1) * 4);
   g.save();
@@ -1468,6 +1490,7 @@ export function spider(
   pal: Palette,
   color = '#2a1840',
 ): void {
+  size *= OBJ;
   const s = size;
   if (s < 2) return;
   g.save();
@@ -1605,6 +1628,7 @@ export function fuzzySpider(
   eyeColor = '#ffe14d',
   seed = 0,
 ): void {
+  size *= OBJ;
   const s = size;
   if (s < 2) return;
   const rimC = rim > 0 ? rimColor : '#7a4dbf';
@@ -1718,6 +1742,7 @@ export function cat(
   t: number,
   pal: Palette,
 ): void {
+  size *= OBJ;
   const s = size;
   if (s < 2) return;
   g.save();
@@ -1904,6 +1929,8 @@ export function tombstone(
   tilt = 0,
   style = 0,
 ): void {
+  w *= OBJ;
+  h *= OBJ;
   if (w < 2 || h < 2) return;
   const q = Math.max(0.5, Math.round((h / w) * 4) / 4);
   g.save();
@@ -1929,6 +1956,7 @@ export function footprint(
   color: string,
   alpha: number,
 ): void {
+  size *= OBJ;
   if (alpha <= 0.01) return;
   g.save();
   g.translate(x, y);
@@ -1970,6 +1998,7 @@ export function pawPrint(
   color: string,
   alpha: number,
 ): void {
+  size *= OBJ;
   if (alpha <= 0.01) return;
   g.save();
   g.translate(x, y);

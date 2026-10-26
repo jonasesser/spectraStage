@@ -72,6 +72,17 @@ export interface WorldContext {
    * Same on every projector PC (from the shared show state).
    */
   floorLit?: boolean;
+  /**
+   * Object size on this side (projector setting): pumpkins, graves, figures, animals bigger or
+   * smaller – their places and spacing stay. 1 = normal.
+   */
+  objectScale?: number;
+  /**
+   * The picture of this side is shifted (projector setting): `self` is the shifted window for the
+   * static picture, `events` the real one – things that cross over from other sides (overlay) are
+   * drawn with it so they stay where they really are.
+   */
+  events?: WorldContext;
 }
 
 export interface SceneInstance {

@@ -103,11 +103,15 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
   “room depth” (sides, floor, ceiling) – the pictures always fill the sides completely. Choosing
   another side keeps the corners already measured (front + left = 6 corners, not 8). Measuring
   replaces an earlier flat 2D corner correction. **Proportions** (per projector, per side, horizontal
-  and vertical, 10 %–200 %): narrower = the scene is laid out for a bigger area and put onto the
+  and vertical, 5 %–500 %): narrower = the scene is laid out for a bigger area and put onto the
   side, so things get narrower and more of them fit; wider = the opposite. The side always stays lit
   completely, the room sizes (Stage → room size, in meters) do not change. On the side walls, floor and ceiling the
   proportion eases in from the edge to the front wall (100 % right at the edge, the set value at the
-  far end), so creatures still go round the corner seamlessly; the front/back wall changes evenly. “Measure again from scratch” resets points,
+  far end), so creatures still go round the corner seamlessly; the front/back wall changes evenly.
+  **Object size** (per side, 25 %–400 %): pumpkins, graves, figures and animals bigger or smaller,
+  their places and spacing stay. **Shift** (per side, ↔ and ↕): moves the picture of the side, e.g.
+  the floor so the path lies under the real door; things crossing over from other sides (bats,
+  world events) are drawn where they really are, so they still meet at the corner. “Measure again from scratch” resets points,
   position and 2D corrections; Stage → room panel can restore the planned width of the front wall.
 - **📦 Objects**: add a box or a pillar; while it is selected every projector shows its yellow
   outline – drag it on the floor in the 3D view, nudge and size it until the outline sits on the real

@@ -136,8 +136,24 @@ interface Proportion {
   ax: number;
   ay: number;
   warp: [number, number, number, number];
+  /** Shift of the picture in fractions of the (virtual) side, and the object size factor. */
+  dx: number;
+  dy: number;
+  obj: number;
   key: string;
 }
+
+const NO_PROP: Proportion = {
+  fx: 1,
+  fy: 1,
+  ax: 0.5,
+  ay: 0.5,
+  warp: [0, 0, 1, 1],
+  dx: 0,
+  dy: 0,
+  obj: 1,
+  key: '',
+};
 
 const LAYER_FRAG = /* glsl */ `
 uniform sampler2D texA;
@@ -1721,16 +1737,22 @@ export class StageRenderer {
    * filled completely. The anchor is the edge towards the front wall.
    */
   private proportionFor(s: Surface, profile: Profile, world: WorldInfo, room: boolean): Proportion {
-    const none: Proportion = { fx: 1, fy: 1, ax: 0.5, ay: 0.5, warp: [0, 0, 1, 1], key: '' };
-    if (!room || !profile.proportions) return none;
+    if (!room || !profile.proportions) return NO_PROP;
     const face = world.fold.faces.find((f) => f.id === s.id);
     const wall = face ? faceWall(world.fold, face) : null;
     const p = wall ? profile.proportions[wall] : undefined;
-    if (!p || (Math.abs(p.x - 1) < 1e-3 && Math.abs(p.y - 1) < 1e-3)) return none;
-    const key = `${p.x.toFixed(3)},${p.y.toFixed(3)}`;
+    if (!p) return NO_PROP;
+    const size = p.size ?? 1;
+    const dx = p.dx ?? 0;
+    const dy = p.dy ?? 0;
+    const same = (a: number, b: number) => Math.abs(a - b) < 1e-3;
+    const plain = same(p.x, 1) && same(p.y, 1);
+    if (plain && same(size, 1) && same(dx, 0) && same(dy, 0)) return NO_PROP;
+    const key = [p.x, p.y, size, dx, dy].map((v) => v.toFixed(3)).join(',');
+    const extra = { dx, dy, obj: size, key };
+    if (plain) return { ...NO_PROP, ...extra };
     // front / back wall: the whole wall evenly
-    if (wall === 'vorne' || wall === 'hinten')
-      return { fx: 1 / p.x, fy: 1 / p.y, ax: 0.5, ay: 0.5, warp: [0, 0, 1, 1], key };
+    if (wall === 'vorne' || wall === 'hinten') return { ...NO_PROP, fx: 1 / p.x, fy: 1 / p.y, ...extra };
     // the other sides: 100 % at the edge to the front wall (things go round the corner seamlessly),
     // easing to the set proportion at the far end. Where the edge lies in the unfolded stage:
     // left wall – its right end, right wall – its left end, floor – top, ceiling – bottom.
@@ -1738,10 +1760,10 @@ export class StageRenderer {
     const la = (pa: number) => Math.max(1, 1 / pa);
     if (wall === 'links' || wall === 'rechts') {
       const seam = wall === 'links' ? 1 : 0;
-      return { fx: ld(p.x), fy: la(p.y), ax: seam, ay: 0.5, warp: [1, seam, p.x, p.y], key };
+      return { fx: ld(p.x), fy: la(p.y), ax: seam, ay: 0.5, warp: [1, seam, p.x, p.y], ...extra };
     }
     const seam = wall === 'boden' ? 0 : 1;
-    return { fx: la(p.x), fy: ld(p.y), ax: 0.5, ay: seam, warp: [2, seam, p.y, p.x], key };
+    return { fx: la(p.x), fy: ld(p.y), ax: 0.5, ay: seam, warp: [2, seam, p.y, p.x], ...extra };
   }
 
   private renderSurface(
@@ -1753,7 +1775,7 @@ export class StageRenderer {
     output: Output | null,
     outputs: readonly Output[],
     world: WorldInfo,
-    prop: Proportion = { fx: 1, fy: 1, ax: 0.5, ay: 0.5, warp: [0, 0, 1, 1], key: '' },
+    prop: Proportion = NO_PROP,
   ): void {
     let layer = this.layers.get(s.id);
     if (!layer) {
@@ -1791,46 +1813,50 @@ export class StageRenderer {
       const mod = runtime?.scenes[active.scene.sceneId];
       const self0 = world.surfaces.find((w) => w.id === s.id);
       // in the shared world the side covers a bigger / smaller area, from its edge at the front wall
-      const self =
-        self0 && prop.key
-          ? {
-              ...self0,
-              rect: {
-                x: self0.rect.x + self0.rect.w * prop.ax * (1 - prop.fx),
-                y: self0.rect.y + self0.rect.h * prop.ay * (1 - prop.fy),
-                w: self0.rect.w * prop.fx,
-                h: self0.rect.h * prop.fy,
-              },
-            }
-          : self0;
+      const vr = self0
+        ? {
+            x: self0.rect.x + self0.rect.w * prop.ax * (1 - prop.fx),
+            y: self0.rect.y + self0.rect.h * prop.ay * (1 - prop.fy),
+            w: self0.rect.w * prop.fx,
+            h: self0.rect.h * prop.fy,
+          }
+        : null;
+      // shifted picture: the window into the world moves the other way
+      const shift = vr ? { x: prop.dx * vr.w, y: prop.dy * vr.h } : { x: 0, y: 0 };
+      const ctxFor = (rect: typeof vr) => {
+        if (!self0 || !rect) return undefined;
+        const self = prop.key ? { ...self0, rect } : self0;
+        return {
+          self,
+          surfaces: world.surfaces.map((w) => (w.id === s.id ? self : w)),
+          bounds: world.bounds,
+          wrap: world.wrap,
+          floorLit: world.floorLit,
+          objectScale: prop.obj,
+          room:
+            self !== self0
+              ? {
+                  ...world.fold,
+                  // the side in the folded room: the same plane, the bigger / smaller area
+                  faces: world.fold.faces.map((f) =>
+                    f.id === s.id ? { ...f, rect, o: facePoint(f, rect.x, rect.y) } : f,
+                  ),
+                }
+              : world.fold,
+          seed: hashInts(Math.floor(active.startedAt / 1000) % 2147483647, 0x3077),
+        };
+      };
+      const shifted = vr && (shift.x || shift.y) ? { ...vr, x: vr.x - shift.x, y: vr.y - shift.y } : vr;
+      const events = ctxFor(vr);
+      const worldCtx = ctxFor(shifted);
       if (
         mod &&
         (!layer.current || layer.current.key !== active.key || layer.current.worldKey !== worldKey)
       ) {
         const rt = makeRT(sw, sh);
         const inst = mod.create({
-          world: self
-            ? {
-                self,
-                surfaces: world.surfaces.map((w) => (w.id === s.id ? self : w)),
-                bounds: world.bounds,
-                wrap: world.wrap,
-                floorLit: world.floorLit,
-                room:
-                  self && self0 && self !== self0
-                    ? {
-                        ...world.fold,
-                        // the side in the folded room: the same plane, the bigger / smaller area
-                        faces: world.fold.faces.map((f) =>
-                          f.id === s.id
-                            ? { ...f, rect: self.rect, o: facePoint(f, self.rect.x, self.rect.y) }
-                            : f,
-                        ),
-                      }
-                    : world.fold,
-                seed: hashInts(Math.floor(active.startedAt / 1000) % 2147483647, 0x3077),
-              }
-            : undefined,
+          // things crossing over from the other sides are drawn where they really are (no shift)
+          world: worldCtx && events && shifted !== vr ? { ...worldCtx, events } : worldCtx,
           renderer: r,
           width: sw,
           height: sh,
