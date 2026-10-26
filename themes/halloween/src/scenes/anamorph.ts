@@ -2,6 +2,7 @@
  * Things standing on the real floor (jack-o'-lanterns along the path …) painted for the audience:
  * stretched away from the viewer like 3D street art, so from the standpoint (Stage → room) they
  * look upright instead of lying flat like a sticker. Exact per horizontal strip of the picture.
+ * Only for things that stand or hover; flat things (webs, spiders, footprints, leaves) stay flat.
  */
 import type { DrawState } from '@spectrastage/engine';
 import type { RoomFace } from '@spectrastage/shared';
@@ -104,4 +105,30 @@ export function drawStanding(
     g.drawImage(spr, 0, y0, S, y1 - y0, 0, y0, S, y1 - y0 + 0.6);
     g.restore();
   }
+}
+
+/**
+ * Draws something standing on the floor with its foot at the scene pixel (x, y): upright for the
+ * audience when this is a real floor (else just as it is). `paint(q, fx, fy)` draws it with its
+ * foot at (fx, fy); `box` is the size of the square it needs (px, incl. glow).
+ */
+export function upright(
+  g: CanvasRenderingContext2D,
+  s: DrawState,
+  x: number,
+  y: number,
+  box: number,
+  paint: (q: CanvasRenderingContext2D, fx: number, fy: number) => void,
+): void {
+  const v = floorView(s);
+  // foot not on this floor (still on the wall above it): as it is
+  if (!v || y < 0 || box < 4) {
+    paint(g, x, y);
+    return;
+  }
+  const S = Math.ceil(box);
+  const foot = S * 0.72;
+  drawStanding(g, s, v, v.f.rect.x + x / s.ppm, v.f.rect.y + y / s.ppm, S, foot, (q) =>
+    paint(q, S / 2, foot),
+  );
 }

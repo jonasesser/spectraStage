@@ -11,7 +11,8 @@ import {
 } from '@spectrastage/engine';
 import type { DrawState, SceneModule } from '@spectrastage/engine';
 import { palette } from '../palette.ts';
-import { footprint, ghost, glowAt, pumpkin, px, spider, star } from '../shapes.ts';
+import { footprint, ghost, glowAt, objScale, pumpkin, px, spider, star } from '../shapes.ts';
+import { upright } from './anamorph.ts';
 import { countOf, densityOf, mod, speedOf } from './common.ts';
 import { FBM_GLSL } from './glsl.ts';
 import { envPalette, FLOOR_FRAG, floorUniforms, paintLeaf } from './env.ts';
@@ -391,13 +392,17 @@ const pumpkinTrail: SceneModule = hybridScene(
         star(g, tp.x, sy, size * 0.14 * (1 - k / 9), k % 2 ? pal.secondary : '#ffffff', 1 - k / 9);
       }
       const hop = Math.abs(Math.sin(t * 3 + i * 0.9));
-      pumpkin(g, p.x, p.y - hop * size * 0.35, size, {
-        pal,
-        face: (i + s.seed) % 6,
-        t,
-        squash: hop < 0.2 ? (0.2 - hop) * 3 : 0,
-        glow: 0.9,
-      });
+      // hops on the floor: upright for the audience on a real floor
+      const half = (size * objScale()) / 2;
+      upright(g, s, p.x, p.y + half, half * 5, (q, fx, fy) =>
+        pumpkin(q, fx, fy - half - hop * size * 0.35, size, {
+          pal,
+          face: (i + s.seed) % 6,
+          t,
+          squash: hop < 0.2 ? (0.2 - hop) * 3 : 0,
+          glow: 0.9,
+        }),
+      );
     }
   },
   { shaderScale: 0.5 },
@@ -508,23 +513,27 @@ const tinyGhostParade: SceneModule = hybridScene(
         g.ellipse(x, y + size * 0.55, size * 0.3, size * 0.08, 0, 0, TAU);
         g.fill();
         const leader = i % 6 === 0;
-        ghost(g, x, y, size, {
-          color: pal.ghost,
-          t: t + i,
-          face: leader ? 'oo' : i % 3 === 0 ? 'happy' : 'sleepy',
-          wave: Math.sin(t * 6 + i) * 0.5,
-          mirror: horizontal ? dir < 0 : false,
-          glow: 0.7,
+        const half = (size * objScale()) / 2;
+        upright(g, s, x, y + half, half * 5, (q, fx, fy) => {
+          const gy = fy - half;
+          ghost(q, fx, gy, size, {
+            color: pal.ghost,
+            t: t + i,
+            face: leader ? 'oo' : i % 3 === 0 ? 'happy' : 'sleepy',
+            wave: Math.sin(t * 6 + i) * 0.5,
+            mirror: horizontal ? dir < 0 : false,
+            glow: 0.7,
+          });
+          if (leader) {
+            const lx = fx + (horizontal ? dir * size * 0.45 : size * 0.45);
+            const ly = gy - size * 0.1;
+            glowAt(q, lx, ly, size * 0.5, pal.secondary, 0.7 + 0.2 * Math.sin(t * 7));
+            q.fillStyle = pal.secondary;
+            q.beginPath();
+            q.arc(lx, ly, size * 0.08, 0, TAU);
+            q.fill();
+          }
         });
-        if (leader) {
-          const lx = x + (horizontal ? dir * size * 0.45 : size * 0.45);
-          const ly = y - size * 0.1;
-          glowAt(g, lx, ly, size * 0.5, pal.secondary, 0.7 + 0.2 * Math.sin(t * 7));
-          g.fillStyle = pal.secondary;
-          g.beginPath();
-          g.arc(lx, ly, size * 0.08, 0, TAU);
-          g.fill();
-        }
       }
     }
   },

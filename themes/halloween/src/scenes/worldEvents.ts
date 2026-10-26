@@ -11,7 +11,8 @@
 import { hash01, smoothstep } from '@spectrastage/engine';
 import type { DrawState } from '@spectrastage/engine';
 import type { Palette } from '../palette.ts';
-import { bat, cat, ghost, pumpkin } from '../shapes.ts';
+import { bat, cat, ghost, objScale, pumpkin } from '../shapes.ts';
+import { upright } from './anamorph.ts';
 import { dirFromAngles, faceLocal, mainAzimuth, roomHit } from '@spectrastage/shared';
 
 export type WorldEventKind = 'catJump' | 'ghostDive' | 'pumpkinRoll';
@@ -130,11 +131,15 @@ export function drawWorldEvents(g: CanvasRenderingContext2D, s: DrawState, pal: 
         flip = dir < 0;
       }
       if (!near(px, py, size)) continue;
-      g.save();
-      g.translate(X(px), Y(py));
-      if (flip) g.scale(-1, 1);
-      cat(g, size * ppm, lt * 9, moving, t, pal);
-      g.restore();
+      // on a real floor: upright for the audience
+      const feet = size * ppm * objScale() * 0.32;
+      upright(g, s, X(px), Y(py) + feet, size * ppm * objScale() * 2.4, (q, fx, fy) => {
+        q.save();
+        q.translate(fx, fy - feet);
+        if (flip) q.scale(-1, 1);
+        cat(q, size * ppm, lt * 9, moving, t, pal);
+        q.restore();
+      });
     } else if (ev === 'ghostDive') {
       // swoops out of the house (or down from the sky), glides over the ground, fades out
       const sx = HAS_HOUSE.has(worldId) ? G.houseX : G.main.x + G.main.w * (0.2 + 0.6 * h(4));
@@ -147,14 +152,17 @@ export function drawWorldEvents(g: CanvasRenderingContext2D, s: DrawState, pal: 
       const size = G.U * (0.18 + 0.1 * Math.sin(u * Math.PI));
       const a = smoothstep(0, 0.12, u) * (1 - smoothstep(0.85, 1, u));
       if (!near(px, py, size)) continue;
-      ghost(g, X(px), Y(py), size * ppm, {
-        color: pal.ghost,
-        t,
-        alpha: a,
-        face: u < 0.5 ? 'wow' : 'happy',
-        wave: Math.sin(t * 6) * 0.7,
-        mirror: side < 0,
-      });
+      const half = (size * ppm * objScale()) / 2;
+      upright(g, s, X(px), Y(py) + half, half * 5, (q, fx, fy) =>
+        ghost(q, fx, fy - half, size * ppm, {
+          color: pal.ghost,
+          t,
+          alpha: a,
+          face: u < 0.5 ? 'wow' : 'happy',
+          wave: Math.sin(t * 6) * 0.7,
+          mirror: side < 0,
+        }),
+      );
     } else {
       // a pumpkin topples off the lawn edge, bounces onto the floor and rolls away
       const sx = G.main.x + G.main.w * (0.15 + 0.7 * h(4));
@@ -177,11 +185,14 @@ export function drawWorldEvents(g: CanvasRenderingContext2D, s: DrawState, pal: 
         rot = (2 + u * 14) * side;
       }
       if (!near(px, py, size)) continue;
-      g.save();
-      g.translate(X(px), Y(py));
-      g.rotate(rot);
-      pumpkin(g, 0, 0, size * ppm, { pal, face: Math.floor(h(6) * 6), t, glow: 0.9 });
-      g.restore();
+      const half = (size * ppm * objScale()) / 2;
+      upright(g, s, X(px), Y(py) + half, half * 5, (q, fx, fy) => {
+        q.save();
+        q.translate(fx, fy - half);
+        q.rotate(rot);
+        pumpkin(q, 0, 0, size * ppm, { pal, face: Math.floor(h(6) * 6), t, glow: 0.9 });
+        q.restore();
+      });
     }
   }
 }
