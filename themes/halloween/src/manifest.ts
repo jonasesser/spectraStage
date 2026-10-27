@@ -57,6 +57,44 @@ function neonScene(
   return sc;
 }
 
+/** Monster breaking out of the wall (3D): only tempo and the dark pause between appearances. */
+function breakoutScene(
+  id: string,
+  name: [string, string],
+  description: [string, string],
+  icon: string,
+  colors: [string, string],
+): SceneManifest {
+  return {
+    id,
+    name: L(...name),
+    description: L(...description),
+    kinds: ['wall'],
+    icon,
+    colors,
+    params: [
+      {
+        key: 'speed',
+        label: L('Speed', 'Tempo'),
+        type: 'number',
+        min: 0.5,
+        max: 1.5,
+        step: 0.05,
+        default: 1,
+      },
+      {
+        key: 'pause',
+        label: L('Dark pause between appearances (s)', 'Dunkle Pause zwischen den Auftritten (s)'),
+        type: 'number',
+        min: 0,
+        max: 120,
+        step: 1,
+        default: 6,
+      },
+    ],
+  };
+}
+
 const EVENT_OPTIONS = [
   { value: 'mix', label: L('Mixed surprises', 'Gemischte Überraschungen') },
   { value: 'creatures', label: L('Creatures only', 'Nur Tiere & Geister') },
@@ -216,6 +254,26 @@ const scenes: SceneManifest[] = [
     ['wall'],
     '🏚️',
     ['#2b1a4a', '#ff8a1f'],
+  ),
+  breakoutScene(
+    'wallDemon',
+    ['Demon breaks out (3D)', 'Dämon bricht durch die Wand (3D)'],
+    [
+      'Realistic 3D: knocking, a face presses the dark wall out, it bursts – a demon pushes its head and claws out and roars. Looks real from the audience standpoint (Stage → room). Scary, not for small children.',
+      'Realistisches 3D: Klopfen, ein Gesicht drückt die dunkle Wand aus, sie bricht – ein Dämon schiebt Kopf und Klauen heraus und brüllt. Wirkt echt vom Zuschauer-Standpunkt (Bühne → Raum). Gruselig, nicht für kleine Kinder.',
+    ],
+    '😈',
+    ['#000000', '#ff4d1a'],
+  ),
+  breakoutScene(
+    'wallBuddy',
+    ['Cute monster peeks out (3D)', 'Süßes Monster guckt raus (3D)'],
+    [
+      'The same in friendly: a fluffy monster pushes through the dark wall, blinks, giggles and waves hello. For kids.',
+      'Das Gleiche in lieb: ein flauschiges Monster drückt sich durch die dunkle Wand, blinzelt, kichert und winkt Hallo. Für Kinder.',
+    ],
+    '🧸',
+    ['#000000', '#8a5cff'],
   ),
   scene(
     'skeletonDisco',
