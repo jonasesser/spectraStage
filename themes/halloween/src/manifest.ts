@@ -256,14 +256,24 @@ const scenes: SceneManifest[] = [
     ['#2b1a4a', '#ff8a1f'],
   ),
   breakoutScene(
-    'wallDemon',
-    ['Demon breaks out (3D)', 'Dämon bricht durch die Wand (3D)'],
+    'wallMummy',
+    ['Mummy breaks out (3D)', 'Mumie bricht durch die Wand (3D)'],
     [
-      'Realistic 3D: knocking, a face presses the dark wall out, it bursts – a demon pushes its head and claws out and roars. Looks real from the audience standpoint (Stage → room). Scary, not for small children.',
-      'Realistisches 3D: Klopfen, ein Gesicht drückt die dunkle Wand aus, sie bricht – ein Dämon schiebt Kopf und Klauen heraus und brüllt. Wirkt echt vom Zuschauer-Standpunkt (Bühne → Raum). Gruselig, nicht für kleine Kinder.',
+      'Realistic 3D: knocking, a face presses the dark wall out, it bursts in a cloud of dust – a mummy in torn linen pushes its head out, grabs the edge, groans and reaches for you. Looks real from the audience standpoint (Stage → room). Scary, not for small children.',
+      'Realistisches 3D: Klopfen, ein Gesicht drückt die dunkle Wand aus, sie bricht in einer Staubwolke – eine Mumie in zerrissenen Binden schiebt den Kopf heraus, krallt sich an die Kante, stöhnt und greift nach dir. Wirkt echt vom Zuschauer-Standpunkt (Bühne → Raum). Gruselig, nicht für kleine Kinder.',
     ],
-    '😈',
-    ['#000000', '#ff4d1a'],
+    '🧟',
+    ['#000000', '#5dff8a'],
+  ),
+  breakoutScene(
+    'wallGuest',
+    ['Guests break out (3D)', 'Gäste brechen durch die Wand (3D)'],
+    [
+      'The wall bulges, cracks and bursts – then the photo of one of your guests (ghost photos) comes out of the hole, lit from behind. Every round another guest, newest first. Without photos the cute monster comes.',
+      'Die Wand beult sich aus, reißt und bricht – dann kommt das Foto eines eurer Gäste (Geister-Fotos) aus dem Loch, von hinten angeleuchtet. Jede Runde ein anderer Gast, die neuesten zuerst. Ohne Fotos kommt das süße Monster.',
+    ],
+    '📸',
+    ['#000000', '#b48cff'],
   ),
   breakoutScene(
     'wallBuddy',

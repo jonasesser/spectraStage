@@ -45,6 +45,16 @@ export interface SceneContext {
    * events that cross surfaces, e.g. a cat jumping out of the house onto the driveway.
    */
   overlay?: (g: CanvasRenderingContext2D, s: DrawState, f: FrameInfo) => void;
+  /**
+   * The guests' photos of this show (ghost photos, cut out): `list()` newest first, `get(id)` the
+   * picture once loaded (null while loading – call again later).
+   */
+  photos?: ScenePhotos;
+}
+
+export interface ScenePhotos {
+  list(): readonly { id: string; at: number }[];
+  get(id: string): { img: CanvasImageSource & { width: number; height: number } } | null;
 }
 
 /**

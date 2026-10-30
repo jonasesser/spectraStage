@@ -116,7 +116,8 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
   things standing on the real floor (jack-o'-lanterns, ghosts, the cat, rolling pumpkins; not
   webs, spiders or footprints) are painted stretched away from there (like 3D street art), so
   from that spot they look upright; from elsewhere they look stretched.
-  The 3D wall scenes **Demon breaks out** / **Cute monster peeks out** (wall scenes, dark wall,
+  The 3D wall scenes **Mummy breaks out** / **Cute monster peeks out** / **Guests break out** (the
+  newest ghost photos come out of the wall one per round) (wall scenes, dark wall,
   ~50 s loop with sound; tempo and dark pause adjustable) are rendered from the same standpoint, so
   the monster seems to come out of the real wall. They are raymarched – a weak projector PC may
   stutter. “Measure again from scratch” resets points,

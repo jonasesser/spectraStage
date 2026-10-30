@@ -52,7 +52,7 @@ import {
   type ThemeCatalog,
   type Viewport,
 } from '@spectrastage/shared';
-import type { SceneInstance, ThemeRuntime } from './sdk.ts';
+import type { SceneInstance, ScenePhotos, ThemeRuntime } from './sdk.ts';
 import { canvasTexture } from './sceneKit.ts';
 import { buildWarpMesh } from './warp.ts';
 import { paintMask, paintMaskOverlay } from './masks.ts';
@@ -688,6 +688,11 @@ export class StageRenderer {
   }
 
   private ghostImages: ((id: string) => GhostPicture | null) | null = null;
+  /** The guests' photos for scenes (newest first; pictures through the ghost image cache). */
+  private readonly photos: ScenePhotos = {
+    list: () => [...(this.state?.ghosts ?? [])].sort((a, b) => b.at - a.at),
+    get: (id) => this.ghostImages?.(id) ?? null,
+  };
   /** Ghost photos (zombie camera) for the flying ghosts of the show. */
   setGhostImages(fn: ((id: string) => GhostPicture | null) | null): void {
     this.ghostImages = fn;
@@ -1871,6 +1876,7 @@ export class StageRenderer {
           params: active.scene.params,
           kind: s.kind,
           quality: this.quality,
+          photos: this.photos,
         });
         layer.disposeSlot(layer.previous);
         const elapsed = now - active.startedAt;
