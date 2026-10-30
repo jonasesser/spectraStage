@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import {
   activeProfile,
-  activeScene,
+  activeSceneFor,
   ambientActorCues,
   ambientSchedule,
   itemCueSchedule,
@@ -1806,7 +1806,7 @@ export class StageRenderer {
     const primary = this.soundPrimaryFor(output, outputs, centroid);
 
     // Scene selection (deterministic from playback + clock)
-    const active = activeScene(s.playback, state.playlists, now);
+    const active = activeSceneFor(s, state.playlists, now);
     // the scene's own size: bigger / smaller than the side for other proportions
     let sw = lw;
     let sh = lh;

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { catalog } from '@spectrastage/catalog/manifests';
 import {
-  activeScene,
+  activeSceneFor,
   sanitizeParams,
   type ParamDef,
   type ParamValues,
+  type SceneManifest,
   type SessionState,
   type Surface,
 } from '@spectrastage/shared';
@@ -24,13 +25,14 @@ export function ScenesView() {
   const targets = state.surfaces.filter((s) => sel.ids.includes(s.id));
   const activeIds = new Set(
     targets.map((s) => {
-      const a = activeScene(s.playback, state.playlists, now);
+      const a = activeSceneFor(s, state.playlists, now);
       return a ? `${a.scene.themeId}/${a.scene.sceneId}` : '';
     }),
   );
   const kinds = new Set(targets.map((s) => s.kind));
   const worlds = theme.scenes.filter((sc) => sc.world);
-  const scenes = [...theme.scenes.filter((sc) => !sc.world)].sort((a, b) => {
+  const oneShots = theme.scenes.filter((sc) => sc.oneShotSec);
+  const scenes = [...theme.scenes.filter((sc) => !sc.world && !sc.oneShotSec)].sort((a, b) => {
     const sa = a.kinds.some((k) => kinds.has(k)) ? 0 : 1;
     const sb = b.kinds.some((k) => kinds.has(k)) ? 0 : 1;
     return sa - sb;
@@ -86,6 +88,9 @@ export function ScenesView() {
             ))}
           </div>
         </section>
+      )}
+      {oneShots.length > 0 && (
+        <InsertPanel themeId={theme.id} scenes={oneShots} targets={targets} state={state} L={L} />
       )}
       <section className="panel">
         <div className="section-title">
@@ -176,9 +181,113 @@ export function ScenesView() {
   );
 }
 
+/**
+ * Scenes played in between by hand: pick one, set it up (e.g. the guests' photos), play it in –
+ * the running scene fades out, it plays once, then the playlist / scene underneath goes on.
+ */
+function InsertPanel({
+  themeId,
+  scenes,
+  targets,
+  state,
+  L,
+}: {
+  themeId: string;
+  scenes: SceneManifest[];
+  targets: Surface[];
+  state: SessionState;
+  L: Tr;
+}) {
+  const store = useStore();
+  const [pick, setPick] = useState<string | null>(null);
+  const [params, setParams] = useState<ParamValues>({});
+  const sc = scenes.find((x) => x.id === pick);
+  // without a selection: the main wall
+  const main = state.surfaces.find((s) => s.role === 'main') ?? state.surfaces.find((s) => s.kind === 'wall');
+  const on = targets.length ? targets : main ? [main] : [];
+  const [, tick] = useState(0);
+  const now = store.conn.clock.now();
+  const running = on.map((s) => s.insert).find((i) => i && now < i.endAt && now >= i.startedAt - 1000);
+  useEffect(() => {
+    if (!running) return;
+    const t = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [running]);
+  return (
+    <section className="panel">
+      <div className="section-title">
+        <h2>🎬 {L('Play in once', 'Einmalig einspielen')}</h2>
+        <span className="muted small">
+          {L('Plays once, then the playlist goes on', 'Läuft einmal, danach geht die Playlist weiter')}
+        </span>
+      </div>
+      <div className="tiles">
+        {scenes.map((x) => (
+          <button
+            key={x.id}
+            className={`tile scene-tile${pick === x.id ? ' active' : ''}`}
+            style={{ background: `linear-gradient(135deg, ${x.colors[0]}, ${x.colors[1]})` }}
+            onClick={() => {
+              setPick(pick === x.id ? null : x.id);
+              setParams(sanitizeParams(x.params, {}));
+            }}
+            title={L.text(x.description)}
+          >
+            <span className="ti" aria-hidden="true">
+              {x.icon}
+            </span>
+            {L.text(x.name)}
+          </button>
+        ))}
+      </div>
+      {sc && (
+        <div className="stack" style={{ marginTop: '0.6rem' }}>
+          <span className="muted small">{L.text(sc.description)}</span>
+          {sc.params.map((p) => (
+            <ParamControl
+              key={p.key}
+              def={p}
+              value={params[p.key]}
+              onChange={(v) => setParams((o) => ({ ...o, [p.key]: v }))}
+              L={L}
+            />
+          ))}
+          <button
+            className="btn primary"
+            disabled={!on.length}
+            onClick={() =>
+              void store.send({
+                t: 'surface.insert',
+                surfaceIds: on.map((s) => s.id),
+                themeId,
+                sceneId: sc.id,
+                params,
+              })
+            }
+          >
+            ▶ {L('Play in now', 'Jetzt einspielen')} ({on.map((s) => s.name).join(', ')})
+          </button>
+        </div>
+      )}
+      {running && (
+        <p className="muted small" style={{ margin: '0.4rem 0 0' }}>
+          🎬 {L('Playing in', 'Wird eingespielt')}:{' '}
+          {L.text(
+            catalog.get(running.scene.themeId)?.scenes.find((x) => x.id === running.scene.sceneId)?.name ?? {
+              en: '',
+              de: '',
+            },
+          )}{' '}
+          · {L('still', 'noch')} {Math.max(0, Math.round((running.endAt - now) / 1000))} s
+        </p>
+      )}
+    </section>
+  );
+}
+
 function ParamsPanel({ surface, state, L }: { surface: Surface; state: SessionState; L: Tr }) {
   const store = useStore();
-  const act = activeScene(surface.playback, state.playlists, store.conn.clock.now());
+  const act = activeSceneFor(surface, state.playlists, store.conn.clock.now());
   const sc = act ? catalog.get(act.scene.themeId)?.scenes.find((x) => x.id === act.scene.sceneId) : undefined;
   const [local, setLocal] = useState<ParamValues>(() =>
     sc && act ? sanitizeParams(sc.params, act.scene.params) : {},

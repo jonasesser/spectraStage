@@ -840,3 +840,31 @@ describe('corner measuring (projector pose from room corners)', () => {
     expect(r.errPx).toBeLessThan(1);
   });
 });
+
+describe('scenes played in between', () => {
+  it('fades in over the playback, plays once, then the playback goes on afresh', async () => {
+    const { activeSceneFor } = await import('./playback.ts');
+    const pb = {
+      mode: 'scene' as const,
+      scene: { themeId: 't', sceneId: 'a', params: {} },
+      seed: 1,
+      startedAt: 0,
+      transition: { type: 'cut' as const, durationMs: 0 },
+    };
+    const ins = {
+      id: 'x',
+      scene: { themeId: 't', sceneId: 'b', params: {} },
+      seed: 2,
+      startedAt: 10_000,
+      endAt: 58_000,
+    };
+    expect(activeSceneFor({ playback: pb, insert: ins }, [], 5_000)!.scene.sceneId).toBe('a');
+    const during = activeSceneFor({ playback: pb, insert: ins }, [], 20_000)!;
+    expect(during.scene.sceneId).toBe('b');
+    expect(during.transition.type).toBe('crossfade');
+    const after = activeSceneFor({ playback: pb, insert: ins }, [], 60_000)!;
+    expect(after.scene.sceneId).toBe('a');
+    expect(after.startedAt).toBe(58_000);
+    expect(after.key).not.toBe(activeSceneFor({ playback: pb }, [], 60_000)!.key);
+  });
+});

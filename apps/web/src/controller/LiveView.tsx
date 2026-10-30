@@ -2,7 +2,7 @@ import { ZombieCam } from './ZombieCam.tsx';
 import { useContext, useState } from 'react';
 import { catalog } from '@spectrastage/catalog/manifests';
 import {
-  activeScene,
+  activeSceneFor,
   playlistPosition,
   ROOM_WALL_LABEL,
   ROOM_WALLS,
@@ -311,7 +311,7 @@ function NowPlaying({ state, surfaces, L }: { state: SessionState; surfaces: Sur
       <h2>{L('Now playing', 'Läuft gerade')}</h2>
       <div className="list">
         {surfaces.map((s) => {
-          const act = activeScene(s.playback, state.playlists, now);
+          const act = activeSceneFor(s, state.playlists, now);
           const sc = act
             ? catalog.get(act.scene.themeId)?.scenes.find((x) => x.id === act.scene.sceneId)
             : undefined;

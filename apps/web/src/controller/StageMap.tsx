@@ -6,7 +6,7 @@ import {
   roomFold,
   ROOM_WALL_LABEL,
   virtualSides,
-  activeScene,
+  activeSceneFor,
   ambientActorCues,
   buildActorRoute,
   polygonBBox,
@@ -123,7 +123,7 @@ export function StageMap({ state, presence, selected, allSelected, onToggle, now
       >
         <defs>
           {state.surfaces.map((s) => {
-            const act = activeScene(s.playback, state.playlists, t);
+            const act = activeSceneFor(s, state.playlists, t);
             const sc = act
               ? catalog.get(act.scene.themeId)?.scenes.find((x) => x.id === act.scene.sceneId)
               : undefined;
@@ -163,7 +163,7 @@ export function StageMap({ state, presence, selected, allSelected, onToggle, now
         {state.surfaces.map((s) => {
           const on = allSelected || selected.includes(s.id);
           const bb = polygonBBox(s.polygon);
-          const act = activeScene(s.playback, state.playlists, t);
+          const act = activeSceneFor(s, state.playlists, t);
           const sc = act
             ? catalog.get(act.scene.themeId)?.scenes.find((x) => x.id === act.scene.sceneId)
             : undefined;

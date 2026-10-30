@@ -704,6 +704,24 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       state.surfaces = state.surfaces.filter((s) => s.id !== cmd.surfaceId);
       return res('surface deleted');
     }
+    case 'surface.insert': {
+      const theme = requireTheme(ctx.catalog, cmd.themeId);
+      const scene = sceneOf(theme, cmd.sceneId);
+      const params = sanitizeParams(scene.params, cmd.params);
+      const speed = typeof params.speed === 'number' && params.speed > 0 ? params.speed : 1;
+      const seed = ctx.newSeed();
+      const startedAt = ctx.now + lead;
+      const endAt = startedAt + ((scene.oneShotSec ?? 60) * 1000) / speed;
+      for (const s of surfaces(cmd.surfaceIds))
+        s.insert = {
+          id: `${seed.toString(36)}${state.surfaces.indexOf(s)}`,
+          scene: { themeId: theme.id, sceneId: scene.id, params },
+          seed: seed + state.surfaces.indexOf(s),
+          startedAt,
+          endAt,
+        };
+      return res(`${scene.name.en} played in → ${names(state.surfaces, cmd.surfaceIds)}`);
+    }
     case 'surface.setScene': {
       const theme = requireTheme(ctx.catalog, cmd.themeId);
       const scene = sceneOf(theme, cmd.sceneId);

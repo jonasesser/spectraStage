@@ -107,6 +107,12 @@ function breakoutScene(
   };
 }
 
+/** A scene played in between by hand, once (48 s): no pause setting. */
+function oneShot(...args: Parameters<typeof breakoutScene>): SceneManifest {
+  const sc = breakoutScene(...args);
+  return { ...sc, params: sc.params.filter((p) => p.key !== 'pause'), oneShotSec: 48 };
+}
+
 const EVENT_OPTIONS = [
   { value: 'mix', label: L('Mixed surprises', 'Gemischte Überraschungen') },
   { value: 'creatures', label: L('Creatures only', 'Nur Tiere & Geister') },
@@ -267,7 +273,7 @@ const scenes: SceneManifest[] = [
     '🏚️',
     ['#2b1a4a', '#ff8a1f'],
   ),
-  breakoutScene(
+  oneShot(
     'wallCouple',
     ['Bloody bride & groom waltz (3D)', 'Blutiges Brautpaar tanzt (3D)'],
     [
@@ -291,7 +297,7 @@ const scenes: SceneManifest[] = [
       },
     ],
   ),
-  breakoutScene(
+  oneShot(
     'wallMummyWalk',
     ['Mummy walks out (3D)', 'Mumie kommt heraus (3D)'],
     [
@@ -301,7 +307,7 @@ const scenes: SceneManifest[] = [
     '🧟',
     ['#000000', '#5dff8a'],
   ),
-  breakoutScene(
+  oneShot(
     'wallBuddyDance',
     ['Cute monster dances (3D)', 'Süßes Monster tanzt (3D)'],
     [

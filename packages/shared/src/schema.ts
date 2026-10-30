@@ -293,6 +293,19 @@ export const SurfaceSchema = z.object({
   role: z.enum(['auto', 'main', 'side', 'ground', 'ceiling']).optional(),
   /** Main wall only: depth of the room (m) for the walls the app adds around it (from measuring). */
   roomDepth: z.number().min(0.3).max(60).optional(),
+  /**
+   * A scene played in between once (triggered by hand): fades in over the playback, plays once,
+   * then the playback underneath goes on.
+   */
+  insert: z
+    .object({
+      id: z.string().max(40),
+      scene: SceneRefSchema,
+      seed: z.number().int(),
+      startedAt: z.number(),
+      endAt: z.number(),
+    })
+    .optional(),
 });
 export type Surface = z.infer<typeof SurfaceSchema>;
 
@@ -563,6 +576,14 @@ export const CommandSchema = z.discriminatedUnion('t', [
     role: z.enum(['auto', 'main', 'side', 'ground', 'ceiling']).optional(),
   }),
   z.object({ t: z.literal('surface.delete'), surfaceId: id }),
+  /** Play a scene in between once (then the playback goes on). */
+  z.object({
+    t: z.literal('surface.insert'),
+    surfaceIds,
+    themeId: id,
+    sceneId: id,
+    params: ParamValuesSchema.optional(),
+  }),
   z.object({
     t: z.literal('surface.setScene'),
     surfaceIds,

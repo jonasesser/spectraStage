@@ -45,6 +45,11 @@ export interface SceneManifest {
    * side walls, ground, ceiling). Shown first in the controller.
    */
   world?: boolean;
+  /**
+   * Played in between by hand, once (not looped, not for playlists): how long one run lasts
+   * at speed 1 (s).
+   */
+  oneShotSec?: number;
 }
 
 export interface EffectManifest {

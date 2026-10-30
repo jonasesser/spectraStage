@@ -109,6 +109,35 @@ export function activeScene(
   };
 }
 
+const INSERT_FADE: Transition = { type: 'crossfade', durationMs: 2500 };
+
+/**
+ * What a surface shows at `now`: a scene played in between (fades in, plays once) – or its
+ * playback; right after an inserted scene the scene underneath starts afresh with a crossfade.
+ */
+export function activeSceneFor(
+  surface: {
+    playback: Playback;
+    insert?: { id: string; scene: SceneRef; seed: number; startedAt: number; endAt: number };
+  },
+  playlists: readonly Playlist[],
+  now: number,
+): ActiveScene | null {
+  const ins = surface.insert;
+  if (ins && now >= ins.startedAt - 50 && now < ins.endAt)
+    return {
+      scene: ins.scene,
+      key: `i:${ins.id}`,
+      seed: ins.seed,
+      startedAt: ins.startedAt,
+      transition: INSERT_FADE,
+    };
+  const base = activeScene(surface.playback, playlists, now);
+  if (base && ins && now >= ins.endAt && base.startedAt < ins.endAt)
+    return { ...base, key: `${base.key}:after:${ins.id}`, startedAt: ins.endAt, transition: INSERT_FADE };
+  return base;
+}
+
 export interface ScheduledEffect {
   at: number;
   effect: EffectRef;

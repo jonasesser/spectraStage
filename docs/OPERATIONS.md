@@ -125,6 +125,9 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
   builds itself up again (or fades out – scene setting). The couple scene takes two guest photos
   whose faces are projected onto the bride's and groom's heads. The bride model goes to
   `apps/web/public/models/bride.glb` (rigged); without it the groom dances alone.
+  The full-body shows are **played in once** (Scenes → “🎬 Play in once”: pick, set the photos, ▶): the
+  running scene fades out, the show plays once on the selected surfaces (or the main wall), then the
+  playlist / scene underneath goes on. They don't repeat by themselves.
   The 3D wall scenes **Mummy breaks out** / **Cute monster peeks out** / **Guests break out** (the
   newest ghost photos come out of the wall one per round) (wall scenes, dark wall,
   ~50 s loop with sound; tempo and dark pause adjustable) are rendered from the same standpoint, so
