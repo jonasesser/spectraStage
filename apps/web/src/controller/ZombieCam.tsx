@@ -76,11 +76,15 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
   const patchJob = (id: number, p: Partial<Job> | ((j: Job) => Partial<Job>)) =>
     setJobs((js) => js.map((j) => (j.id === id ? { ...j, ...(typeof p === 'function' ? p(j) : p) } : j)));
 
-  const upload = async (image: string): Promise<string> => {
+  const upload = async (
+    image: string,
+    kind: 'original' | 'filter' | 'ai',
+    group: string,
+  ): Promise<string> => {
     const res = await fetch('/api/ghosts', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${store.conn.authToken}` },
-      body: JSON.stringify({ image, release: false }),
+      body: JSON.stringify({ image, release: false, kind, group }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return ((await res.json()) as { id: string }).id;
@@ -105,11 +109,17 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
         : L('📸 Taken', '📸 Aufgenommen'),
     );
     void (async () => {
+      // every guest keeps all pictures: the plain one (for faces on figures), the face filter
+      // one and (if wanted) the AI one – grouped
+      const groups = shots.map(() => Math.random().toString(36).slice(2, 12));
       // 1. the face filter photos fly right away
       let filterIds: string[];
       try {
         filterIds = [];
-        for (const s of shots) filterIds.push(await upload(s.image));
+        for (let i = 0; i < shots.length; i++)
+          filterIds.push(await upload(shots[i]!.image, 'filter', groups[i]!));
+        // the plain photos (never fly)
+        for (let i = 0; i < shots.length; i++) await upload(shots[i]!.original, 'original', groups[i]!);
         // all of them at once, each from where the person stood
         await store.send({ t: 'ghost.release', ghostIds: filterIds, u: shots.map((s) => s.u) });
         patchJob(id, { state: 'flying', ai: ai ? 'painting' : undefined });
@@ -139,10 +149,11 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
         for (let i = 0; i < shots.length; i++) {
           const img = painted[i];
           if (!img) continue;
-          newIds.push(await upload(img));
+          newIds.push(await upload(img, 'ai', groups[i]!));
           us.push(shots[i]!.u);
-          await store.send({ t: 'ghost.delete', ghostId: filterIds[i]! });
         }
+        // the AI pictures take over from the filter ones (which stay in the gallery)
+        if (newIds.length) await store.send({ t: 'ghost.stopFlights', ghostIds: filterIds });
         if (newIds.length) await store.send({ t: 'ghost.release', ghostIds: newIds, u: us });
         patchJob(id, {
           ai: aiFailed ? 'failed' : 'done',

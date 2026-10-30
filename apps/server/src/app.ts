@@ -208,6 +208,8 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
           .regex(/^data:image\/(webp|png|jpeg);base64,/),
         release: z.boolean().optional(),
         u: z.number().min(0).max(1).optional(),
+        kind: z.enum(['original', 'filter', 'ai']).optional(),
+        group: z.string().max(40).optional(),
       })
       .parse(req.body);
     const [head, b64] = body.image.split(',', 2);
@@ -216,8 +218,10 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
       row.session_id,
       mime,
       Buffer.from(b64 ?? '', 'base64'),
-      body.release ?? true,
+      (body.release ?? true) && body.kind !== 'original',
       body.u,
+      body.kind,
+      body.group,
     );
     if (!id) throw new HubError(404, 'not_found', 'Show not found');
     return reply.code(201).send({ id });

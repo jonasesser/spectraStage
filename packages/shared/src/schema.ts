@@ -484,8 +484,20 @@ export const SessionStateSchema = z.object({
     .optional(),
   /** Saved ghost photos (zombie camera); the pictures themselves live on the server. */
   ghosts: z
-    .array(z.object({ id: z.string().max(40), at: z.number() }))
-    .max(80)
+    .array(
+      z.object({
+        id: z.string().max(40),
+        at: z.number(),
+        /**
+         * Which picture of a guest: the plain photo (cut out, no filter – for faces on figures,
+         * never flies as a ghost), the face filter one, or the AI one. Pictures of one shot share
+         * the group.
+         */
+        kind: z.enum(['original', 'filter', 'ai']).optional(),
+        group: z.string().max(40).optional(),
+      }),
+    )
+    .max(160)
     .optional(),
   /** Ghosts flying around right now. `u`: where in the camera picture the person stood. */
   ghostFlights: z
@@ -551,7 +563,8 @@ export const CommandSchema = z.discriminatedUnion('t', [
   }),
   z.object({ t: z.literal('ghost.delete'), ghostId: z.string().max(40) }),
   z.object({ t: z.literal('ghost.deleteAll') }),
-  z.object({ t: z.literal('ghost.stopFlights') }),
+  /** Call ghosts back (all, or only these pictures). */
+  z.object({ t: z.literal('ghost.stopFlights'), ghostIds: z.array(z.string().max(40)).max(24).optional() }),
   /** Show the outline of an object on all projectors while it is placed (null = done). */
   z.object({ t: z.literal('object.edit'), id: z.string().max(40).nullable() }),
   z.object({ t: z.literal('session.setDefaultTheme'), themeId: id }),

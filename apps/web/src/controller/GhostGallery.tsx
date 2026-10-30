@@ -7,7 +7,8 @@ import { useStore } from './store.ts';
 /** Saved ghost photos: let them fly again (several at once), call them back, delete them. */
 export function GhostGallery({ state, L }: { state: SessionState; L: Tr }) {
   const store = useStore();
-  const ghosts = state.ghosts ?? [];
+  // (the plain photos are for faces on figures – they never fly as ghosts)
+  const ghosts = (state.ghosts ?? []).filter((g) => g.kind !== 'original');
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [sel, setSel] = useState<string[]>([]);
   const now = store.conn.clock.now();

@@ -475,19 +475,30 @@ export class Hub {
    * A ghost photo from the zombie camera (sent by a projector PC or a phone): stored, listed in
    * the show and – if wanted – released right away from where the person stood (u).
    */
-  addGhost(sessionId: string, mime: string, data: Buffer, release: boolean, u?: number): string | null {
+  addGhost(
+    sessionId: string,
+    mime: string,
+    data: Buffer,
+    release: boolean,
+    u?: number,
+    kind?: 'original' | 'filter' | 'ai',
+    group?: string,
+  ): string | null {
     const ls = this.live.get(sessionId) ?? this.load(sessionId);
     if (!ls) return null;
     const id = newId();
     const now = this.now();
     const next = structuredClone(ls.state);
-    const list = [...(next.ghosts ?? []), { id, at: now }];
-    // keep the newest 80 pictures
-    next.ghosts = list.slice(-80);
+    const list = [
+      ...(next.ghosts ?? []),
+      { id, at: now, ...(kind ? { kind } : {}), ...(group ? { group } : {}) },
+    ];
+    // keep the newest 160 pictures (up to three per guest: plain, filter, AI)
+    next.ghosts = list.slice(-160);
     if (release) releaseGhosts(next, [id], { now, newId, newSeed } as never, 35, u);
     this.store.insertGhost(id, sessionId, mime, data, now);
     this.commit(ls, next, 'system', 'ghost photo');
-    if (list.length > 80)
+    if (list.length > 160)
       this.store.pruneGhosts(
         sessionId,
         next.ghosts.map((g) => g.id),

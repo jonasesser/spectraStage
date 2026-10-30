@@ -431,7 +431,11 @@ function PhotoPicker({
 }) {
   const store = useStore();
   const { state } = useShow();
-  const ghosts = state.ghosts ?? [];
+  // the plain photos (unchanged guests – they wear their costumes anyway); older shows without
+  // them: all pictures
+  const all = state.ghosts ?? [];
+  const plain = all.filter((g) => g.kind === 'original');
+  const ghosts = plain.length ? plain : all;
   const [urls, setUrls] = useState<Record<string, string>>({});
   useEffect(() => {
     let alive = true;

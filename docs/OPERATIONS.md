@@ -125,6 +125,9 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
   builds itself up again (or fades out – scene setting). The couple scene takes two guest photos
   whose faces are projected onto the bride's and groom's heads. The bride model goes to
   `apps/web/public/models/bride.glb` (rigged); without it the groom dances alone.
+  Every guest photo is kept three times (grouped): the **plain photo** (cut out, no filter – for
+  the faces on the bride / groom; never flies as a ghost), the **face filter** one and the **AI** one
+  (if used; it takes over flying from the filter one).
   The full-body shows are **played in once** (Scenes → “🎬 Play in once”: pick, set the photos, ▶): the
   running scene fades out, the show plays once on the selected surfaces (or the main wall), then the
   playlist / scene underneath goes on. They don't repeat by themselves.

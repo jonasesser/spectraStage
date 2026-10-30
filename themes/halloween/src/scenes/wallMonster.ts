@@ -1760,7 +1760,8 @@ export class GuestPhoto {
     if (!this.photos) return;
     if (round !== this.round) {
       this.round = round;
-      const list = this.photos.list();
+      // ghost pictures (filter / AI), not the plain photos
+      const list = this.photos.list().filter((p) => p.kind !== 'original');
       const fresh = list.find((p) => !this.shown.has(p.id));
       const next =
         fresh ?? [...list].sort((a, b) => (this.shown.get(a.id) ?? 0) - (this.shown.get(b.id) ?? 0))[0];

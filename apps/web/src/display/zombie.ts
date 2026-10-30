@@ -104,6 +104,8 @@ export interface Shot {
   u: number;
   /** The plain camera photo of the person (for the image AI). */
   photo: string;
+  /** The person cut out, without any filter (for faces on 3D figures). */
+  original: string;
   look: Look;
 }
 
@@ -574,8 +576,51 @@ export class ZombieFx {
       image: url,
       u: (b.x + b.w / 2) / Math.max(1, W),
       photo: ph.toDataURL('image/jpeg', 0.92),
+      original: this.plainCutOut(pr, W, H),
       look: pr.look,
     };
+  }
+
+  /**
+   * The person cut out as the camera sees them – no colours, no filter: the camera picture in
+   * full resolution, the person mask (from the segmentation) as transparency.
+   */
+  private plainCutOut(pr: Person, W: number, H: number): string {
+    const b = pr.box;
+    const x0 = Math.max(0, Math.floor(b.x));
+    const y0 = Math.max(0, Math.floor(b.y));
+    const x1 = Math.min(W, Math.ceil(b.x + b.w));
+    const y1 = Math.min(H, Math.ceil(b.y + b.h));
+    const w = Math.max(1, x1 - x0);
+    const h = Math.max(1, y1 - y0);
+    // the mask: the person's alpha (made solid again)
+    const m = document.createElement('canvas');
+    m.width = w;
+    m.height = h;
+    const mg = m.getContext('2d', { willReadFrequently: true })!;
+    mg.drawImage(this.tmp, x0, y0, w, h, 0, 0, w, h);
+    const md = mg.getImageData(0, 0, w, h);
+    for (let i = 3; i < md.data.length; i += 4) md.data[i] = Math.min(255, md.data[i]! / 0.84);
+    mg.putImageData(md, 0, 0);
+    // the picture, sharp from the video (mirrored like everything else)
+    const v = this.video;
+    const kv = v && v.videoWidth ? v.videoWidth / W : 1;
+    const sc = Math.min(kv, 900 / h);
+    const c = document.createElement('canvas');
+    c.width = Math.max(8, Math.round(w * sc));
+    c.height = Math.max(8, Math.round(h * sc));
+    const g = c.getContext('2d')!;
+    if (v && v.videoWidth) {
+      g.save();
+      g.setTransform(-1, 0, 0, 1, c.width, 0);
+      g.drawImage(v, (W - x1) * kv, y0 * kv, w * kv, h * kv, 0, 0, c.width, c.height);
+      g.restore();
+    } else g.drawImage(this.work, x0, y0, w, h, 0, 0, c.width, c.height);
+    g.globalCompositeOperation = 'destination-in';
+    g.drawImage(m, 0, 0, c.width, c.height);
+    let url = c.toDataURL('image/webp', 0.88);
+    if (!url.startsWith('data:image/webp')) url = c.toDataURL('image/png');
+    return url;
   }
 
   /** One person as their own sprite: their box, others in it removed, ghost tail, glow. */

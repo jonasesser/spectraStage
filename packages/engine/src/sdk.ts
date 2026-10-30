@@ -53,7 +53,7 @@ export interface SceneContext {
 }
 
 export interface ScenePhotos {
-  list(): readonly { id: string; at: number }[];
+  list(): readonly { id: string; at: number; kind?: 'original' | 'filter' | 'ai' }[];
   get(id: string): { img: CanvasImageSource & { width: number; height: number } } | null;
 }
 

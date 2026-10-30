@@ -597,7 +597,8 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       return res(`room depth ${cmd.depth.toFixed(2)} m`);
     }
     case 'ghost.release': {
-      const have = new Set((state.ghosts ?? []).map((g) => g.id));
+      // (plain photos never fly as ghosts)
+      const have = new Set((state.ghosts ?? []).filter((g) => g.kind !== 'original').map((g) => g.id));
       // where each one rises (a group photo: everybody from their own place)
       const pick = cmd.ghostIds.map((g, i) => ({ g, u: cmd.u?.[i] })).filter((x) => have.has(x.g));
       if (!pick.length) fail('not_found', 'Unknown ghost');
@@ -619,7 +620,9 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       state.ghostFlights = [];
       return res('all ghosts deleted');
     case 'ghost.stopFlights':
-      state.ghostFlights = [];
+      state.ghostFlights = cmd.ghostIds
+        ? (state.ghostFlights ?? []).filter((f) => !cmd.ghostIds!.includes(f.ghostId))
+        : [];
       return res('ghosts back');
     case 'object.create': {
       const list = (state.objects ??= []);
