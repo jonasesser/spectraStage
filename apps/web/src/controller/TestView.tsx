@@ -74,7 +74,10 @@ function SceneTest({ state, L }: { state: SessionState; L: Tr }) {
   const theme = catalog.get(themeId) ?? catalog.themes[0]!;
   const scenes = theme.scenes.filter((s) => !s.params.some((p) => p.type === 'video'));
   const [sceneId, setSceneId] = useState<string>(() => scenes.find((s) => s.oneShotSec)?.id ?? scenes[0]!.id);
-  const sc: SceneManifest | undefined = theme.scenes.find((s) => s.id === sceneId);
+  // uploaded videos (Kling …) are played by the theme's video scene: "video:<id>" in the list
+  const player = theme.scenes.find((s) => s.params.some((p) => p.type === 'video'));
+  const videoId = sceneId.startsWith('video:') ? sceneId.slice(6) : null;
+  const sc: SceneManifest | undefined = videoId ? player : theme.scenes.find((s) => s.id === sceneId);
   const [params, setParams] = useState<ParamValues>(() => (sc ? sanitizeParams(sc.params, {}) : {}));
   const [start, setStart] = useState(() => store.conn.clock.now());
   const [view, setView] = useState<'sides' | 'stage'>('sides');
@@ -100,7 +103,11 @@ function SceneTest({ state, L }: { state: SessionState; L: Tr }) {
       if (!targetKey.split(',').includes(s.id)) continue;
       s.playback = {
         mode: 'scene',
-        scene: { themeId: theme.id, sceneId: sc.id, params },
+        scene: {
+          themeId: theme.id,
+          sceneId: sc.id,
+          params: videoId ? { ...params, video: videoId } : params,
+        },
         seed: 4242,
         startedAt: start,
         transition: { type: 'cut', durationMs: 0 },
@@ -109,7 +116,7 @@ function SceneTest({ state, L }: { state: SessionState; L: Tr }) {
     next.blackoutAll = false;
     next.cues = [];
     return next;
-  }, [state, sc, theme.id, params, start, targetKey]);
+  }, [state, sc, theme.id, params, start, targetKey, videoId]);
   // what is shown: the sides of the scene (bounding box) or the whole stage
   let rect: BBox | null = null;
   if (view === 'sides' && targets.length) {
@@ -141,11 +148,17 @@ function SceneTest({ state, L }: { state: SessionState; L: Tr }) {
           onChange={(e) => {
             const id = e.target.value;
             setSceneId(id);
-            const n = theme.scenes.find((s) => s.id === id);
+            const n = id.startsWith('video:') ? player : theme.scenes.find((s) => s.id === id);
             setParams(n ? sanitizeParams(n.params, {}) : {});
             setStart(store.conn.clock.now());
           }}
         >
+          {player &&
+            (state.videos ?? []).map((v) => (
+              <option key={v.id} value={`video:${v.id}`}>
+                🎥 {v.name} · {L('video', 'Video')} ({Math.round(v.sec)} s)
+              </option>
+            ))}
           {sorted.map((s) => (
             <option key={s.id} value={s.id}>
               {s.icon} {L.text(s.name)}
