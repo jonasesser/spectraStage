@@ -69,6 +69,8 @@ function SceneTest({ state, L }: { state: SessionState; L: Tr }) {
   const [start, setStart] = useState(() => store.conn.clock.now());
   const [view, setView] = useState<'sides' | 'stage'>('sides');
   const [res, setRes] = useState<Res>('window');
+  // nothing runs until started (a scene that overloads the graphics card must not start by itself)
+  const [run, setRun] = useState(false);
   const main = state.surfaces.find((s) => s.role === 'main') ?? state.surfaces.find((s) => s.kind === 'wall');
   // where it plays: its own sides (rehearsed shows, worlds everywhere) – else the main wall
   const targets = sc?.world
@@ -157,7 +159,8 @@ function SceneTest({ state, L }: { state: SessionState; L: Tr }) {
         </button>
       </div>
       <ResPicker res={res} setRes={setRes} L={L} />
-      {local && <TestCanvas state={local} rect={rect} res={res} L={L} key={res} />}
+      <RunButton run={run} setRun={setRun} L={L} />
+      {run && local && <TestCanvas state={local} rect={rect} res={res} L={L} key={res} />}
       {sc && sc.params.filter((p) => p.type !== 'video').length > 0 && (
         <details className="panel">
           <summary className="small">{L('Settings of the scene', 'Einstellungen der Szene')}</summary>
@@ -184,6 +187,7 @@ function SceneTest({ state, L }: { state: SessionState; L: Tr }) {
 function ProjectorTest({ state, L }: { state: SessionState; L: Tr }) {
   const [outputId, setOutputId] = useState(state.outputs[0]?.id ?? '');
   const [res, setRes] = useState<Res>('window');
+  const [run, setRun] = useState(false);
   const out = state.outputs.find((o) => o.id === outputId);
   if (!state.outputs.length) return <p className="muted">{L('No projectors yet.', 'Noch keine Beamer.')}</p>;
   const ref = out ? activeProfile(out).referenceResolution : null;
@@ -206,7 +210,8 @@ function ProjectorTest({ state, L }: { state: SessionState; L: Tr }) {
         </span>
       )}
       <ResPicker res={res} setRes={setRes} L={L} />
-      {out && (
+      <RunButton run={run} setRun={setRun} L={L} />
+      {run && out && (
         <TestCanvas
           state={state}
           outputId={out.id}
@@ -217,6 +222,14 @@ function ProjectorTest({ state, L }: { state: SessionState; L: Tr }) {
         />
       )}
     </section>
+  );
+}
+
+function RunButton({ run, setRun, L }: { run: boolean; setRun: (v: boolean) => void; L: Tr }) {
+  return (
+    <button className={`btn${run ? '' : ' primary'}`} onClick={() => setRun(!run)}>
+      {run ? `⏹ ${L('Stop', 'Stoppen')}` : `▶ ${L('Start', 'Starten')}`}
+    </button>
   );
 }
 
@@ -330,7 +343,7 @@ function TestCanvas({
           ⛶ {L('Full screen', 'Vollbild')}
         </button>
       </div>
-      {stats?.gpu && <span className="muted small">{stats.gpu}</span>}
+      <span className="muted small">{gpuName(ref.current) ?? stats?.gpu ?? ''}</span>
       {bad && (
         <div className="safety-note small">
           {lost > 0 || stats?.contextLost
@@ -343,4 +356,18 @@ function TestCanvas({
       )}
     </div>
   );
+}
+
+/** The graphics card as the browser names it (ANGLE string: shows Direct3D / OpenGL and the card). */
+function gpuName(c: HTMLCanvasElement | null): string | null {
+  if (!c) return null;
+  try {
+    const gl = (c.getContext('webgl2') ?? c.getContext('webgl')) as WebGLRenderingContext | null;
+    if (!gl) return null;
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    return typeof name === 'string' ? name : null;
+  } catch {
+    return null;
+  }
 }
