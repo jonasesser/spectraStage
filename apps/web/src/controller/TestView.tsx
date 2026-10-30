@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { catalog } from '@spectrastage/catalog/manifests';
 import { loadThemeRuntime } from '@spectrastage/catalog/runtime';
-import { StageRenderer, type RendererStats } from '@spectrastage/engine';
+import { SoundEngine, StageRenderer, type RendererStats, type SoundApi } from '@spectrastage/engine';
 import {
   activeProfile,
   completeRoom,
@@ -15,6 +15,7 @@ import {
   type SessionState,
 } from '@spectrastage/shared';
 import { useT, type Tr } from '../lib/i18n.tsx';
+import { storage } from '../lib/storage.ts';
 import { ghostImagesFor } from '../lib/ghostImages.ts';
 import { showVideosFor } from '../lib/videos.ts';
 import { useShow, useStore } from './store.ts';
@@ -31,7 +32,7 @@ type Res = 'window' | '1080' | '4k';
 export function TestView() {
   const L = useT();
   const { state } = useShow();
-  const [mode, setMode] = useState<'scene' | 'projector'>('scene');
+  const [mode, setMode] = useState<'scene' | 'projector' | 'sounds'>('scene');
   return (
     <div className="stack">
       <section className="panel stack">
@@ -49,10 +50,19 @@ export function TestView() {
           <button className={`chip${mode === 'projector' ? ' on' : ''}`} onClick={() => setMode('projector')}>
             📽 {L('Live picture of a projector', 'Live-Bild eines Beamers')}
           </button>
+          <button className={`chip${mode === 'sounds' ? ' on' : ''}`} onClick={() => setMode('sounds')}>
+            🔊 {L('All sounds', 'Alle Klänge')}
+          </button>
         </div>
       </section>
       {state &&
-        (mode === 'scene' ? <SceneTest state={state} L={L} /> : <ProjectorTest state={state} L={L} />)}
+        (mode === 'scene' ? (
+          <SceneTest state={state} L={L} />
+        ) : mode === 'projector' ? (
+          <ProjectorTest state={state} L={L} />
+        ) : (
+          <SoundBoard L={L} />
+        ))}
     </div>
   );
 }
@@ -160,7 +170,16 @@ function SceneTest({ state, L }: { state: SessionState; L: Tr }) {
       </div>
       <ResPicker res={res} setRes={setRes} L={L} />
       <RunButton run={run} setRun={setRun} L={L} />
-      {run && local && <TestCanvas state={local} rect={rect} res={res} L={L} key={res} />}
+      {run && local && (
+        <TestCanvas
+          state={local}
+          rect={rect}
+          res={res}
+          L={L}
+          key={res}
+          soundSurface={targets[0]?.id ?? null}
+        />
+      )}
       {sc && sc.params.filter((p) => p.type !== 'video').length > 0 && (
         <details className="panel">
           <summary className="small">{L('Settings of the scene', 'Einstellungen der Szene')}</summary>
@@ -225,9 +244,23 @@ function ProjectorTest({ state, L }: { state: SessionState; L: Tr }) {
   );
 }
 
+/** One sound engine for the test area (unlocked by the start / play buttons – browsers need a click). */
+let testSound: SoundEngine | null = null;
+function sound(): SoundEngine {
+  testSound ??= new SoundEngine();
+  testSound.unlock();
+  return testSound;
+}
+
 function RunButton({ run, setRun, L }: { run: boolean; setRun: (v: boolean) => void; L: Tr }) {
   return (
-    <button className={`btn${run ? '' : ' primary'}`} onClick={() => setRun(!run)}>
+    <button
+      className={`btn${run ? '' : ' primary'}`}
+      onClick={() => {
+        sound();
+        setRun(!run);
+      }}
+    >
       {run ? `⏹ ${L('Stop', 'Stoppen')}` : `▶ ${L('Start', 'Starten')}`}
     </button>
   );
@@ -260,7 +293,9 @@ function TestCanvas({
   aspect,
   res,
   L,
+  soundSurface = null,
 }: {
+  soundSurface?: string | null;
   state: SessionState;
   outputId?: string;
   rect?: BBox | null;
@@ -285,6 +320,9 @@ function TestCanvas({
       now: () => store.conn.clock.now(),
       preview: !outputId,
       maxPixelRatio: 2,
+      // with sound: the scene's own sounds (one side plays them) / the projector's sounds
+      sound: sound(),
+      ...(soundSurface ? { previewSound: soundSurface } : {}),
       ...(want ? { fixedWidth: want, maxRenderPixels: want * Math.round(want / (aspect ?? 16 / 9)) } : {}),
     });
     r.current = renderer;
@@ -370,4 +408,213 @@ function gpuName(c: HTMLCanvasElement | null): string | null {
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// All sounds, one by one – to find the ones that get on your nerves
+// ---------------------------------------------------------------------------
+interface SoundItem {
+  id: string;
+  group: string;
+  name: string;
+  play: (s: SoundApi) => (() => void) | void;
+}
+
+const BASICS = (L: Tr): SoundItem[] => [
+  {
+    id: 'b:whoosh',
+    group: L('Building blocks', 'Bausteine'),
+    name: L('Whoosh', 'Wusch'),
+    play: (s) => s.whoosh(),
+  },
+  {
+    id: 'b:ooh',
+    group: L('Building blocks', 'Bausteine'),
+    name: L('Ghostly ooh', 'Geister-Uuuh'),
+    play: (s) => s.ooh(),
+  },
+  {
+    id: 'b:chime',
+    group: L('Building blocks', 'Bausteine'),
+    name: L('Chime', 'Glöckchen'),
+    play: (s) => s.chime(),
+  },
+  {
+    id: 'b:knock',
+    group: L('Building blocks', 'Bausteine'),
+    name: L('Knocking', 'Klopfen'),
+    play: (s) => s.knock(),
+  },
+  {
+    id: 'b:rumble',
+    group: L('Building blocks', 'Bausteine'),
+    name: L('Rumble', 'Grollen'),
+    play: (s) => s.rumble(),
+  },
+  { id: 'b:pop', group: L('Building blocks', 'Bausteine'), name: L('Pop', 'Plopp'), play: (s) => s.pop() },
+  {
+    id: 'b:flutter',
+    group: L('Building blocks', 'Bausteine'),
+    name: L('Wings', 'Flügelschlag'),
+    play: (s) => s.flutter(),
+  },
+  {
+    id: 'b:scuttle',
+    group: L('Building blocks', 'Bausteine'),
+    name: L('Scuttle', 'Krabbeln'),
+    play: (s) => s.scuttle(),
+  },
+  {
+    id: 'b:arpeggio',
+    group: L('Building blocks', 'Bausteine'),
+    name: L('Melody', 'Melodie'),
+    play: (s) => s.arpeggio(),
+  },
+  {
+    id: 'b:wind',
+    group: L('Background', 'Hintergrund'),
+    name: L('Wind', 'Wind'),
+    play: (s) => s.ambience('wind', 0.05),
+  },
+  {
+    id: 'b:drone',
+    group: L('Background', 'Hintergrund'),
+    name: L('Drone', 'Brummen'),
+    play: (s) => s.ambience('drone', 0.05),
+  },
+  {
+    id: 'b:crickets',
+    group: L('Background', 'Hintergrund'),
+    name: L('Crickets', 'Grillen'),
+    play: (s) => s.ambience('crickets', 0.05),
+  },
+];
+
+function SoundBoard({ L }: { L: Tr }) {
+  const [items, setItems] = useState<SoundItem[]>(() => BASICS(L));
+  const [bad, setBad] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(storage.get('ss.test.badSounds') ?? '[]') as string[]);
+    } catch {
+      return new Set();
+    }
+  });
+  const [playing, setPlaying] = useState<string | null>(null);
+  const stopRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    let alive = true;
+    // effects and creatures of every theme bring their own sounds
+    void Promise.all(
+      catalog.themes.map(async (t) => {
+        const rt = await loadThemeRuntime(t.id).catch(() => null);
+        if (!rt) return [];
+        const out: SoundItem[] = [];
+        for (const e of t.effects) {
+          const m = rt.effects[e.id];
+          if (m?.sound)
+            out.push({
+              id: `e:${t.id}/${e.id}`,
+              group: `${t.icon} ${L('Effects', 'Effekte')}`,
+              name: `${e.icon} ${L.text(e.name)}`,
+              play: (s) => m.sound!(s, 7),
+            });
+        }
+        for (const a of t.actors) {
+          const m = rt.actors[a.id];
+          if (m?.sound)
+            out.push({
+              id: `a:${t.id}/${a.id}`,
+              group: `${t.icon} ${L('Creatures', 'Kreaturen')}`,
+              name: `${a.icon ?? ''} ${L.text(a.name)}`,
+              play: (s) => m.sound!(s, 7),
+            });
+        }
+        return out;
+      }),
+    ).then((lists) => alive && setItems([...BASICS(L), ...lists.flat()]));
+    return () => {
+      alive = false;
+      stopRef.current?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const play = (it: SoundItem) => {
+    stopRef.current?.();
+    stopRef.current = null;
+    const s = sound();
+    const stop = it.play(s);
+    if (typeof stop === 'function') {
+      stopRef.current = stop;
+      setPlaying(it.id);
+    } else setPlaying(null);
+  };
+  const toggleBad = (id: string) => {
+    const n = new Set(bad);
+    if (n.has(id)) n.delete(id);
+    else n.add(id);
+    setBad(n);
+    storage.set('ss.test.badSounds', JSON.stringify([...n]));
+  };
+  const groups = [...new Set(items.map((i) => i.group))];
+  const list = items.filter((i) => bad.has(i.id)).map((i) => `${i.group} – ${i.name} (${i.id})`);
+  return (
+    <section className="panel stack">
+      <p className="muted small" style={{ margin: 0 }}>
+        {L(
+          'Every sound on its own. Mark the annoying ones with 👎 and send the list – the scene sounds play in “Try a scene” with the scene.',
+          'Jeder Klang einzeln. Nervige mit 👎 markieren und die Liste schicken – die Klänge der Szenen hörst du unter „Szene ausprobieren“ mit der Szene.',
+        )}
+      </p>
+      {playing && (
+        <button
+          className="btn small"
+          onClick={() => {
+            stopRef.current?.();
+            stopRef.current = null;
+            setPlaying(null);
+          }}
+        >
+          ⏹ {L('Stop the background sound', 'Hintergrund-Klang stoppen')}
+        </button>
+      )}
+      {groups.map((g) => (
+        <div key={g} className="stack" style={{ gap: '0.3rem' }}>
+          <strong className="small">{g}</strong>
+          {items
+            .filter((i) => i.group === g)
+            .map((i) => (
+              <div key={i.id} className="row" style={{ alignItems: 'center' }}>
+                <button className="btn small" onClick={() => play(i)}>
+                  ▶
+                </button>
+                <span className="small" style={{ flex: 1 }}>
+                  {i.name}
+                </span>
+                <button
+                  className={`chip${bad.has(i.id) ? ' on' : ''}`}
+                  onClick={() => toggleBad(i.id)}
+                  aria-pressed={bad.has(i.id)}
+                >
+                  👎 {L('annoying', 'nervt')}
+                </button>
+              </div>
+            ))}
+        </div>
+      ))}
+      {list.length > 0 && (
+        <div className="stack" style={{ gap: '0.3rem' }}>
+          <strong className="small">{L('Marked as annoying', 'Als nervig markiert')}</strong>
+          <pre className="small" style={{ whiteSpace: 'pre-wrap', margin: 0 }}>
+            {list.join('\n')}
+          </pre>
+          <button
+            className="btn small"
+            onClick={() => void navigator.clipboard?.writeText(list.join('\n')).catch(() => undefined)}
+          >
+            {L('Copy the list', 'Liste kopieren')}
+          </button>
+        </div>
+      )}
+    </section>
+  );
 }

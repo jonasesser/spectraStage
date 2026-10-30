@@ -182,8 +182,17 @@ test('test area: a scene and a projector picture render on this PC only', async 
   // a light scene (the 3D shows are too slow for the software graphics of the test browser)
   const v = await phone.locator('select option', { hasText: 'Spukhaus' }).first().getAttribute('value');
   await phone.locator('select').first().selectOption(v!);
+  await phone.getByRole('button', { name: /Starten/ }).click();
   await expect(phone.getByText(/\d+ fps ·/)).toBeVisible({ timeout: 20_000 });
   await phone.getByRole('button', { name: /Live-Bild eines Beamers/ }).click();
+  await phone.getByRole('button', { name: /Starten/ }).click();
   await expect(phone.getByText(/\d+ fps ·/)).toBeVisible({ timeout: 20_000 });
+  // every sound on its own, annoying ones marked
+  await phone.getByRole('button', { name: /Alle Klänge/ }).click();
+  await expect(phone.getByText('Grollen')).toBeVisible();
+  await expect(phone.getByText(/Buh!/)).toBeVisible({ timeout: 10_000 });
+  await phone.locator('.row', { hasText: 'Grollen' }).getByRole('button', { name: '▶' }).click();
+  await phone.locator('.row', { hasText: 'Grollen' }).getByRole('button', { name: /nervt/ }).click();
+  await expect(phone.getByText(/Als nervig markiert/)).toBeVisible();
   expect(errors).toEqual([]);
 });

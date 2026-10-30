@@ -91,6 +91,8 @@ export interface RendererOptions {
   readable?: boolean;
   /** Upper bound for the internal render resolution (default: native up to 4K). */
   maxRenderPixels?: number;
+  /** Preview with sound (test area): the sounds of this surface's scene and effects play. */
+  previewSound?: string;
   /** Render this many pixels wide whatever the canvas size (test area: a projector's 4K). */
   fixedWidth?: number;
   /** GPU choice on PCs with two graphics chips (default high-performance). */
@@ -1382,8 +1384,10 @@ export class StageRenderer {
     output: Output | null,
     outputs: readonly Output[],
     p: { x: number; y: number },
+    surfaceId?: string,
   ): boolean {
-    if (!output || this.opts.preview || !this.opts.sound) return false;
+    if (this.opts.preview) return !!this.opts.sound && !!surfaceId && this.opts.previewSound === surfaceId;
+    if (!output || !this.opts.sound) return false;
     return primaryOutputAt(outputs, p)?.id === output.id;
   }
 
@@ -1858,7 +1862,7 @@ export class StageRenderer {
     layer.resize(lw, lh, lw / b.w);
     const r = this.renderer;
     const centroid = polygonCentroid(s.polygon);
-    const primary = this.soundPrimaryFor(output, outputs, centroid);
+    const primary = this.soundPrimaryFor(output, outputs, centroid, s.id);
 
     // Scene selection (deterministic from playback + clock)
     const active = activeSceneFor(s, state.playlists, now);
