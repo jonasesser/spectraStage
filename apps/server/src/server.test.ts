@@ -398,4 +398,56 @@ describe('reliability', () => {
     expect(owner.state!.revision).toBe(rev); // not applied twice
     owner.close();
   });
+
+  it('auto mode: playlist entries, one-shot play-ins once, edits keep the running entry', async () => {
+    const { owner } = await createShow();
+    const hm = new Date().toISOString().slice(11, 16);
+    const pl = owner.state!.playlists[0]!;
+    const schedule = (boost: number) => ({
+      enabled: true,
+      timezone: 'UTC',
+      entries: [
+        {
+          id: 'p1',
+          at: '00:00',
+          themeId: null,
+          presetId: null,
+          playlistId: pl.id,
+          boost: 0.4,
+          blackout: false,
+        },
+        {
+          id: 'w1',
+          at: hm,
+          themeId: null,
+          presetId: null,
+          boost: null,
+          blackout: null,
+          insert: { themeId: 'halloween', sceneId: 'wallBuddyDance' },
+        },
+        { id: 'x1', at: '23:59', themeId: null, presetId: null, boost, blackout: null },
+      ],
+    });
+    expect((await owner.cmd({ t: 'session.setSchedule', schedule: schedule(0) })).type).toBe('ack');
+    ctx.hub.scheduleTick();
+    const snap = (await owner.wait(
+      (m) => m.type === 'snapshot' && !!m.state.schedule?.lastApplied && !!m.state.schedule?.lastInserted,
+    )) as Extract<ServerMessage, { type: 'snapshot' }>;
+    if (hm < '23:59') {
+      expect(snap.state.schedule!.lastApplied).toMatch(/\|p1$/);
+      expect(snap.state.boost).toBe(0.4);
+      expect(snap.state.surfaces.every((s) => s.playback.mode === 'playlist')).toBe(true);
+    }
+    expect(snap.state.surfaces.some((s) => s.insert?.scene.sceneId === 'wallBuddyDance')).toBe(true);
+    const rev = snap.state.revision;
+    ctx.hub.scheduleTick();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(owner.state!.revision).toBe(rev); // play-in only once
+    // editing another entry keeps the running one (no restart) and the play-in is not repeated
+    await owner.cmd({ t: 'session.setSchedule', schedule: schedule(0.1) });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(owner.state!.schedule!.lastApplied).toBe(snap.state.schedule!.lastApplied);
+    expect(owner.state!.schedule!.lastInserted).toBe(snap.state.schedule!.lastInserted);
+    owner.close();
+  });
 });

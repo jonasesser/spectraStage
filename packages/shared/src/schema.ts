@@ -373,6 +373,10 @@ export const ScheduleEntrySchema = z.object({
   boost: unit.nullable(),
   /** true = all black (e.g. end of the show), false = resume, null = unchanged */
   blackout: z.boolean().nullable(),
+  /** Start this playlist on all sides. */
+  playlistId: id.nullable().optional(),
+  /** Play this one-shot scene in once at this time (witch, monster …). */
+  insert: z.object({ themeId: id, sceneId: id }).nullable().optional(),
 });
 export type ScheduleEntry = z.infer<typeof ScheduleEntrySchema>;
 
@@ -383,6 +387,8 @@ export const ScheduleSchema = z.object({
   entries: z.array(ScheduleEntrySchema).max(24),
   /** `${date}|${entryId}` of the last applied entry (set by the server). */
   lastApplied: z.string().max(100).nullable(),
+  /** `${date}|${entryId}` of the last one-shot played in (set by the server). */
+  lastInserted: z.string().max(100).nullable().optional(),
 });
 export type Schedule = z.infer<typeof ScheduleSchema>;
 
@@ -633,7 +639,10 @@ export const CommandSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('session.setAmbient'), ambient: StageAmbientSchema.omit({ seed: true }) }),
   z.object({ t: z.literal('session.setBoost'), boost: unit }),
   z.object({ t: z.literal('session.setRoom'), room: z.boolean() }),
-  z.object({ t: z.literal('session.setSchedule'), schedule: ScheduleSchema.omit({ lastApplied: true }) }),
+  z.object({
+    t: z.literal('session.setSchedule'),
+    schedule: ScheduleSchema.omit({ lastApplied: true, lastInserted: true }),
+  }),
 
   z.object({
     t: z.literal('surface.create'),
@@ -670,6 +679,16 @@ export const CommandSchema = z.discriminatedUnion('t', [
     transition: TransitionSchema.optional(),
   }),
   z.object({ t: z.literal('surface.setParams'), surfaceId: id, params: ParamValuesSchema }),
+  /**
+   * Settings of a scene wherever it runs (a world over the whole stage): in the playlists that
+   * contain it and on the sides showing it – the playlists keep running, all sides stay in step.
+   */
+  z.object({
+    t: z.literal('scene.setParamsEverywhere'),
+    themeId: id,
+    sceneId: id,
+    params: ParamValuesSchema,
+  }),
   /** Back to the show's normal programme (the running world playlist, in lockstep). */
   z.object({ t: z.literal('surface.resetProgram'), surfaceIds }),
   z.object({

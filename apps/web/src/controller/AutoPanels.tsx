@@ -52,42 +52,98 @@ function defaultTimezone(): string {
 }
 
 const presetOptions = () =>
-  catalog.themes.flatMap((t) => t.presets.map((p) => ({ value: `${t.id}/${p.id}`, t, p })));
+  catalog.themes.flatMap((t) => t.presets.map((p) => ({ value: `preset:${t.id}/${p.id}`, t, p })));
 
-/** Auto mode: switch presets, boost and blackout at fixed local times. */
+/** One-shot scenes that can be played in by the schedule (videos need an upload, so not here). */
+const insertOptions = () =>
+  catalog.themes.flatMap((t) =>
+    t.scenes
+      .filter((sc) => sc.oneShotSec && !sc.params.some((p) => p.type === 'video'))
+      .map((sc) => ({ value: `insert:${t.id}/${sc.id}`, t, sc })),
+  );
+
+function entryValue(e: ScheduleEntry): string {
+  if (e.blackout === true) return 'blackout';
+  if (e.insert) return `insert:${e.insert.themeId}/${e.insert.sceneId}`;
+  if (e.playlistId) return `playlist:${e.playlistId}`;
+  if (e.themeId && e.presetId) return `preset:${e.themeId}/${e.presetId}`;
+  return '';
+}
+
+const newEntry = (at: string, patch: Partial<ScheduleEntry>): ScheduleEntry => ({
+  id: uuid().slice(0, 12),
+  at,
+  themeId: null,
+  presetId: null,
+  playlistId: null,
+  insert: null,
+  boost: null,
+  blackout: null,
+  ...patch,
+});
+
+/**
+ * Long kid-friendly evening (late October, sunset ~16:45): bright Neon show with full boost from
+ * 16:00, boost steps down as it gets dark, then the full world show with the little witch, the cute
+ * monster and the bride & groom played in regularly; calm atmosphere and blackout at the end.
+ */
+function longShow(themeId: string): ScheduleEntry[] {
+  const show = (at: string, presetId: string, boost: number | null, blackout: boolean | null = null) =>
+    newEntry(at, { themeId, presetId, boost, blackout });
+  const boost = (at: string, b: number) => newEntry(at, { boost: b });
+  const ins = (at: string, sceneId: string) => newEntry(at, { insert: { themeId, sceneId } });
+  return [
+    show('16:00', 'neonShow', 1, false),
+    boost('16:30', 0.85),
+    boost('17:00', 0.7),
+    ins('17:15', 'wallWitch'),
+    boost('17:30', 0.5),
+    show('17:45', 'fullShow', 0.3),
+    ins('18:00', 'wallBuddyDance'),
+    boost('18:15', 0.15),
+    ins('18:30', 'wallWitch'),
+    boost('18:45', 0),
+    ins('19:00', 'wallCouple'),
+    ins('19:20', 'wallBuddyDance'),
+    ins('19:40', 'wallWitch'),
+    ins('20:00', 'wallCouple'),
+    ins('20:20', 'wallBuddyDance'),
+    ins('20:40', 'wallWitch'),
+    show('21:00', 'quietAtmosphere', 0),
+    newEntry('21:30', { blackout: true }),
+  ];
+}
+
+/** Auto mode: switch shows / playlists, play in one-shots, boost and blackout at fixed local times. */
 export function SchedulePanel({ state, L }: { state: SessionState; L: Tr }) {
   const store = useStore();
   const theme = catalog.get(state.defaultThemeId) ?? catalog.themes[0]!;
+  const hasLong =
+    theme.presets.some((p) => p.id === 'neonShow') && theme.scenes.some((x) => x.id === 'wallWitch');
   const suggestion = (): Omit<Schedule, 'lastApplied'> => ({
     enabled: false,
     timezone: defaultTimezone(),
-    entries: [
-      {
-        id: uuid().slice(0, 12),
-        at: '17:30',
-        themeId: theme.id,
-        presetId: theme.presets.find((p) => p.id === 'neonShow')?.id ?? theme.presets[0]!.id,
-        boost: 0.8,
-        blackout: false,
-      },
-      {
-        id: uuid().slice(0, 12),
-        at: '18:30',
-        themeId: theme.id,
-        presetId: theme.presets[0]!.id,
-        boost: 0,
-        blackout: null,
-      },
-      { id: uuid().slice(0, 12), at: '21:00', themeId: null, presetId: null, boost: null, blackout: true },
-    ],
+    entries: hasLong
+      ? longShow(theme.id)
+      : [
+          newEntry('17:30', {
+            themeId: theme.id,
+            presetId: theme.presets[0]!.id,
+            boost: 0.8,
+            blackout: false,
+          }),
+          newEntry('21:00', { blackout: true }),
+        ],
   });
   const [draft, setDraft] = useState<Omit<Schedule, 'lastApplied'>>(() => state.schedule ?? suggestion());
-  const savedJson = JSON.stringify(state.schedule ? { ...state.schedule, lastApplied: undefined } : null);
+  const savedJson = JSON.stringify(
+    state.schedule ? { ...state.schedule, lastApplied: undefined, lastInserted: undefined } : null,
+  );
   useEffect(() => {
     if (state.schedule) setDraft(state.schedule);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [savedJson]);
-  const dirty = JSON.stringify({ ...draft, lastApplied: undefined }) !== savedJson;
+  const dirty = JSON.stringify({ ...draft, lastApplied: undefined, lastInserted: undefined }) !== savedJson;
   const save = (s: Omit<Schedule, 'lastApplied'>) =>
     store.send({
       t: 'session.setSchedule',
@@ -97,6 +153,8 @@ export function SchedulePanel({ state, L }: { state: SessionState; L: Tr }) {
     setDraft((d) => ({ ...d, entries: d.entries.map((e, j) => (j === i ? { ...e, ...patch } : e)) }));
   const sorted = [...draft.entries].map((e, i) => ({ e, i })).sort((a, b) => (a.e.at < b.e.at ? -1 : 1));
   const activeId = state.schedule?.lastApplied?.split('|')[1];
+  const playlists = [...state.playlists].sort((a, b) => a.name.localeCompare(b.name));
+  const isTpl = (id: string) => id.startsWith('tpl-');
 
   return (
     <section className="panel stack">
@@ -117,8 +175,8 @@ export function SchedulePanel({ state, L }: { state: SessionState; L: Tr }) {
       </div>
       <p className="muted small" style={{ margin: 0 }}>
         {L(
-          'At each time the show switches by itself – e.g. bright Neon show at dusk, normal show when it is dark, blackout at the end. Runs on the server, the phone can be off.',
-          'Zu jeder Uhrzeit schaltet die Show von selbst um – z. B. helle Neon-Show in der Dämmerung, normale Show bei Dunkelheit, Blackout am Ende. Läuft auf dem Server, das Handy darf aus sein.',
+          'At each time the show switches by itself – e.g. bright Neon show at dusk, normal show when it is dark, blackout at the end. "Play in once" entries (witch, monster …) appear once and the show goes on. Times can be changed any time, also during the show – after saving, the running show only restarts if its own entry changed. Runs on the server, the phone can be off.',
+          'Zu jeder Uhrzeit schaltet die Show von selbst um – z. B. helle Neon-Show in der Dämmerung, normale Show bei Dunkelheit, Blackout am Ende. „Einmal einspielen“ (Hexe, Monster …) kommt einmal, danach läuft die Show weiter. Zeiten jederzeit änderbar, auch während der Show – nach dem Speichern startet die laufende Show nur neu, wenn ihr eigener Eintrag geändert wurde. Läuft auf dem Server, das Handy darf aus sein.',
         )}
       </p>
       {sorted.map(({ e, i }) => (
@@ -146,35 +204,53 @@ export function SchedulePanel({ state, L }: { state: SessionState; L: Tr }) {
           />
           <select
             className="grow"
-            value={
-              e.blackout === true ? 'blackout' : e.themeId && e.presetId ? `${e.themeId}/${e.presetId}` : ''
-            }
+            value={entryValue(e)}
             onChange={(ev) => {
               const v = ev.target.value;
-              if (v === 'blackout') update(i, { themeId: null, presetId: null, blackout: true, boost: null });
-              else if (!v)
-                update(i, {
-                  themeId: null,
-                  presetId: null,
-                  blackout: e.blackout === true ? false : e.blackout,
-                });
-              else {
-                const [t, p] = v.split('/');
-                update(i, { themeId: t!, presetId: p!, blackout: false });
+              const clear = { themeId: null, presetId: null, playlistId: null, insert: null };
+              if (v === 'blackout') update(i, { ...clear, blackout: true, boost: null });
+              else if (!v) update(i, { ...clear, blackout: e.blackout === true ? false : e.blackout });
+              else if (v.startsWith('playlist:'))
+                update(i, { ...clear, playlistId: v.slice(9), blackout: false });
+              else if (v.startsWith('insert:')) {
+                const [t, sc] = v.slice(7).split('/');
+                update(i, { ...clear, insert: { themeId: t!, sceneId: sc! }, boost: null, blackout: null });
+              } else {
+                const [t, p] = v.slice(7).split('/');
+                update(i, { ...clear, themeId: t!, presetId: p!, blackout: false });
               }
             }}
             aria-label={L('What happens', 'Was passiert')}
           >
             <option value="">{L('Keep show, only change boost', 'Show behalten, nur Boost ändern')}</option>
-            {presetOptions().map(({ value, t, p }) => (
-              <option key={value} value={value}>
-                {p.icon} {L.text(p.name)}
-                {catalog.themes.length > 1 ? ` (${L.text(t.name)})` : ''}
-              </option>
-            ))}
+            {playlists.length > 0 && (
+              <optgroup label={L('🎞 Playlists (as edited by you)', '🎞 Playlists (so wie bearbeitet)')}>
+                {playlists.map((p) => (
+                  <option key={p.id} value={`playlist:${p.id}`}>
+                    🎞 {p.name}
+                    {isTpl(p.id) ? L(' · from template', ' · aus Vorlage') : L(' · own', ' · eigene')}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            <optgroup label={L('📋 Templates (show presets)', '📋 Vorlagen (Show-Presets)')}>
+              {presetOptions().map(({ value, t, p }) => (
+                <option key={value} value={value}>
+                  {L('Template', 'Vorlage')}: {p.icon} {L.text(p.name)}
+                  {catalog.themes.length > 1 ? ` (${L.text(t.name)})` : ''}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label={L('✨ Play in once (show goes on)', '✨ Einmal einspielen (Show läuft weiter)')}>
+              {insertOptions().map(({ value, sc }) => (
+                <option key={value} value={value}>
+                  {sc.icon} {L.text(sc.name)}
+                </option>
+              ))}
+            </optgroup>
             <option value="blackout">⬛ {L('Blackout (end of show)', 'Blackout (Showende)')}</option>
           </select>
-          {e.blackout !== true && (
+          {e.blackout !== true && !e.insert && (
             <select
               value={e.boost === null ? '' : String(Math.round(e.boost * 100))}
               onChange={(ev) =>
@@ -206,22 +282,29 @@ export function SchedulePanel({ state, L }: { state: SessionState; L: Tr }) {
           onClick={() =>
             setDraft((d) => ({
               ...d,
-              entries: [
-                ...d.entries,
-                {
-                  id: uuid().slice(0, 12),
-                  at: '20:00',
-                  themeId: theme.id,
-                  presetId: theme.presets[0]!.id,
-                  boost: null,
-                  blackout: false,
-                },
-              ],
+              entries: [...d.entries, newEntry('20:00', {})],
             }))
           }
         >
           ＋ {L('Add time', 'Uhrzeit hinzufügen')}
         </button>
+        {hasLong && (
+          <button
+            className="btn small"
+            onClick={() =>
+              (draft.entries.length === 0 ||
+                window.confirm(
+                  L(
+                    'Replace the times with the long show (16:00 – 21:30)? Saved only when you tap Save.',
+                    'Zeiten durch die lange Show (16:00 – 21:30) ersetzen? Gespeichert wird erst mit „Speichern“.',
+                  ),
+                )) &&
+              setDraft((d) => ({ ...d, entries: longShow(theme.id) }))
+            }
+          >
+            🎃 {L('Long show 16–21:30', 'Lange Show 16–21:30')}
+          </button>
+        )}
         <button className="btn small primary" disabled={!dirty} onClick={() => save(draft)}>
           {L('Save schedule', 'Zeitplan speichern')}
         </button>

@@ -199,9 +199,13 @@ model (Apache-2.0).
   **Neon show** preset (large bright saturated areas, dark creatures as silhouettes) and raise the
   **dusk boost** (Live tab) – it lifts brightness and saturation on every output; black stays black
   and creatures get glowing outlines.
-- **Auto mode (schedule)** switches presets, boost and blackout at local clock times, e.g. 17:30
-  Neon + boost 80 %, 18:30 Full show + boost 0, 21:00 blackout. It runs on the server; the phone can
-  be switched off. Entries apply once per day; editing the schedule re-applies the current entry.
+- **Auto mode (schedule)** switches presets (templates), playlists (also edited ones), boost and
+  blackout at local clock times and can play in one-shots (little witch, cute monster, bride & groom)
+  once at a given minute while the show goes on. *Long show 16–21:30* loads a kid-friendly evening:
+  Neon with boost 100 % from 16:00, boost stepping down to 0 by 18:45, full show from 17:45 with
+  play-ins every 20–30 min, quiet atmosphere at 21:00, blackout 21:30. It runs on the server; the
+  phone can be switched off. Entries apply once per day; editing the schedule keeps the running entry
+  unless that entry itself changed. Play-ins are not repeated after a restart.
 
 ### When the internet drops
 

@@ -15,6 +15,9 @@
 6. **Dämmerung & Automatik**: Solange es noch hell ist, Preset *Neon-Show (Dämmerung)* und den
    *Dämmerungs-Boost* hochziehen. Unter *Automatik (Zeitplan)* im Live-Tab stellst du ein, dass
    z. B. um 17:30 die Neon-Show mit Boost läuft, um 18:30 die normale Show und um 21:00 Blackout.
+   Knopf *Lange Show 16–21:30* lädt einen kinderfreundlichen Abend (Boost ab 16 Uhr voll, dann
+   schrittweise runter; Hexe, süßes Monster und Brautpaar werden regelmäßig eingespielt). Auswählbar
+   sind Vorlagen, deine (auch bearbeiteten) Playlists und Einspieler; Zeiten jederzeit änderbar.
 7. **Notfall**: roter *BLACKOUT*-Knopf oben (alle Beamer schwarz). Am Beamer-PC Taste **B**.
    Software-Blackout ist **kein** Netzschalter – den Netzschalter der Beamer kennen!
 

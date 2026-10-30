@@ -459,15 +459,34 @@ function ParamsPanel({ surface, state, L }: { surface: Surface; state: SessionSt
     setLocal(next);
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(
-      () => store.send({ t: 'surface.setParams', surfaceId: surface.id, params: { [k]: v } }),
+      () =>
+        // a world is one scene over the whole stage: its settings go everywhere it runs, the
+        // playlist keeps running and every projector keeps its own part of the world
+        sc.world
+          ? store.send({
+              t: 'scene.setParamsEverywhere',
+              themeId: act.scene.themeId,
+              sceneId: act.scene.sceneId,
+              params: { [k]: v },
+            })
+          : store.send({ t: 'surface.setParams', surfaceId: surface.id, params: { [k]: v } }),
       150,
     );
   };
   return (
     <section className="panel">
       <h2>
-        {sc.icon} {L.text(sc.name)} · {surface.name}
+        {sc.icon} {L.text(sc.name)}
+        {sc.world ? '' : ` · ${surface.name}`}
       </h2>
+      {sc.world && (
+        <p className="muted small" style={{ marginTop: 0 }}>
+          {L(
+            'World over the whole stage: these settings count for every projector, the world stays on.',
+            'Welt über die ganze Bühne: Die Einstellungen gelten für alle Beamer, die Welt bleibt an.',
+          )}
+        </p>
+      )}
       <div className="stack">
         {sc.params.map((p) => (
           <ParamControl key={p.key} def={p} value={local[p.key]} onChange={(v) => change(p.key, v)} L={L} />
@@ -500,7 +519,7 @@ function ParamsPanel({ surface, state, L }: { surface: Surface; state: SessionSt
           format={(v) => `${v}%`}
           onChange={(v) => store.send({ t: 'surface.update', surfaceId: surface.id, intensity: v / 100 })}
         />
-        {surface.playback.mode === 'playlist' && (
+        {surface.playback.mode === 'playlist' && !sc.world && (
           <p className="muted small">
             {L(
               'Changing a value stops the playlist on this surface.',

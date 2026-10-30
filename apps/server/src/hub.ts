@@ -11,6 +11,7 @@ import {
   normalizeCode,
   isValidCode,
   pruneCues,
+  surfacesForSides,
   type Command,
   type ControllerSecrets,
   type Presence,
@@ -625,7 +626,53 @@ export class Hub {
       const today = localClock(now, sch.timezone);
       const yesterday = localClock(now - 86_400_000, sch.timezone);
       if (!today || !yesterday) continue;
-      const sorted = [...sch.entries].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+      const ctx = {
+        now,
+        actor: { id: 'schedule', name: 'Zeitplan', role: 'owner' as const },
+        catalog: this.catalog,
+        newId,
+        newSeed,
+        leadMs: 300,
+      };
+      // One-shot play-ins (witch, monster …) fire once at their minute – no catch-up after a restart.
+      const nowMin = toMinutes(today.hm);
+      const due = sch.entries
+        .filter((e) => e.insert && nowMin - toMinutes(e.at) >= 0 && nowMin - toMinutes(e.at) < 3)
+        .sort((a, b) => (a.at < b.at ? 1 : -1))[0];
+      if (due && sch.lastInserted !== `${today.date}|${due.id}` && !ls.state.blackoutAll) {
+        try {
+          const theme = this.catalog.get(due.insert!.themeId);
+          const scene = theme?.scenes.find((x) => x.id === due.insert!.sceneId);
+          if (theme && scene) {
+            const to = scene.sides ? surfacesForSides(ls.state.surfaces, scene.sides) : ls.state.surfaces;
+            let next = ls.state;
+            if (to.length)
+              next = applyCommand(
+                next,
+                {
+                  t: 'surface.insert',
+                  surfaceIds: to.map((x) => x.id),
+                  themeId: theme.id,
+                  sceneId: scene.id,
+                },
+                ctx,
+              ).state;
+            next = structuredClone(next);
+            next.schedule = { ...next.schedule!, lastInserted: `${today.date}|${due.id}` };
+            this.commit(ls, next, 'Zeitplan', `${due.at} ${scene.name.de}`);
+          }
+        } catch (e) {
+          this.log.warn({ err: e, session: ls.state.id }, 'schedule insert failed');
+          const next = structuredClone(ls.state);
+          next.schedule = { ...next.schedule!, lastInserted: `${today.date}|${due.id}` };
+          this.commit(ls, next, 'system', 'schedule insert skipped');
+        }
+      }
+      // Show / boost / blackout entries: the latest one that has started is the active one.
+      const sorted = sch.entries
+        .filter((e) => !e.insert)
+        .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+      if (sorted.length === 0) continue;
       let entry = [...sorted].reverse().find((e) => e.at <= today.hm);
       let key: string;
       if (entry) key = `${today.date}|${entry.id}`;
@@ -634,16 +681,8 @@ export class Hub {
         entry = sorted[sorted.length - 1]!;
         key = `${yesterday.date}|${entry.id}`;
       }
-      if (sch.lastApplied === key) continue;
+      if (ls.state.schedule?.lastApplied === key) continue;
       try {
-        const ctx = {
-          now,
-          actor: { id: 'schedule', name: 'Zeitplan', role: 'owner' as const },
-          catalog: this.catalog,
-          newId,
-          newSeed,
-          leadMs: 300,
-        };
         let next = ls.state;
         const parts: string[] = [];
         if (entry.themeId && entry.presetId && this.catalog.get(entry.themeId)) {
@@ -654,6 +693,22 @@ export class Hub {
           ).state;
           parts.push(`preset ${entry.presetId}`);
         }
+        if (
+          entry.playlistId &&
+          next.playlists.some((p) => p.id === entry.playlistId) &&
+          next.surfaces.length
+        ) {
+          next = applyCommand(
+            next,
+            {
+              t: 'surface.playPlaylist',
+              surfaceIds: next.surfaces.map((x) => x.id),
+              playlistId: entry.playlistId,
+            },
+            ctx,
+          ).state;
+          parts.push(`playlist ${entry.playlistId}`);
+        }
         if (entry.blackout !== null) {
           next = applyCommand(next, { t: 'session.blackoutAll', on: entry.blackout }, ctx).state;
           parts.push(entry.blackout ? 'blackout' : 'resume');
@@ -663,12 +718,12 @@ export class Hub {
           next.boost = entry.boost;
           parts.push(`boost ${Math.round(entry.boost * 100)}%`);
         }
-        next.schedule = { ...sch, lastApplied: key };
+        next.schedule = { ...next.schedule!, lastApplied: key };
         this.commit(ls, next, 'Zeitplan', `${entry.at} ${parts.join(', ')}`);
       } catch (e) {
         this.log.warn({ err: e, session: ls.state.id }, 'schedule entry failed');
         const next = structuredClone(ls.state);
-        next.schedule = { ...sch, lastApplied: key };
+        next.schedule = { ...next.schedule!, lastApplied: key };
         this.commit(ls, next, 'system', 'schedule skipped');
       }
     }
@@ -727,6 +782,11 @@ export class Hub {
 }
 
 /** Local date (YYYY-MM-DD) and time (HH:MM) in an IANA time zone; null for invalid zones. */
+function toMinutes(hm: string): number {
+  const [h, m] = hm.split(':');
+  return Number(h) * 60 + Number(m);
+}
+
 export function localClock(ms: number, timeZone: string): { date: string; hm: string } | null {
   try {
     const parts = new Intl.DateTimeFormat('en-CA', {

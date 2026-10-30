@@ -696,9 +696,22 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
           const t = requireTheme(ctx.catalog, e.themeId);
           if (!t.presets.some((p) => p.id === e.presetId)) fail('unknown_preset', 'Unknown preset');
         }
+        if (e.playlistId && !state.playlists.some((p) => p.id === e.playlistId))
+          fail('unknown_playlist', 'Unknown playlist');
+        if (e.insert) sceneOf(requireTheme(ctx.catalog, e.insert.themeId), e.insert.sceneId);
       }
-      // Re-evaluate on change so an edited schedule takes effect immediately.
-      state.schedule = { ...cmd.schedule, lastApplied: null };
+      // The running entry keeps running when other entries are edited (no restart); an edited or
+      // removed running entry is re-evaluated at once. A play-in already done is not repeated.
+      const prev = state.schedule;
+      const runId = prev?.lastApplied?.split('|')[1];
+      const before = prev?.entries.find((e) => e.id === runId);
+      const after = cmd.schedule.entries.find((e) => e.id === runId);
+      const keep = !!before && !!after && JSON.stringify(before) === JSON.stringify(after);
+      state.schedule = {
+        ...cmd.schedule,
+        lastApplied: keep ? (prev?.lastApplied ?? null) : null,
+        lastInserted: prev?.lastInserted ?? null,
+      };
       return res(cmd.schedule.enabled ? 'schedule on' : 'schedule off');
     }
     case 'session.setAmbient': {
@@ -761,6 +774,23 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
         };
       }
       return res(`${scene.name.en} → ${names(state.surfaces, cmd.surfaceIds)}`);
+    }
+    case 'scene.setParamsEverywhere': {
+      const theme = requireTheme(ctx.catalog, cmd.themeId);
+      const scene = sceneOf(theme, cmd.sceneId);
+      const same = (r: { themeId: string; sceneId: string }) =>
+        r.themeId === theme.id && r.sceneId === scene.id;
+      for (const pl of state.playlists)
+        for (const it of pl.items)
+          if (same(it.scene))
+            it.scene.params = sanitizeParams(scene.params, { ...it.scene.params, ...cmd.params });
+      for (const s of state.surfaces)
+        if (s.playback.mode === 'scene' && same(s.playback.scene))
+          s.playback.scene.params = sanitizeParams(scene.params, {
+            ...s.playback.scene.params,
+            ...cmd.params,
+          });
+      return res(`${scene.name.en} settings (everywhere)`);
     }
     case 'surface.resetProgram': {
       for (const s of surfaces(cmd.surfaceIds)) {
