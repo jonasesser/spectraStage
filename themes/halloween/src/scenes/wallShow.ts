@@ -100,7 +100,7 @@ function path(keys: [number, number, number, number][], t: number): { x: number;
  * Where the feet are: they step one after the other (one per beat) towards where the body will
  * be, and stand still in between – so they never slide. Pure function of time.
  */
-function feetAt(bodyAt: (t: number) => Body, t: number, width: number, floorY: number): [V3, V3] {
+export function feetAt(bodyAt: (t: number) => Body, t: number, width: number, floorY: number): [V3, V3] {
   const b = bodyAt(t);
   const B = Math.max(0.15, b.beat);
   const nom = (tt: number, side: number): V3 => {
@@ -239,7 +239,7 @@ uniform sampler2D uFaceTex;
 uniform mat4 uFaceM;
 `;
 
-class Rig {
+export class Rig {
   ready = false;
   root = new THREE.Group();
   private bind = new Map<THREE.Object3D, THREE.Quaternion>();
@@ -573,7 +573,7 @@ class Rig {
 // ---------------------------------------------------------------------------
 // Drawing the figures over the wall
 // ---------------------------------------------------------------------------
-class FigureLayer {
+export class FigureLayer {
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera();
   private rt: THREE.WebGLRenderTarget | null = null;

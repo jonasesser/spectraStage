@@ -204,7 +204,14 @@ function InsertPanel({
   const sc = scenes.find((x) => x.id === pick);
   // without a selection: the main wall
   const main = state.surfaces.find((s) => s.role === 'main') ?? state.surfaces.find((s) => s.kind === 'wall');
-  const on = targets.length ? targets : main ? [main] : [];
+  // shows that move over all sides play on all of them unless sides are chosen
+  const on = targets.length
+    ? targets
+    : sc?.allSides
+      ? state.surfaces.filter((s) => s.kind === 'wall' || s.kind === 'floor')
+      : main
+        ? [main]
+        : [];
   const [, tick] = useState(0);
   const now = store.conn.clock.now();
   const running = on.map((s) => s.insert).find((i) => i && now < i.endAt && now >= i.startedAt - 1000);

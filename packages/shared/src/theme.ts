@@ -50,6 +50,11 @@ export interface SceneManifest {
    * at speed 1 (s).
    */
   oneShotSec?: number;
+  /**
+   * Played in on every side at once (main wall, side walls, floor): the show moves from one side
+   * to the other.
+   */
+  allSides?: boolean;
 }
 
 export interface EffectManifest {

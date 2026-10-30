@@ -307,6 +307,36 @@ const scenes: SceneManifest[] = [
     '🧟',
     ['#000000', '#5dff8a'],
   ),
+  {
+    id: 'wallWitch',
+    name: L('Little witch magic show (3D)', 'Kleine Hexe zaubert (3D)'),
+    description: L(
+      'For kids: the little witch arrives (on her broom, in a puff of magic or tumbling off her broom), waves hello and does a magic show on the right wall – a laughing pumpkin, bats out of the moon, a bubbling cauldron, fireworks, or a spell that goes wrong and leaves a frog – then she vanishes or flies away. Plays on all sides at once.',
+      'Für Kinder: Die kleine Hexe kommt an (auf dem Besen, per Zauberwolke oder purzelt vom Besen), winkt und zaubert auf der rechten Wand – lachender Kürbis, Fledermäuse aus dem Mond, blubbernder Kessel, Feuerwerk oder ein Zauber geht schief und es sitzt ein Frosch da – dann zaubert sie sich weg oder fliegt davon. Läuft auf allen Seiten gleichzeitig.',
+    ),
+    kinds: ['wall'],
+    icon: '🧙',
+    colors: ['#000000', '#a24cff'],
+    oneShotSec: 60,
+    allSides: true,
+    params: [
+      {
+        key: 'speed',
+        label: L('Speed', 'Tempo'),
+        type: 'number',
+        min: 0.5,
+        max: 1.5,
+        step: 0.05,
+        default: 1,
+      },
+      {
+        key: 'witchPhoto',
+        label: L("Witch's face (guest photo)", 'Gesicht der Hexe (Gäste-Foto)'),
+        type: 'photo',
+        default: '',
+      },
+    ],
+  },
   oneShot(
     'wallBuddyDance',
     ['Cute monster dances (3D)', 'Süßes Monster tanzt (3D)'],

@@ -264,3 +264,22 @@ Objekte → 🎃 **Kürbis**: Den Kürbis wie andere Objekte im Raum platzieren,
 - Wechselnd: alle 12 s ein anderer Look.
 
 Hinweis: Der Beamer strahlt von der Seite. Das Gesicht wird zwar korrekt auf die Kürbisform gerechnet, aber die vom Beamer abgewandte Seite bleibt unbeleuchtet. Darum den Kürbis so drehen, dass die Gesichtsseite zum Beamer und zum Publikum zeigt, also einen Kompromiss wählen.
+
+## Kleine Hexe (Kinder-Show, 60 s)
+
+Szenen → 🎬 Einmalig einspielen → 🧙 **Kleine Hexe zaubert (3D)**. Ist keine Seite ausgewählt, läuft die Show auf allen Wänden und dem Boden gleichzeitig. Die Hexe steht vor der Hauptwand, die Zaubertricks passieren auf der rechten Seitenwand. Das ist die Seitenwand, die direkt rechts an die Hauptwand anschließt. Gibt es keine rechte Wand, zaubert sie auf den rechten Teil der Hauptwand.
+
+Jeder Durchlauf wird zufällig zusammengestellt:
+- **Auftritt** (eine Variante):
+  - Sie kommt auf dem Besen aus der Ferne hinter der rechten Wand angeflogen.
+  - Sie erscheint per Funkenspirale und Rauchwolke.
+  - Sie purzelt vom vorbeifliegenden Besen; danach kreisen Sterne um ihren Kopf und sie rückt den Hut gerade.
+- **Zaubertricks:** 3 von 5:
+  - Ein Kürbis wächst, schwebt und lacht.
+  - Fledermäuse fliegen aus einem Vollmond.
+  - Ein Kessel über einem Feuer blubbert bunte Blasen.
+  - Feuerwerk mit Sternenregen.
+  - Ein missglückter Zauber hinterlässt einen Frosch.
+- **Abgang:** Sie zaubert sich in einer Funkenspirale weg, wenn sie per Besen kam. Sonst fliegt sie auf dem Besen davon, in die Ferne hinter der rechten Wand.
+
+Optional legt der Parameter „Gesicht der Hexe“ ein Gäste-Foto auf ihr Gesicht. Modell: `apps/web/public/models/witch.glb`.
