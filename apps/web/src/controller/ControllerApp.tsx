@@ -8,10 +8,11 @@ import { LiveView } from './LiveView.tsx';
 import { ScenesView } from './ScenesView.tsx';
 import { StageEditor } from './StageEditor.tsx';
 import { OutputsView } from './OutputsView.tsx';
+import { TestView } from './TestView.tsx';
 import { PlaylistsView } from './PlaylistsView.tsx';
 import { RecoveryKeySheet, SettingsView } from './SettingsView.tsx';
 
-type Tab = 'live' | 'scenes' | 'stage' | 'outputs' | 'playlists' | 'more';
+type Tab = 'live' | 'scenes' | 'stage' | 'outputs' | 'playlists' | 'test' | 'more';
 
 export default function ControllerApp() {
   const L = useT();
@@ -74,6 +75,7 @@ function Shell() {
     ['stage', '🏠', L('Stage', 'Bühne')],
     ['outputs', '📽', L('Projectors', 'Beamer')],
     ['playlists', '🎞', L('Playlists', 'Playlists')],
+    ['test', '🧪', L('Test', 'Test')],
     ['more', '⚙', L('More', 'Mehr')],
   ];
 
@@ -152,6 +154,8 @@ function Shell() {
               <OutputsView />
             ) : tab === 'playlists' ? (
               <PlaylistsView />
+            ) : tab === 'test' ? (
+              <TestView />
             ) : (
               <SettingsView />
             )}

@@ -173,3 +173,17 @@ test('a video (e.g. Kling) is uploaded and played in once on the main wall', asy
   await garage.screenshot({ path: 'test-results/garage-video.png' });
   expect(errors).toEqual([]);
 });
+
+test('test area: a scene and a projector picture render on this PC only', async ({ browser }) => {
+  const { phone } = await createShow(browser);
+  const errors: string[] = [];
+  phone.on('pageerror', (e) => errors.push(e.message));
+  await phone.getByRole('button', { name: /Test/ }).first().click();
+  // a light scene (the 3D shows are too slow for the software graphics of the test browser)
+  const v = await phone.locator('select option', { hasText: 'Spukhaus' }).first().getAttribute('value');
+  await phone.locator('select').first().selectOption(v!);
+  await expect(phone.getByText(/\d+ fps ·/)).toBeVisible({ timeout: 20_000 });
+  await phone.getByRole('button', { name: /Live-Bild eines Beamers/ }).click();
+  await expect(phone.getByText(/\d+ fps ·/)).toBeVisible({ timeout: 20_000 });
+  expect(errors).toEqual([]);
+});

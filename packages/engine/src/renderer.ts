@@ -91,6 +91,8 @@ export interface RendererOptions {
   readable?: boolean;
   /** Upper bound for the internal render resolution (default: native up to 4K). */
   maxRenderPixels?: number;
+  /** Render this many pixels wide whatever the canvas size (test area: a projector's 4K). */
+  fixedWidth?: number;
   /** GPU choice on PCs with two graphics chips (default high-performance). */
   powerPreference?: 'high-performance' | 'low-power';
 }
@@ -1004,8 +1006,13 @@ export class StageRenderer {
   private resize(): boolean {
     const canvas = this.opts.canvas;
     const dpr = Math.min(window.devicePixelRatio || 1, this.opts.maxPixelRatio ?? 2);
-    const w = Math.max(2, Math.min(3840, Math.round(canvas.clientWidth * dpr)));
-    const h = Math.max(2, Math.min(2400, Math.round(canvas.clientHeight * dpr)));
+    const fw = this.opts.fixedWidth;
+    const w = fw
+      ? Math.max(2, Math.min(3840, Math.round(fw)))
+      : Math.max(2, Math.min(3840, Math.round(canvas.clientWidth * dpr)));
+    const h = fw
+      ? Math.max(2, Math.min(2400, Math.round((fw * canvas.clientHeight) / Math.max(1, canvas.clientWidth))))
+      : Math.max(2, Math.min(2400, Math.round(canvas.clientHeight * dpr)));
     if (w === this.width && h === this.height) return false;
     this.width = w;
     this.height = h;

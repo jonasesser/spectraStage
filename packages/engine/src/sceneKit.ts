@@ -198,6 +198,9 @@ class KitScene implements SceneInstance {
         uTime: frame.time,
         uRes: new THREE.Vector2(this.state.w, this.state.h),
         uSeed: (this.state.seed % 1000) / 10,
+        // always 1: heavy shaders multiply their loop counts by it, so the compiler cannot unroll
+        // them (unrolled ray marches made the GPU driver on Windows hang while compiling)
+        uIt: 1,
       });
       if (this.opts.uniforms) this.shader.setUniforms(this.opts.uniforms(this.state, frame));
       const scale = Math.max(0.25, Math.min(1, this.opts.shaderScale ?? 0.5));

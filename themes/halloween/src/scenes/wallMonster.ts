@@ -419,6 +419,7 @@ function pose(a: number, cute: boolean, ro: V3, rebuild = true): Pose {
 export const WALL_MONSTER_FRAG = /* glsl */ `
 precision highp float;
 varying vec2 vUv;
+uniform int uIt; // always 1 – keeps the loops real loops (no unrolling on Windows)
 uniform float uTime;
 uniform vec2 uRes;
 uniform vec3 uRo, uP0, uPU, uPV;
@@ -474,7 +475,7 @@ float noise3(vec3 x) {
 }
 float fbm3(vec3 p) {
   float a = 0.5, s = 0.0;
-  for (int i = 0; i < 4; i++) { s += a * noise3(p); p = p * 2.03 + vec3(1.7, 9.2, 3.1); a *= 0.5; }
+  for (int i = 0; i < 4 * uIt; i++) { s += a * noise3(p); p = p * 2.03 + vec3(1.7, 9.2, 3.1); a *= 0.5; }
   return s;
 }
 float smin(float a, float b, float k) { float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0); return mix(b, a, h) - k * h * (1.0 - h); }
@@ -547,7 +548,7 @@ vec2 headMummy(vec3 q) {
   if (eye < d) { d = eye; mat = 3.0; }
   // a few yellowed teeth
   float teeth = 1e5;
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 4 * uIt; i++) {
     float x = 0.008 + float(i) * 0.012;
     teeth = min(teeth, sdRBox(qa - vec3(x, -0.096, 0.15 - float(i * i) * 0.003), vec3(0.005, 0.009, 0.004), 0.002));
   }
@@ -570,7 +571,7 @@ vec3 bodyWraps(vec3 p) {
   vec3 sl = uBody + vec3(-0.27, 0.07, 0.0), sr = uBody + vec3(0.27, 0.07, 0.0);
   float best = 1e5;
   vec3 res = vec3(0.0);
-  for (int k = 0; k < 4; k++) {
+  for (int k = 0; k < 4 * uIt; k++) {
     vec3 A = k == 0 ? sl : k == 1 ? sr : k == 2 ? uElbL : uElbR;
     vec3 B = k == 0 ? uElbL : k == 1 ? uElbR : k == 2 ? uHandL : uHandR;
     vec3 u = normalize(B - A);
@@ -617,7 +618,7 @@ vec2 hand(vec3 q, float curl) {
                         : sdRBox(q - vec3(0.0, 0.058, 0.0), vec3(0.04, 0.05, 0.006), 0.012);
   float mat = 2.0;
   if (uCute < 0.5) {
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 4 * uIt; i++) {
       float fi = float(i);
       float x = -0.042 + fi * 0.028;
       float spread = (fi - 1.5) * 0.11;
@@ -645,7 +646,7 @@ vec2 hand(vec3 q, float curl) {
     // wraps across the hand
     if (d < 0.02) d -= wraps(q.y + q.x * 0.4, q * 6.0, 0.022).x * 0.7;
   } else {
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 3 * uIt; i++) {
       float fi = float(i);
       vec3 p0 = vec3(-0.03 + fi * 0.03, 0.105, 0.0);
       vec3 dir = vec3((fi - 1.0) * 0.25, 1.0, 0.0);
@@ -748,7 +749,7 @@ vec2 debris(vec3 p) {
   float d = 1e5;
   if (uDebrisT < 0.0) return vec2(d, 5.0);
   float t = uDebrisT;
-  for (int i = 0; i < 14; i++) {
+  for (int i = 0; i < 14 * uIt; i++) {
     float fi = float(i);
     float a = fi * 2.399 + 0.3;
     float r0 = 0.12 + 0.45 * hash1(fi * 3.1);
@@ -795,7 +796,7 @@ vec3 normalAt(vec3 p) {
 
 float shadow(vec3 ro, vec3 rd, float maxT) {
   float res = 1.0, t = 0.02 + 0.03 * hash1(dot(gl_FragCoord.xy, vec2(12.9898, 78.233)));
-  for (int i = 0; i < 40; i++) {
+  for (int i = 0; i < 40 * uIt; i++) {
     float h = mapM(ro + rd * t);
     res = min(res, 8.0 * h / t);
     t += clamp(h, 0.02, 0.2);
@@ -806,7 +807,7 @@ float shadow(vec3 ro, vec3 rd, float maxT) {
 
 float occlusion(vec3 p, vec3 n) {
   float o = 0.0, s = 1.0;
-  for (int i = 1; i <= 4; i++) {
+  for (int i = 1; i <= 4 * uIt; i++) {
     float h = 0.015 * float(i * i);
     o += (h - map(p + n * h).x) * s;
     s *= 0.6;
@@ -932,7 +933,7 @@ void main() {
     float t = max(0.0, (ro.z - 1.2) / -rd.z);
     float tEnd = (ro.z + 1.6) / -rd.z;
     float mat = -1.0;
-    for (int i = 0; i < 140; i++) {
+    for (int i = 0; i < 140 * uIt; i++) {
       vec3 p = ro + rd * t;
       vec2 h = map(p);
       if (h.x < 0.0006 * t) { mat = h.y; break; }
@@ -1051,7 +1052,7 @@ void main() {
     col += (uCute > 0.5 ? vec3(0.5, 0.47, 0.44) : vec3(0.55, 0.48, 0.36)) * dust * (0.12 + 0.3 * uGlow * (uCute > 0.5 ? 0.6 : 1.0));
   }
   if (uGlow > 0.02) {
-    for (int i = 0; i < 18; i++) {
+    for (int i = 0; i < 18 * uIt; i++) {
       float fi = float(i);
       float life = 3.0 + 2.0 * hash1(fi * 4.1);
       float age = mod(uTime + hash1(fi * 2.3) * life, life);
