@@ -225,14 +225,14 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
   });
 
   // Ghost photos of the zombie camera (pictures of guests): only members of the show.
-  app.post('/api/ghosts', { bodyLimit: 900 * 1024 }, async (req, reply) => {
+  app.post('/api/ghosts', { bodyLimit: 1100 * 1024 }, async (req, reply) => {
     const row = auth(req, ['owner', 'controller', 'device']);
     if (!limiter.take('rest', clientIp(req, config))) return tooMany(reply);
     const body = z
       .object({
         image: z
           .string()
-          .max(800_000)
+          .max(1_000_000)
           .regex(/^data:image\/(webp|png|jpeg);base64,/),
         release: z.boolean().optional(),
         u: z.number().min(0).max(1).optional(),

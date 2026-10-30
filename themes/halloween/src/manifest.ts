@@ -642,6 +642,7 @@ const effects: EffectManifest[] = [
   effect('batSwarm', ['Bat Swarm', 'Fledermausschwarm'], '🦇', 5000),
   effect('pumpkinBurst', ['Pumpkin Burst', 'Kürbis-Explosion'], '🎃', 3500),
   effect('gentleLightning', ['Gentle Lightning', 'Sanfter Blitz'], '🌩️', 3000),
+  effect('photoLight', ['Photo light', 'Fotolicht'], '💡', 1800),
   effect('spiderRush', ['Spider Rush', 'Spinnen-Sprint'], '🕷️', 5000),
   effect('ghostWave', ['Ghost Wave', 'Geisterwelle'], '🌊', 4200),
   effect('confettiLeaves', ['Leaf Confetti', 'Blätterkonfetti'], '🍂', 5000),

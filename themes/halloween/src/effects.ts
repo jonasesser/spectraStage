@@ -159,6 +159,20 @@ const pumpkinBurst = effect(
   },
 );
 
+/**
+ * Light for the ghost photo camera: the projectors turn into a big soft photo lamp for a moment
+ * (warm white, quick up, gentle down) – the guests in front of the wall are lit for the picture.
+ */
+const photoLight = effect('photoLight', (g, i) => {
+  const a = Math.min(1, i.t / 0.15) * (1 - Math.max(0, (i.progress - 0.8) / 0.2));
+  if (a <= 0.003) return;
+  g.save();
+  g.globalCompositeOperation = 'source-over';
+  g.fillStyle = `rgba(255,244,228,${a})`;
+  g.fillRect(0, 0, i.w, i.h);
+  g.restore();
+});
+
 const gentleLightning = effect(
   'gentleLightning',
   (g, i) => {
@@ -556,6 +570,7 @@ export const effects: EffectModule[] = [
   batSwarm,
   pumpkinBurst,
   gentleLightning,
+  photoLight,
   spiderRush,
   ghostWave,
   confettiLeaves,

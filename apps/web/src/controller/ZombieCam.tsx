@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { activeProfile, roomFold, wallsOfPose, type Presence, type SessionState } from '@spectrastage/shared';
+import {
+  activeProfile,
+  roomFold,
+  surfacesForSides,
+  wallsOfPose,
+  type Presence,
+  type SessionState,
+} from '@spectrastage/shared';
 import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
 import { GhostGallery } from './GhostGallery.tsx';
@@ -55,6 +62,10 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
   const [fxState, setFxState] = useState<'off' | 'loading' | 'ready' | 'failed'>('off');
   const [jobs, setJobs] = useState<Job[]>([]);
   const [flash, setFlash] = useState<string | null>(null);
+  // light for the picture (in the dark): the projectors become a photo lamp, the phone's lamp
+  const [beamLight, setBeamLight] = useState(true);
+  const [torch, setTorch] = useState(true);
+  const [busy, setBusy] = useState(false);
   const jobId = useRef(1);
   const fxRef = useRef<ZombieFx | null>(null);
   const stopLoop = useRef<(() => void) | null>(null);
@@ -90,11 +101,93 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
     return ((await res.json()) as { id: string }).id;
   };
 
-  /** The shutter: everybody in the picture → their own ghost, all rising together. */
-  const shoot = () => {
+  /** The phone's lamp on / off (where the browser can – Android; not on iPhone). */
+  const setLamp = async (onOff: boolean): Promise<boolean> => {
+    const track = run.current?.stream.getVideoTracks()[0];
+    if (!track) return false;
+    const caps = (track.getCapabilities?.() ?? {}) as { torch?: boolean };
+    if (!caps.torch) return false;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: onOff } as MediaTrackConstraintSet] });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  /**
+   * The shutter: light first (projectors bright, phone lamp) – the camera needs a moment to see
+   * in it and the person recognition a fresh picture – then the picture: everybody in it → their
+   * own ghost, all rising together.
+   */
+  const shoot = async () => {
     const fx = fxRef.current;
-    if (!fx?.ready) return;
-    const shots = fx.captureAll().slice(0, 12);
+    if (!fx?.ready || busy) return;
+    const lit = beamLight || torch;
+    if (lit) {
+      setBusy(true);
+      setFlash(L('💡 Light …', '💡 Licht …'));
+      const front = surfacesForSides(state.surfaces, ['main', 'floorFront']);
+      if (beamLight && front.length)
+        void store.send({
+          t: 'effect.fire',
+          surfaceIds: front.map((x) => x.id),
+          themeId: 'halloween',
+          effectId: 'photoLight',
+        });
+      const lamp = torch ? await setLamp(true) : false;
+      // the projectors start ~0.2 s later; then exposure and a recognised picture in that light
+      await new Promise((res) => setTimeout(res, beamLight ? 1100 : 800));
+      try {
+        snap(fx);
+      } finally {
+        if (lamp) void setLamp(false);
+        setBusy(false);
+      }
+      return;
+    }
+    snap(fx);
+  };
+
+  const snap = (fx: ZombieFx) => handleShots(fx.captureAll().slice(0, 12));
+
+  // a photo instead of the live camera (works on every phone, also iPhone: the phone's own
+  // camera with its flash, or a picture from the gallery)
+  const stillFx = useRef<ZombieFx | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const onPhoto = async (f: File) => {
+    setBusy(true);
+    setFlash(L('Looking for people in the photo …', 'Suche Personen im Foto …'));
+    try {
+      let fx = fxRef.current?.ready ? fxRef.current : stillFx.current;
+      if (!fx) {
+        setFlash(L('Loading (about 15 MB, once) …', 'Lade (ca. 15 MB, einmalig) …'));
+        fx = new ZombieFx();
+        await fx.init();
+        stillFx.current = fx;
+      }
+      if (!fx.ready) throw new Error(L('does not run in this browser', 'läuft in diesem Browser nicht'));
+      const url = URL.createObjectURL(f);
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.max(8, Math.round(img.naturalWidth * k));
+      c.height = Math.max(8, Math.round(img.naturalHeight * k));
+      c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      handleShots((await fx.processStill(c)).slice(0, 12));
+    } catch (e) {
+      setFlash(
+        L(`Photo could not be used (${(e as Error).message})`, `Foto ging nicht (${(e as Error).message})`),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleShots = (shots: ReturnType<ZombieFx['captureAll']>) => {
     if (!shots.length) {
       setFlash(L('Nobody recognised – faces towards the camera.', 'Niemand erkannt – Gesichter zur Kamera.'));
       return;
@@ -118,8 +211,11 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
         filterIds = [];
         for (let i = 0; i < shots.length; i++)
           filterIds.push(await upload(shots[i]!.image, 'filter', groups[i]!));
-        // the plain photos (never fly)
-        for (let i = 0; i < shots.length; i++) await upload(shots[i]!.original, 'original', groups[i]!);
+        // the plain photos (never fly) – one that does not get through must not stop the ghosts
+        for (let i = 0; i < shots.length; i++)
+          await upload(shots[i]!.original, 'original', groups[i]!).catch((e: Error) =>
+            console.warn('[SpectraStage] original photo', e.message),
+          );
         // all of them at once, each from where the person stood
         await store.send({ t: 'ghost.release', ghostIds: filterIds, u: shots.map((s) => s.u) });
         patchJob(id, { state: 'flying', ai: ai ? 'painting' : undefined });
@@ -312,7 +408,7 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
         />
         <canvas
           ref={previewRef}
-          onClick={shoot}
+          onClick={() => void shoot()}
           style={{
             position: 'relative',
             display: 'block',
@@ -329,8 +425,8 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
         <button
           className="btn primary"
           style={{ fontSize: '1.15rem', padding: '0.9rem' }}
-          disabled={fxState !== 'ready'}
-          onClick={shoot}
+          disabled={fxState !== 'ready' || busy}
+          onClick={() => void shoot()}
         >
           📸{' '}
           {fxState === 'loading'
@@ -340,6 +436,36 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
               : L('Shutter – everybody in the picture', 'Auslösen – alle im Bild')}
         </button>
       )}
+      {on && (
+        <div className="row">
+          <label className="check">
+            <input type="checkbox" checked={beamLight} onChange={(e) => setBeamLight(e.target.checked)} />
+            {L('Projectors light up for the photo', 'Beamer leuchten beim Foto hell auf')}
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={torch} onChange={(e) => setTorch(e.target.checked)} />
+            {L("Phone's lamp (Android)", 'Handy-Lampe (Android)')}
+          </label>
+        </div>
+      )}
+      <button className="btn" disabled={busy} onClick={() => fileRef.current?.click()}>
+        🖼{' '}
+        {L(
+          'Take or choose a photo (phone camera with flash)',
+          'Foto aufnehmen oder wählen (Handy-Kamera mit Blitz)',
+        )}
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (f) void onPhoto(f);
+        }}
+      />
       {flash && <strong className="small">{flash}</strong>}
       {jobs.length > 0 && (
         <ul className="small" style={{ margin: 0, paddingLeft: '1.1rem' }}>

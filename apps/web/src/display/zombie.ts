@@ -46,6 +46,8 @@ const KINDS: [Kind, number][] = [
 interface Person {
   id: number;
   box: { x: number; y: number; w: number; h: number };
+  /** Where the person really is in the latest picture (box above is smoothed, it lags). */
+  raw?: { x: number; y: number; w: number; h: number };
   canvas: HTMLCanvasElement;
   seen: number;
   alpha: number;
@@ -96,6 +98,25 @@ function makeLook(id: number): Look {
   return { kind, eyes, marks: marks.slice(0, 3), seed: Math.floor(r() * 1e6) };
 }
 
+/**
+ * A picture with transparency as a data URL that the server takes (≤ 700 kB): WebP where the
+ * browser can, else PNG (iPhone) – made smaller until it fits.
+ */
+function fitUrl(src: HTMLCanvasElement, q: number): string {
+  let c = src;
+  for (let i = 0; i < 8; i++) {
+    let url = c.toDataURL('image/webp', q);
+    if (!url.startsWith('data:image/webp')) url = c.toDataURL('image/png');
+    if (url.length <= 700_000) return url;
+    const n = document.createElement('canvas');
+    n.width = Math.max(8, Math.round(c.width * 0.8));
+    n.height = Math.max(8, Math.round(c.height * 0.8));
+    n.getContext('2d')!.drawImage(c, 0, 0, n.width, n.height);
+    c = n;
+  }
+  return c.toDataURL('image/png');
+}
+
 /** A ghost photo of one person. */
 export interface Shot {
   /** Cut out, with the live filter (data URL). */
@@ -112,6 +133,13 @@ export interface Shot {
 export class ZombieFx {
   private work = document.createElement('canvas');
   private tmp = document.createElement('canvas');
+  /**
+   * The camera picture of the frame that was recognised, sharp (up to 1280 px high) and mirrored
+   * like work: the photos of a shot are cut from it, so picture and person mask are the very same
+   * moment (the live video may have moved on – then the cut-out would miss the person).
+   */
+  private full = document.createElement('canvas');
+  private lastFrameAt = 0;
   private seg: Segmenter | null = null;
   private face: FaceLm | null = null;
   private filter: FaceFilter | null = null;
@@ -175,7 +203,7 @@ export class ZombieFx {
     const step = () => {
       if (stopped) return;
       const t0 = performance.now();
-      if (active())
+      if (active() && !this.hold)
         try {
           this.process(video, t0);
           onFrame?.();
@@ -192,9 +220,11 @@ export class ZombieFx {
     };
   }
 
-  process(video: HTMLVideoElement, ts: number): void {
-    if (!this.seg || video.videoWidth === 0) return;
-    this.video = video;
+  process(video: HTMLVideoElement | HTMLCanvasElement, ts: number, mirror = true): void {
+    const vw = video instanceof HTMLVideoElement ? video.videoWidth : video.width;
+    const vh = video instanceof HTMLVideoElement ? video.videoHeight : video.height;
+    if (!this.seg || vw === 0) return;
+    if (video instanceof HTMLVideoElement) this.video = video;
     // MediaPipe needs rising time stamps
     ts = Math.max(ts, this.lastTs + 1);
     this.lastTs = ts;
@@ -202,9 +232,9 @@ export class ZombieFx {
     const pn = performance.now();
     if (this.lastProcess) this.interval = this.interval * 0.8 + Math.min(5000, pn - this.lastProcess) * 0.2;
     this.lastProcess = pn;
-    const k = Math.min(1, MAX_W / video.videoWidth);
-    const W = Math.round(video.videoWidth * k);
-    const H = Math.round(video.videoHeight * k);
+    const k = Math.min(1, MAX_W / vw);
+    const W = Math.round(vw * k);
+    const H = Math.round(vh * k);
     for (const c of [this.work, this.tmp]) {
       if (c.width !== W || c.height !== H) {
         c.width = W;
@@ -212,10 +242,23 @@ export class ZombieFx {
       }
     }
     const wg = this.work.getContext('2d', { willReadFrequently: true })!;
-    // mirrored, like a mirror: people recognise their own movements
-    wg.setTransform(-1, 0, 0, 1, W, 0);
+    // mirrored, like a mirror: people recognise their own movements (an uploaded photo stays)
+    if (mirror) wg.setTransform(-1, 0, 0, 1, W, 0);
     wg.drawImage(video, 0, 0, W, H);
     wg.setTransform(1, 0, 0, 1, 0, 0);
+    {
+      const kf = Math.min(1, 1280 / vh);
+      const fw = Math.round(vw * kf);
+      const fh = Math.round(vh * kf);
+      if (this.full.width !== fw || this.full.height !== fh) {
+        this.full.width = fw;
+        this.full.height = fh;
+      }
+      const fg = this.full.getContext('2d')!;
+      if (mirror) fg.setTransform(-1, 0, 0, 1, fw, 0);
+      fg.drawImage(video, 0, 0, fw, fh);
+      fg.setTransform(1, 0, 0, 1, 0, 0);
+    }
     // what each pixel is: background, hair, body skin (neck, ears, hands), face skin, clothes,
     // other (glasses …) – the person is everything but the background
     let mask: Float32Array | null = null;
@@ -337,7 +380,9 @@ export class ZombieFx {
         w: b.w + (nb.w - b.w) * 0.25,
         h: b.h + (nb.h - b.h) * 0.25,
       };
+      best.raw = nb;
       best.seen = now;
+      this.lastFrameAt = now;
       best.label = k;
       active.push(best);
     }
@@ -485,11 +530,38 @@ export class ZombieFx {
    * Ghost photos of everybody in the picture right now (the shutter on the phone): one photo per
    * person – a group of five gives five separate ghosts.
    */
+  /**
+   * A photo instead of the live camera (uploaded / taken with the phone's own camera app, with
+   * its flash): recognised a few times over (so faces settle), then everybody in it is shot.
+   */
+  async processStill(img: HTMLCanvasElement): Promise<Shot[]> {
+    // the live camera waits meanwhile (it would mix its people into the photo's)
+    this.hold = true;
+    try {
+      this.people = [];
+      for (let i = 0; i < 6; i++) {
+        this.process(img, performance.now() + i * 50, false);
+        // breathe between the passes (the connection to the show must not stall)
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      return this.captureAll();
+    } finally {
+      this.people = [];
+      this.hold = false;
+    }
+  }
+  private hold = false;
+
   captureAll(): Shot[] {
     const W = Math.max(1, this.work.width);
     const now = performance.now();
+    // only who is in the latest recognised picture – no one remembered from earlier pictures
     const cand = this.people.filter(
-      (pr) => now - pr.seen < 1500 && pr.canvas.width > 8 && (pr.face || now - pr.faceSeen < 3000),
+      (pr) =>
+        pr.seen >= this.lastFrameAt - 1 &&
+        now - pr.seen < 1500 &&
+        pr.canvas.width > 8 &&
+        (pr.face || now - pr.faceSeen < 3000),
     );
     cand.sort((a, b) => a.box.x - b.box.x);
     return cand.map((pr) => {
@@ -550,28 +622,24 @@ export class ZombieFx {
     c.width = Math.max(8, Math.round(src.width * k));
     c.height = Math.max(8, Math.round(src.height * k));
     c.getContext('2d')!.drawImage(src, 0, 0, c.width, c.height);
-    let url = c.toDataURL('image/webp', 0.85);
-    if (!url.startsWith('data:image/webp')) url = c.toDataURL('image/png');
+    const url = fitUrl(c, 0.85);
     // the plain photo: the person with some room around, as the camera sees them
-    const b = pr.box;
+    const b = pr.raw ?? pr.box;
     const H = this.work.height;
     const x0 = Math.max(0, b.x - b.w * 0.1);
     const y0 = Math.max(0, b.y - b.h * 0.12);
     const x1 = Math.min(W, b.x + b.w * 1.1);
     const y1 = Math.min(H, b.y + b.h);
-    // in the camera's full resolution (the AI paints better from a sharp photo), mirrored like
-    // everything else
-    const v = this.video;
-    const kv = v && v.videoWidth ? v.videoWidth / W : 1;
+    // sharp (the AI paints better from a sharp photo) – the very frame that was recognised
+    const kv = this.full.width ? this.full.width / W : 1;
     const ph = document.createElement('canvas');
     const sc = Math.min(kv, 1280 / Math.max(1, y1 - y0));
     ph.width = Math.max(8, Math.round((x1 - x0) * sc));
     ph.height = Math.max(8, Math.round((y1 - y0) * sc));
     const pg = ph.getContext('2d')!;
-    if (v && v.videoWidth) {
-      pg.setTransform(-1, 0, 0, 1, ph.width, 0);
-      pg.drawImage(v, (W - x1) * kv, y0 * kv, (x1 - x0) * kv, (y1 - y0) * kv, 0, 0, ph.width, ph.height);
-    } else pg.drawImage(this.work, x0, y0, x1 - x0, y1 - y0, 0, 0, ph.width, ph.height);
+    if (this.full.width)
+      pg.drawImage(this.full, x0 * kv, y0 * kv, (x1 - x0) * kv, (y1 - y0) * kv, 0, 0, ph.width, ph.height);
+    else pg.drawImage(this.work, x0, y0, x1 - x0, y1 - y0, 0, 0, ph.width, ph.height);
     return {
       image: url,
       u: (b.x + b.w / 2) / Math.max(1, W),
@@ -586,7 +654,9 @@ export class ZombieFx {
    * full resolution, the person mask (from the segmentation) as transparency.
    */
   private plainCutOut(pr: Person, W: number, H: number): string {
-    const b = pr.box;
+    // where the person is in this very picture (with a little room), not the smoothed box
+    const rb = pr.raw ?? pr.box;
+    const b = { x: rb.x - rb.w * 0.04, y: rb.y - rb.h * 0.04, w: rb.w * 1.08, h: rb.h * 1.08 };
     const x0 = Math.max(0, Math.floor(b.x));
     const y0 = Math.max(0, Math.floor(b.y));
     const x1 = Math.min(W, Math.ceil(b.x + b.w));
@@ -602,25 +672,18 @@ export class ZombieFx {
     const md = mg.getImageData(0, 0, w, h);
     for (let i = 3; i < md.data.length; i += 4) md.data[i] = Math.min(255, md.data[i]! / 0.84);
     mg.putImageData(md, 0, 0);
-    // the picture, sharp from the video (mirrored like everything else)
-    const v = this.video;
-    const kv = v && v.videoWidth ? v.videoWidth / W : 1;
+    // the picture, sharp – from the very frame the mask belongs to
+    const kv = this.full.width ? this.full.width / W : 1;
     const sc = Math.min(kv, 900 / h);
     const c = document.createElement('canvas');
     c.width = Math.max(8, Math.round(w * sc));
     c.height = Math.max(8, Math.round(h * sc));
     const g = c.getContext('2d')!;
-    if (v && v.videoWidth) {
-      g.save();
-      g.setTransform(-1, 0, 0, 1, c.width, 0);
-      g.drawImage(v, (W - x1) * kv, y0 * kv, w * kv, h * kv, 0, 0, c.width, c.height);
-      g.restore();
-    } else g.drawImage(this.work, x0, y0, w, h, 0, 0, c.width, c.height);
+    if (this.full.width) g.drawImage(this.full, x0 * kv, y0 * kv, w * kv, h * kv, 0, 0, c.width, c.height);
+    else g.drawImage(this.work, x0, y0, w, h, 0, 0, c.width, c.height);
     g.globalCompositeOperation = 'destination-in';
     g.drawImage(m, 0, 0, c.width, c.height);
-    let url = c.toDataURL('image/webp', 0.88);
-    if (!url.startsWith('data:image/webp')) url = c.toDataURL('image/png');
-    return url;
+    return fitUrl(c, 0.88);
   }
 
   /** One person as their own sprite: their box, others in it removed, ghost tail, glow. */

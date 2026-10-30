@@ -288,3 +288,9 @@ Optional legt der Parameter „Gesicht der Hexe“ ein Gäste-Foto auf ihr Gesic
 
 Szenen → 🎬 Einmalig einspielen → **⬆ Video hochladen** (mp4 oder webm, bis 250 MB). Jedes Video wird eine eigene Kachel 🎥. Antippen → Bild (Wand füllen / ganzes Video / auf die Wand ziehen), Ton an/aus → „Jetzt einspielen“. Es läuft einmal auf der Hauptwand, danach geht das Programm weiter. Alle Beamer-PCs laden die Videos vorab, damit sie sofort starten. Löschen: Kachel antippen → 🗑.
 Hinweis: Läuft der Server hinter einem Proxy (Easypanel), muss dessen Upload-Grenze groß genug sein.
+
+## Geister-Fotos: Licht und Foto-Upload
+
+- Ein Druck auf den Auslöser macht genau ein Bild. Jede erkannte Person bekommt daraus ihr Original (unverändert, für Gesichter auf Figuren), ihr Filter-Bild und, falls ausgewählt, das KI-Bild. Alle drei stammen aus demselben Moment, aus dem die Personen-Erkennung stammt.
+- **Licht:** „Beamer leuchten beim Foto hell auf“ lässt Hauptwand und Boden davor kurz warmweiß aufleuchten (Effekt „Fotolicht“). „Handy-Lampe“ schaltet die Taschenlampe ein; das geht nur auf Android, auf dem iPhone kann der Browser die Lampe nicht schalten. Ausgelöst wird etwa 1 Sekunde später im Licht.
+- **🖼 Foto aufnehmen oder wählen:** nimmt mit der normalen Handy-Kamera auf (mit Blitz, auch auf dem iPhone) oder wählt ein Bild aus der Galerie. Darin werden die Personen gesucht und genauso gespeichert wie bei der Live-Kamera.
