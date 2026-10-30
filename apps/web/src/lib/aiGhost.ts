@@ -103,6 +103,29 @@ const MOOD = [
   'a faint ghostly glow around the outline',
 ];
 
+/** Pose and gesture – so the figures do not all float the same way. */
+const POSE = [
+  'arms stretched out towards the viewer, reaching',
+  'leaning forward and peering curiously at the viewer',
+  'waving with one hand, a mischievous grin',
+  'arms crossed, head tilted, a sly smile',
+  'both hands raised like claws, mouth open in a roar',
+  'drifting sideways, looking back over the shoulder',
+  'hands cupped around the mouth as if shouting "boo"',
+  'holding a small glowing lantern up beside the face',
+  'one hand beckoning the viewer to come closer',
+  'laughing wildly with the head thrown back a little',
+];
+/** Colour accent of the glow. */
+const ACCENT = [
+  'pale moonlight-white glow',
+  'sickly green glow',
+  'deep violet glow',
+  'warm pumpkin-orange glow',
+  'icy blue glow',
+  'blood-red glow',
+];
+
 export function aiPrompt(look: Look): string {
   let x = (look.seed * 2654435761) >>> 0 || 1;
   const r = () => {
@@ -124,7 +147,8 @@ export function aiPrompt(look: Look): string {
     ', as a floating ghost for a Halloween projection show. ' +
     'The face must stay clearly recognisable: same face, features, expression and hairstyle. ' +
     'Movie-quality special-effects make-up and prosthetics, photorealistic, ' +
-    `dramatic spooky lighting with ${pick(MOOD)}. ` +
+    `dramatic spooky lighting with ${pick(MOOD)} and a ${pick(ACCENT)}. ` +
+    `Pose: ${pick(POSE)}. ` +
     'A real ghost body: head and upper body of the creature, the arms and clothes become pale, glowing, ghostly and tattered (no solid dark clothing), ' +
     'and from the chest down the body turns into a long, flowing, translucent ghost tail of torn cloth and mist ' +
     'that fades out towards the bottom – no legs, no feet, floating in the air. ' +
@@ -287,9 +311,26 @@ async function cutOut(dataUrl: string): Promise<string> {
     }
     g.putImageData(img, 0, 0);
   }
-  let url = c.toDataURL('image/webp', 0.88);
-  if (!url.startsWith('data:image/webp')) url = c.toDataURL('image/png');
-  return url;
+  return encodeFitting(c);
+}
+
+/** The server takes ghost photos up to ~1 MB: WebP where the browser can, else PNG (iPhone) –
+ *  smaller in steps until it fits. */
+const MAX_UPLOAD_CHARS = 900_000;
+function encodeFitting(src: HTMLCanvasElement): string {
+  let c = src;
+  for (let step = 0; step < 8; step++) {
+    let url = c.toDataURL('image/webp', 0.85);
+    if (!url.startsWith('data:image/webp')) url = c.toDataURL('image/png');
+    if (url.length <= MAX_UPLOAD_CHARS || c.height < 160) return url;
+    const k = Math.max(0.5, Math.sqrt(MAX_UPLOAD_CHARS / url.length) * 0.95);
+    const n = document.createElement('canvas');
+    n.width = Math.max(1, Math.round(c.width * k));
+    n.height = Math.max(1, Math.round(c.height * k));
+    n.getContext('2d')!.drawImage(c, 0, 0, n.width, n.height);
+    c = n;
+  }
+  return c.toDataURL('image/png');
 }
 
 /** The AI version of a ghost photo (cut out, ready to upload). */

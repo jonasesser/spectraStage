@@ -56,9 +56,12 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
   // the live camera picture on the projectors (off by default)
   const [live, setLive] = useState(false);
   // monster portraits by an image AI with the user's own key (in memory only)
+  // both keys can be entered at once; the buttons switch which AI paints
   const [aiProvider, setAiProvider] = useState<AiProvider | null>(null);
-  const [aiKey, setAiKey] = useState('');
-  const [aiModel, setAiModel] = useState('');
+  const [aiKeys, setAiKeys] = useState<Record<AiProvider, string>>({ gemini: '', openai: '' });
+  const [aiModels, setAiModels] = useState<Record<AiProvider, string>>({ ...AI_MODELS });
+  const aiKey = aiProvider ? aiKeys[aiProvider] : '';
+  const aiModel = aiProvider ? aiModels[aiProvider] : '';
   const [fxState, setFxState] = useState<'off' | 'loading' | 'ready' | 'failed'>('off');
   const [jobs, setJobs] = useState<Job[]>([]);
   const [flash, setFlash] = useState<string | null>(null);
@@ -533,36 +536,67 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
             <button
               key={k ?? 'filter'}
               className={`chip${aiProvider === k ? ' on' : ''}`}
-              onClick={() => {
-                setAiProvider(k);
-                setAiModel(k ? AI_MODELS[k] : '');
-              }}
+              onClick={() => setAiProvider(k)}
             >
               {label}
+              {k && !aiKeys[k].trim() ? L(' · no key', ' · kein Key') : ''}
             </button>
           ))}
         </div>
         {aiProvider && (
           <>
+            {(
+              [
+                ['gemini', 'Gemini API key', 'AIza…'],
+                ['openai', 'OpenAI API key', 'sk-…'],
+              ] as const
+            ).map(([k, label, ph]) => (
+              <label key={k} className="small">
+                {label}
+                {aiProvider === k ? L(' (in use)', ' (aktiv)') : ''}
+                <div className="row" style={{ flexWrap: 'nowrap' }}>
+                  <input
+                    className="grow"
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={aiKeys[k]}
+                    onChange={(e) => setAiKeys((x) => ({ ...x, [k]: e.target.value }))}
+                    placeholder={ph}
+                  />
+                  <button
+                    type="button"
+                    className="btn icon small"
+                    disabled={!aiKeys[k]}
+                    aria-label={L('Delete key', 'Key löschen')}
+                    title={L('Delete key', 'Key löschen')}
+                    onClick={() => setAiKeys((x) => ({ ...x, [k]: '' }))}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </label>
+            ))}
             <label className="small">
-              {aiProvider === 'gemini' ? 'Gemini API key' : 'OpenAI API key'}
+              {L('Model', 'Modell')} ({aiProvider === 'gemini' ? 'Gemini' : 'OpenAI'})
               <input
-                type="password"
-                autoComplete="off"
+                value={aiModel}
                 spellCheck={false}
-                value={aiKey}
-                onChange={(e) => setAiKey(e.target.value)}
-                placeholder={aiProvider === 'gemini' ? 'AIza…' : 'sk-…'}
+                onChange={(e) => setAiModels((x) => ({ ...x, [aiProvider]: e.target.value }))}
               />
             </label>
-            <label className="small">
-              {L('Model', 'Modell')}
-              <input value={aiModel} spellCheck={false} onChange={(e) => setAiModel(e.target.value)} />
-            </label>
+            {!aiKey.trim() && (
+              <span className="small" style={{ color: 'var(--lantern)' }}>
+                {L(
+                  'No key for this AI – the face filter photo is used.',
+                  'Kein Key für diese KI – es wird das Gesichtsfilter-Foto genommen.',
+                )}
+              </span>
+            )}
             <span className="small muted">
               {L(
-                'The key stays only in this open page – it is not saved and never goes to the SpectraStage server; after reloading, enter it again. Every person goes as their own photo from this phone to the provider (a few cents each) and comes back as a cut-out monster portrait. If the AI fails, the face filter photo is used.',
-                'Der Key bleibt nur in dieser offenen Seite – er wird nicht gespeichert und geht nie an den SpectraStage-Server; nach dem Neuladen neu eingeben. Jede Person geht als eigenes Foto von diesem Handy zum Anbieter (je ein paar Cent) und kommt als freigestelltes Monster-Porträt zurück. Klappt die KI nicht, wird das Gesichtsfilter-Foto genommen.',
+                'Both keys can be entered; the buttons above switch which AI paints. The keys stay only in this open page – they are not saved and never goes to the SpectraStage server; after reloading, enter it again. Every person goes as their own photo from this phone to the provider (a few cents each) and comes back as a cut-out monster portrait. If the AI fails, the face filter photo is used.',
+                'Beide Keys können eingetragen sein, die Knöpfe oben wechseln die KI. Die Keys bleiben nur in dieser offenen Seite – sie werden nicht gespeichert und geht nie an den SpectraStage-Server; nach dem Neuladen neu eingeben. Jede Person geht als eigenes Foto von diesem Handy zum Anbieter (je ein paar Cent) und kommt als freigestelltes Monster-Porträt zurück. Klappt die KI nicht, wird das Gesichtsfilter-Foto genommen.',
               )}
             </span>
           </>
