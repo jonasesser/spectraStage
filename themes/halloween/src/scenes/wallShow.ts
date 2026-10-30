@@ -70,6 +70,8 @@ export interface Body {
   /** Step rhythm (s per step) and how high the feet lift. */
   beat: number;
   lift: number;
+  /** Shoulders turned against the hips (walking), radians. */
+  twist?: number;
 }
 
 /** Keyframes [t, x, z, yaw] → position and facing; walking straight between them. */
@@ -397,7 +399,8 @@ export class Rig {
     const fw = fwdOf(body.yaw);
     const lean = new THREE.Quaternion()
       .setFromAxisAngle(left, body.lean / 3)
-      .multiply(new THREE.Quaternion().setFromAxisAngle(fw, body.sway / 3));
+      .multiply(new THREE.Quaternion().setFromAxisAngle(fw, body.sway / 3))
+      .multiply(new THREE.Quaternion().setFromAxisAngle(UP, (body.twist ?? 0) / 3));
     for (const n of ['Spine', 'Spine1', 'Spine2']) this.turn(this.b[n]!, lean);
     // legs to the feet (knees point forwards)
     this.limb(this.legs.L, vec(feet[0]), [fw.clone().add(left.clone().multiplyScalar(0.15))]);
@@ -800,14 +803,17 @@ function walkArms(
     [-1, 'RightArm'],
   ] as const) {
     const sh = rig.pos(bone);
-    const swing = Math.sin((Math.PI * a) / beat + (side > 0 ? 0 : Math.PI)) * 0.28 * amount;
+    const sw = Math.sin((Math.PI * a) / beat + (side > 0 ? 0 : Math.PI));
+    const swing = sw * 0.42 * amount;
+    // forward the elbow bends more (the hand comes up), back the arm is nearly straight
+    const bend = amount * (0.03 + 0.1 * Math.max(0, sw));
     out.push({
       at: sh
         .clone()
-        .add(new THREE.Vector3(0, -rig.arm * 0.9, 0))
-        .add(fw.clone().multiplyScalar(swing * rig.arm))
-        .add(left.clone().multiplyScalar(side * 0.04)),
-      fingers: new THREE.Vector3(0, -1, 0).add(fw.clone().multiplyScalar(swing)),
+        .add(new THREE.Vector3(0, -rig.arm * (0.9 - bend), 0))
+        .add(fw.clone().multiplyScalar(swing * rig.arm * 0.85))
+        .add(left.clone().multiplyScalar(side * 0.07)),
+      fingers: new THREE.Vector3(0, -1, 0).add(fw.clone().multiplyScalar(swing + bend * 1.5)),
       palm: left.clone().multiplyScalar(-side),
       poles: [
         fw
@@ -821,6 +827,12 @@ function walkArms(
 }
 
 // ---- the bloody couple: two holes, they come out, waltz, she twirls, they go back in
+/** Where the couple's holes are: well to the right and left (local units from the middle). */
+function coupleHoleX(F: Frame): number {
+  const half = Math.abs(F.pu[0]) / 2;
+  return Math.max(0.7, Math.min(half * 0.68, half - 0.55));
+}
+
 const COUPLE: ShowDef = {
   id: 'wallCouple',
   cute: false,
@@ -829,15 +841,14 @@ const COUPLE: ShowDef = {
     { url: '/models/groom.glb', height: 1.84 },
     { url: '/models/bride.glb', height: 1.68 },
   ],
+  // the holes far to the right and left: the couple dances in the middle, not in front of them
   holes: (F) => {
-    const half = F.pu[0] / 2;
-    const x = Math.min(0.95, half * 0.55);
+    const x = coupleHoleX(F);
     return [x, -x];
   },
   tall: 1.55,
   bodies: (F) => {
-    const half = F.pu[0] / 2;
-    const hx = Math.min(0.95, half * 0.55);
+    const hx = coupleHoleX(F);
     // (feet in front of the wall show below its bottom edge – so they stay close to it)
     const C: [number, number] = [0, 0.32];
     const D = 0.17; // half the distance between them
@@ -865,10 +876,12 @@ const COUPLE: ShowDef = {
         if (a < W0) {
           // out of the hole, then towards each other
           const start = waltz(W0, who);
+          // straight out through the middle of the hole, then across to the middle
           const p = path(
             [
-              ...comeOut(hole, hole * 0.8, 0.25, BURST + 0.9),
-              [16.6, start.x, start.z, Math.atan2(C[0] - start.x, 0)],
+              [BURST + 0.9, hole, -0.9, 0],
+              [BURST + 3.6, hole, 0.3, 0],
+              [16.4, start.x, start.z, Math.atan2(start.x - hole, 0.0001)],
               [W0, start.x, start.z, start.yaw],
             ],
             a,
@@ -882,8 +895,10 @@ const COUPLE: ShowDef = {
           [
             [W1, end.x, end.z, end.yaw],
             [34, end.x, end.z, 0],
-            [35.8, end.x, end.z, 0],
-            [36.6, end.x, end.z, Math.PI],
+            [35.6, end.x, end.z, 0],
+            // across to the front of the own hole, turn, straight back in through its middle
+            [37.8, hole, 0.3, Math.atan2(hole - end.x, 0.0001)],
+            [38.3, hole, 0.3, Math.PI],
             [40.6, hole, -0.95, Math.PI],
           ],
           a,
@@ -1317,9 +1332,26 @@ function showScene(def: ShowDef): SceneModule {
         }
         const eye = new THREE.Vector3(F.ro[0], F.ro[1], F.ro[2]);
         if (visible) {
+          // how much each one is walking right now (0 standing … 1 walking)
+          const walkOf = (act: Actor) => {
+            const b0 = act.body(a - 0.15);
+            const b1 = act.body(a + 0.15);
+            return clamp01(Math.hypot(b1.x - b0.x, b1.z - b0.z) / 0.08);
+          };
           for (const act of actors) {
             if (!act.rig.ready) continue;
-            const b = act.body(a);
+            const b = { ...act.body(a) };
+            const w = walkOf(act);
+            if (w > 0) {
+              // a real walk, not a robot: knees bent, the body goes up and down with every step
+              // (lowest when both feet are down), leans into the walk, the hips sway and the
+              // shoulders turn against them
+              const ph = (Math.PI * a) / Math.max(0.15, b.beat);
+              b.drop += w * (0.025 + 0.022 * (1 - Math.abs(Math.sin(ph))));
+              b.lean += w * 0.08;
+              b.sway += w * 0.06 * Math.sin(ph);
+              b.twist = (b.twist ?? 0) + w * 0.22 * Math.sin(ph);
+            }
             act.rig.root.visible = true;
             act.rig.pose(b, feetAt(act.body, a, act.width, F.floorY), F);
           }
@@ -1327,8 +1359,7 @@ function showScene(def: ShowDef): SceneModule {
           for (const act of actors) {
             if (!act.rig.ready) continue;
             const b = act.body(a);
-            const walking = Math.hypot(act.body(a + 0.2).x - b.x, act.body(a + 0.2).z - b.z) > 0.01;
-            const [L, R] = walkArms(act.rig, a, b.beat, b.yaw, walking ? 1 : 0);
+            const [L, R] = walkArms(act.rig, a, b.beat, b.yaw, walkOf(act));
             act.rig.hands(L, R);
           }
           def.arms(a, rigs, F, eye);
