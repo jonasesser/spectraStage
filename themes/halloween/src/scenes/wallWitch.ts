@@ -226,7 +226,7 @@ void main() {
   vKind = aKind;
   vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mvPosition;
-  gl_PointSize = clamp(aSize * uScale / max(0.05, -mvPosition.z), 1.0, 256.0);
+  gl_PointSize = clamp(aSize * uScale / max(0.05, -mvPosition.z), 1.0, 96.0);
   #include <clipping_planes_vertex>
 }
 `;

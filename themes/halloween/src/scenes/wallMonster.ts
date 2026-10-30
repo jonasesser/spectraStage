@@ -1678,8 +1678,10 @@ export class GlbFigure {
 
   render(r: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget) {
     if (!this.visible || !this.model) return;
-    const w = target.width;
-    const h = target.height;
+    // at most ~1920 px: a 4K multisampled half-float target eats hundreds of MB of GPU memory
+    const k = Math.min(1, 1920 / Math.max(target.width, target.height));
+    const w = Math.max(2, Math.round(target.width * k));
+    const h = Math.max(2, Math.round(target.height * k));
     if (!this.rt || this.rt.width !== w || this.rt.height !== h) {
       this.rt?.dispose();
       this.rt = new THREE.WebGLRenderTarget(w, h, { samples: 4, type: THREE.HalfFloatType });
@@ -1820,7 +1822,9 @@ function guestBreakout(id: string): SceneModule {
     create: (ctx) => {
       const guest = new GuestPhoto(ctx.photos);
       const base = uniformsFor(id, true, guest);
-      const inst = shaderScene(id, WALL_MONSTER_FRAG, base, { shaderScale: 0.6 }).create(ctx);
+      const inst = shaderScene(id, WALL_MONSTER_FRAG, base, { shaderScale: 0.6, shaderMaxPx: 1280 }).create(
+        ctx,
+      );
       return {
         render: (t, f) => inst.render(t, f),
         resize: (w, h, ppm) => inst.resize(w, h, ppm),
@@ -1839,6 +1843,7 @@ function breakout(id: string, cute: boolean, model?: string, glow?: V3): SceneMo
   if (!model)
     return shaderScene(id, WALL_MONSTER_FRAG, uniformsFor(id, cute), {
       shaderScale: 0.6,
+      shaderMaxPx: 1280,
       ambientSound: sound,
     });
   const glowCol: V3 = glow ?? (cute ? [0.55, 0.35, 1.0] : [0.3, 0.95, 0.45]);
@@ -1849,6 +1854,7 @@ function breakout(id: string, cute: boolean, model?: string, glow?: V3): SceneMo
       const figure = new GlbFigure(model, cute, glowCol);
       const wall = shaderScene(id, WALL_MONSTER_FRAG, uniformsFor(id, cute, undefined, figure, glowCol), {
         shaderScale: 0.6,
+        shaderMaxPx: 1280,
       }).create(ctx);
       return {
         render: (t, f) => {

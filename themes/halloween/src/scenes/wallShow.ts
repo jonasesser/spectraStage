@@ -619,8 +619,10 @@ export class FigureLayer {
   }
 
   render(r: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget) {
-    const w = target.width;
-    const h = target.height;
+    // at most ~1920 px: a 4K multisampled half-float target eats hundreds of MB of GPU memory
+    const k = Math.min(1, 1920 / Math.max(target.width, target.height));
+    const w = Math.max(2, Math.round(target.width * k));
+    const h = Math.max(2, Math.round(target.height * k));
     if (!this.rt || this.rt.width !== w || this.rt.height !== h) {
       this.rt?.dispose();
       this.rt = new THREE.WebGLRenderTarget(w, h, { samples: 4, type: THREE.HalfFloatType });
@@ -1336,7 +1338,10 @@ function showScene(def: ShowDef): SceneModule {
           uPhotoTex: NO_TEX as unknown as number,
         };
       };
-      const wall = shaderScene(def.id, WALL_MONSTER_FRAG, uniforms, { shaderScale: 0.6 }).create(ctx);
+      const wall = shaderScene(def.id, WALL_MONSTER_FRAG, uniforms, {
+        shaderScale: 0.6,
+        shaderMaxPx: 1280,
+      }).create(ctx);
       return {
         render: (t, f) => {
           wall.render(t, f);

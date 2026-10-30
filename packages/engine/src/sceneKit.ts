@@ -143,6 +143,11 @@ interface KitOptions {
   canvasScale?: number;
   /** Render the shader layer at a fraction of the resolution and upscale (default 0.5 – backgrounds are soft). */
   shaderScale?: number;
+  /**
+   * Heavy shaders (ray marching): at most this many pixels on the longer side, however big the
+   * projector – a 4K picture would otherwise take so long per frame that the GPU driver resets.
+   */
+  shaderMaxPx?: number;
 }
 
 class KitScene implements SceneInstance {
@@ -196,9 +201,13 @@ class KitScene implements SceneInstance {
       });
       if (this.opts.uniforms) this.shader.setUniforms(this.opts.uniforms(this.state, frame));
       const scale = Math.max(0.25, Math.min(1, this.opts.shaderScale ?? 0.5));
-      if (scale < 1) {
-        const lw = Math.max(2, Math.round(this.state.w * scale));
-        const lh = Math.max(2, Math.round(this.state.h * scale));
+      const cap = Math.min(
+        1,
+        (this.opts.shaderMaxPx ?? Infinity) / Math.max(1, Math.max(this.state.w, this.state.h) * scale),
+      );
+      if (scale * cap < 1) {
+        const lw = Math.max(2, Math.round(this.state.w * scale * cap));
+        const lh = Math.max(2, Math.round(this.state.h * scale * cap));
         if (!this.lowRT) {
           this.lowRT = new THREE.WebGLRenderTarget(lw, lh, {
             depthBuffer: false,
@@ -300,11 +309,17 @@ export function shaderScene(
   id: string,
   fragment: string,
   uniforms?: UniformFn,
-  extra: Partial<SceneModule> & { shaderScale?: number } = {},
+  extra: Partial<SceneModule> & { shaderScale?: number; shaderMaxPx?: number } = {},
 ): SceneModule {
   return {
     id,
-    create: (ctx) => new KitScene(ctx, { fragment, uniforms, shaderScale: extra.shaderScale }),
+    create: (ctx) =>
+      new KitScene(ctx, {
+        fragment,
+        uniforms,
+        shaderScale: extra.shaderScale,
+        shaderMaxPx: extra.shaderMaxPx,
+      }),
     ambientSound: extra.ambientSound,
   };
 }
