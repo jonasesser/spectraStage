@@ -81,7 +81,7 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
     reply.header('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
     reply.header(
       'Content-Security-Policy',
-      "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; media-src 'self' blob:; connect-src 'self' ws: wss: data: https://generativelanguage.googleapis.com https://api.openai.com; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'",
+      "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; media-src 'self' blob:; connect-src 'self' ws: wss: data: blob: https://generativelanguage.googleapis.com https://api.openai.com; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'",
     );
     return payload;
   });

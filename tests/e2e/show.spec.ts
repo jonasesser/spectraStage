@@ -187,6 +187,18 @@ test('test area: a scene and a projector picture render on this PC only', async 
   await phone.getByRole('button', { name: /Live-Bild eines Beamers/ }).click();
   await phone.getByRole('button', { name: /Starten/ }).click();
   await expect(phone.getByText(/\d+ fps ·/)).toBeVisible({ timeout: 20_000 });
+  // a 3D show: the models load with their textures (no blocked requests)
+  const csp: string[] = [];
+  phone.on('console', (m) => m.text().includes('Content Security Policy') && csp.push(m.text()));
+  await phone.getByRole('button', { name: /Szene ausprobieren/ }).click();
+  const mummy = await phone
+    .locator('select option', { hasText: 'Mumie kommt heraus' })
+    .first()
+    .getAttribute('value');
+  await phone.locator('select').first().selectOption(mummy!);
+  await phone.getByRole('button', { name: /Starten/ }).click();
+  await phone.waitForTimeout(6000);
+  expect(csp).toEqual([]);
   // every sound on its own, annoying ones marked
   await phone.getByRole('button', { name: /Alle Klänge/ }).click();
   await expect(phone.getByText('Grollen')).toBeVisible();
