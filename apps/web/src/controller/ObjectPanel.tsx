@@ -35,6 +35,8 @@ const PRESETS: Preset[] = [
   { en: 'Box', de: 'Kiste', icon: '📦', shape: 'box', size: [0.6, 0.6, 0.6], look: 'glow' },
   { en: 'Pillar', de: 'Säule', icon: '🛢', shape: 'cylinder', size: [0.4, 1.2, 0.4], look: 'spooky' },
   { en: 'Gravestone', de: 'Grabstein', icon: '🪦', shape: 'box', size: [0.6, 0.9, 0.15], look: 'edges' },
+  // a real (uncarved) pumpkin: the projector carves the face
+  { en: 'Pumpkin', de: 'Kürbis', icon: '🎃', shape: 'pumpkin', size: [0.35, 0.28, 0.35], look: 'auto' },
 ];
 
 export function ObjectPanel({
@@ -88,6 +90,14 @@ export function ObjectPanel({
       true,
     );
   };
+  const pumpkinLooks: [RoomObject['look'], string][] = [
+    ['auto', L('Everything in turn', 'Alles im Wechsel')],
+    ['face', L('Carved faces (changing, talking)', 'Geschnitzte Gesichter (wechselnd, sprechend)')],
+    ['inner', L('Glowing from inside', 'Leuchtet von innen')],
+    ['cracks', L('Glowing cracks, bursting', 'Leuchtende Risse, platzt')],
+    ['worm', L('A worm crawls out', 'Ein Wurm kriecht heraus')],
+    ['dark', L('Dark (no picture on it)', 'Dunkel (kein Bild darauf)')],
+  ];
   const looks: [RoomObject['look'], string][] = [
     ['glow', L('Glow', 'Leuchten')],
     ['flicker', L('Fire flicker', 'Feuer-Flackern')],
@@ -111,7 +121,7 @@ export function ObjectPanel({
             className={`chip${x.id === selected ? ' on' : ''}`}
             onClick={() => onSelect(x.id === selected ? null : x.id)}
           >
-            {x.shape === 'box' ? '📦' : '🛢'} {x.name}
+            {x.shape === 'box' ? '📦' : x.shape === 'pumpkin' ? '🎃' : '🛢'} {x.name}
           </button>
         ))}
       </div>
@@ -199,13 +209,21 @@ export function ObjectPanel({
               format={(v) => `${Math.round(v * 100)} cm`}
             />
           </div>
+          {o.shape === 'pumpkin' && (
+            <span className="small muted">
+              {L(
+                'Turn it (rotation) until the face points to the audience. The face shows on the side the projector reaches.',
+                'Drehen (Drehung), bis das Gesicht zu den Zuschauern zeigt. Das Gesicht erscheint auf der Seite, die der Beamer erreicht.',
+              )}
+            </span>
+          )}
           <label>
             {L('Look', 'Aussehen')}
             <select
               value={o.look}
               onChange={(e) => onPatch(o.id, { look: e.target.value as RoomObject['look'] }, true)}
             >
-              {looks.map(([k, label]) => (
+              {(o.shape === 'pumpkin' ? pumpkinLooks : looks).map(([k, label]) => (
                 <option key={k} value={k}>
                   {label}
                 </option>

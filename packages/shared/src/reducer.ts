@@ -583,6 +583,20 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       setRoomDepth(state, 4);
       return res('room back to standard size');
     }
+    case 'facade.set': {
+      const f = (state.facade ??= {});
+      Object.assign(f, cmd.facade);
+      if (f.door === null) delete f.door;
+      return res('house front');
+    }
+    case 'facade.setFrame': {
+      const f = (state.facade ??= {});
+      (f.frame ??= {})[cmd.scene] = cmd.level;
+      return res(`frame ${Math.round(cmd.level * 100)}% for ${cmd.scene}`);
+    }
+    case 'facade.edit':
+      state.facadeEdit = cmd.on ? ctx.now + 30 * 60_000 : null;
+      return res(cmd.on ? 'setting up the front' : 'front set');
     case 'room.setViewer': {
       if (cmd.viewer) state.viewer = cmd.viewer;
       else delete state.viewer;
@@ -643,7 +657,12 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
         shape: cmd.shape,
         pos,
         size:
-          cmd.size ?? ((cmd.shape === 'box' ? [0.6, 0.6, 0.6] : [0.4, 1.2, 0.4]) as [number, number, number]),
+          cmd.size ??
+          ((cmd.shape === 'box'
+            ? [0.6, 0.6, 0.6]
+            : cmd.shape === 'pumpkin'
+              ? [0.35, 0.28, 0.35]
+              : [0.4, 1.2, 0.4]) as [number, number, number]),
         yaw: main ? Math.atan2(main.ax[2], main.ax[0]) * -1 : 0,
         look: cmd.look ?? ('glow' as const),
         color: '#ff8a2e',

@@ -431,7 +431,7 @@ export type ControllerInfo = z.infer<typeof ControllerSchema>;
 export const RoomObjectSchema = z.object({
   id: z.string().max(40),
   name: z.string().min(1).max(40),
-  shape: z.enum(['box', 'cylinder']),
+  shape: z.enum(['box', 'cylinder', 'pumpkin']),
   /** Room position of the bottom center (m, y up). */
   pos: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]),
   /** Width (x), height (y), depth (z) in m. */
@@ -439,7 +439,7 @@ export const RoomObjectSchema = z.object({
   /** Rotation around the vertical axis (radians). */
   yaw: z.number().finite(),
   /** What the projectors put on it. */
-  look: z.enum(['dark', 'glow', 'flicker', 'spooky', 'edges']),
+  look: z.enum(['dark', 'glow', 'flicker', 'spooky', 'edges', 'face', 'inner', 'cracks', 'worm', 'auto']),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
 });
 export type RoomObject = z.infer<typeof RoomObjectSchema>;
@@ -455,6 +455,40 @@ export const ViewerSchema = z.object({
   eye: z.number().min(0.3).max(3),
 });
 export type Viewer = z.infer<typeof ViewerSchema>;
+
+/**
+ * The house front around the main wall: the real door as a zone (scenes may light only the door
+ * and keep the frame dim), floodlights on the frame (the projector makes them beam), all in
+ * meters on the main wall (x from its left edge, y up from the floor).
+ */
+export const FacadeSchema = z.object({
+  door: z
+    .object({
+      left: z.number().min(-5).max(60),
+      bottom: z.number().min(-2).max(20),
+      w: z.number().min(0.1).max(60),
+      h: z.number().min(0.1).max(20),
+    })
+    .nullable()
+    .optional(),
+  lamps: z
+    .array(
+      z.object({
+        x: z.number().min(-5).max(60),
+        y: z.number().min(-2).max(20),
+        size: z.number().min(0.03).max(2),
+      }),
+    )
+    .max(8)
+    .optional(),
+  lampFx: z
+    .enum(['auto', 'off', 'warm', 'flicker', 'pulse', 'sweep', 'strobe', 'chase', 'colors', 'fire'])
+    .optional(),
+  lampLevel: z.number().min(0).max(1).optional(),
+  /** Per scene ("theme/scene"): how bright the frame around the door is (1 = like the door). */
+  frame: z.record(z.string().max(100), z.number().min(0).max(1)).optional(),
+});
+export type Facade = z.infer<typeof FacadeSchema>;
 
 export const SessionStateSchema = z.object({
   id,
@@ -477,6 +511,10 @@ export const SessionStateSchema = z.object({
   room: z.boolean().optional(),
   /** Standpoint of the audience (default: middle of the back wall, eyes at 1.6 m). */
   viewer: ViewerSchema.optional(),
+  /** Door, frame and floodlights of the house front (main wall). */
+  facade: FacadeSchema.optional(),
+  /** While setting up the front: until when the projectors outline door and lamps. */
+  facadeEdit: z.number().nullable().optional(),
   /** Real things in the room (box, pillar, …) that projectors light directly. */
   objects: z
     .array(z.lazy(() => RoomObjectSchema))
@@ -542,7 +580,7 @@ export const CommandSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('session.blackoutAll'), on: z.boolean() }),
   z.object({
     t: z.literal('object.create'),
-    shape: z.enum(['box', 'cylinder']),
+    shape: z.enum(['box', 'cylinder', 'pumpkin']),
     name,
     size: RoomObjectSchema.shape.size.optional(),
     look: RoomObjectSchema.shape.look.optional(),
@@ -669,6 +707,12 @@ export const CommandSchema = z.discriminatedUnion('t', [
   z.object({ t: z.literal('room.setWidth'), width: z.number().min(0.3).max(60) }),
   /** Back to standard proportions: front wall 4 m wide, room 4 m deep (fine-tune with the sliders). */
   z.object({ t: z.literal('room.resetSize') }),
+  /** Door / lamps of the house front (a part; null door = no door). */
+  z.object({ t: z.literal('facade.set'), facade: FacadeSchema.omit({ frame: true }) }),
+  /** How bright the frame around the door is for a scene. */
+  z.object({ t: z.literal('facade.setFrame'), scene: z.string().max(100), level: z.number().min(0).max(1) }),
+  /** Outline door and lamps on the projectors while setting them up. */
+  z.object({ t: z.literal('facade.edit'), on: z.boolean() }),
   /** Standpoint of the audience (null = default: middle of the back wall). */
   z.object({ t: z.literal('room.setViewer'), viewer: ViewerSchema.nullable() }),
   /**

@@ -55,6 +55,16 @@ import {
 import type { SceneInstance, ScenePhotos, ThemeRuntime } from './sdk.ts';
 import { canvasTexture } from './sceneKit.ts';
 import { buildWarpMesh } from './warp.ts';
+import {
+  doorRect,
+  drawFacadeOutline,
+  drawLamps,
+  frameLevel,
+  pumpkinGeometry,
+  pumpkinLook,
+  PUMPKIN_FRAG,
+  PUMPKIN_VERT,
+} from './facade.ts';
 import { paintMask, paintMaskOverlay } from './masks.ts';
 import type { SoundEngine } from './sound.ts';
 import {
@@ -168,6 +178,9 @@ uniform float hasOverlay;
 // vertical / depth runs along x, 2 the edge is horizontal / depth runs along y), y = where the
 // edge is (0 or 1), z = proportion along the depth, w = proportion along the edge
 uniform vec4 uWarp;
+// the door zone on the main wall (uv rect) and how bright the picture is around it
+uniform vec4 uZone;
+uniform float uZoneLevel;
 varying vec2 vUv;
 vec2 warpUv(vec2 uv) {
   if (uWarp.x < 0.5) return uv;
@@ -198,6 +211,12 @@ void main() {
     } else {
       col = mix(a, b, mixB);
     }
+  }
+  if (uZoneLevel < 0.999) {
+    vec2 e = vec2(0.002);
+    float inside = smoothstep(uZone.x - e.x, uZone.x + e.x, vUv.x) * smoothstep(uZone.z + e.x, uZone.z - e.x, vUv.x) *
+                   smoothstep(uZone.y - e.y, uZone.y + e.y, vUv.y) * smoothstep(uZone.w + e.y, uZone.w - e.y, vUv.y);
+    col *= mix(uZoneLevel, 1.0, inside);
   }
   if (hasOverlay > 0.5) {
     vec4 o = texture2D(overlay, vUv);
@@ -393,6 +412,8 @@ class SurfaceLayer {
         hasB: { value: 0 },
         hasOverlay: { value: 0 },
         uWarp: { value: new THREE.Vector4(0, 0, 1, 1) },
+        uZone: { value: new THREE.Vector4(0, 0, 1, 1) },
+        uZoneLevel: { value: 1 },
       },
       vertexShader: CLIP_VERT,
       fragmentShader: LAYER_FRAG,
@@ -1448,6 +1469,7 @@ export class StageRenderer {
   /** Real objects in the room as 3D bodies in the projector view, with their own light. */
   private syncPoseObjects(objects: readonly RoomObject[], now: number): void {
     const key = JSON.stringify(objects.map((o) => [o.id, o.shape, o.pos, o.size, o.yaw]));
+    const t = (now / 1000) % 10000;
     if (key !== this.poseObjectsKey) {
       this.poseObjectsKey = key;
       for (const c of [...this.poseObjects.children]) {
@@ -1457,20 +1479,37 @@ export class StageRenderer {
         (m.material as THREE.Material).dispose();
       }
       for (const o of objects) {
-        const g =
-          o.shape === 'box'
-            ? new THREE.BoxGeometry(o.size[0], o.size[1], o.size[2])
-            : new THREE.CylinderGeometry(0.5, 0.5, 1, 48).scale(o.size[0], o.size[1], o.size[2]);
-        g.translate(0, o.size[1] / 2, 0);
-        const m = new THREE.Mesh(
-          g,
-          new THREE.ShaderMaterial({
+        let g: THREE.BufferGeometry;
+        let mat: THREE.ShaderMaterial;
+        if (o.shape === 'pumpkin') {
+          // a real pumpkin: faces, inner glow, cracks, a worm – projected onto its round body
+          g = pumpkinGeometry(o.size[0], o.size[1], o.size[2]);
+          mat = new THREE.ShaderMaterial({
+            uniforms: {
+              uColor: { value: new THREE.Color() },
+              uTime: { value: 0 },
+              uLook: { value: 0 },
+              uSeed: { value: (hashString(o.id) % 1000) / 1000 },
+              uSize: { value: new THREE.Vector3(o.size[0], o.size[1], o.size[2]) },
+            },
+            vertexShader: PUMPKIN_VERT,
+            fragmentShader: PUMPKIN_FRAG,
+            side: THREE.FrontSide,
+          });
+        } else {
+          g =
+            o.shape === 'box'
+              ? new THREE.BoxGeometry(o.size[0], o.size[1], o.size[2])
+              : new THREE.CylinderGeometry(0.5, 0.5, 1, 48).scale(o.size[0], o.size[1], o.size[2]);
+          g.translate(0, o.size[1] / 2, 0);
+          mat = new THREE.ShaderMaterial({
             uniforms: { uColor: { value: new THREE.Color() }, uTime: { value: 0 }, uMode: { value: 1 } },
             vertexShader: VERT,
             fragmentShader: OBJECT_FRAG,
             side: THREE.FrontSide,
-          }),
-        );
+          });
+        }
+        const m = new THREE.Mesh(g, mat);
         m.position.set(...o.pos);
         m.rotation.set(0, o.yaw, 0);
         m.userData.id = o.id;
@@ -1484,8 +1523,10 @@ export class StageRenderer {
       if (!o) continue;
       const u = ((c as THREE.Mesh).material as THREE.ShaderMaterial).uniforms;
       (u.uColor!.value as THREE.Color).set(o.color);
-      u.uTime!.value = (now / 1000) % 10000;
-      u.uMode!.value = Math.max(0, looks.indexOf(o.look));
+      u.uTime!.value = t;
+      if (o.shape === 'pumpkin') u.uLook!.value = pumpkinLook(o);
+      // (pumpkin looks on other things: glow)
+      else u.uMode!.value = looks.includes(o.look) ? looks.indexOf(o.look) : 1;
     }
   }
 
@@ -1933,6 +1974,21 @@ export class StageRenderer {
     const u = layer.material.uniforms;
     u.texA!.value = cur?.rt.texture ?? null;
     (u.uWarp!.value as THREE.Vector4).set(...prop.warp);
+    // the door zone: only the door lit fully, the frame around it as dim as set for the scene
+    u.uZoneLevel!.value = 1;
+    const mainW = world.surfaces.find((w) => w.role === 'main');
+    if (state.facade?.door && mainW?.id === s.id && active) {
+      const d = doorRect(state.facade, mainW.rect);
+      if (d) {
+        (u.uZone!.value as THREE.Vector4).set(
+          (d.x - b.x) / b.w,
+          1 - (d.y + d.h - b.y) / b.h,
+          (d.x + d.w - b.x) / b.w,
+          1 - (d.y - b.y) / b.h,
+        );
+        u.uZoneLevel!.value = frameLevel(state.facade, active.scene.themeId, active.scene.sceneId);
+      }
+    }
     u.texB!.value = layer.previous?.rt.texture ?? null;
     u.hasB!.value = layer.previous ? 1 : 0;
     u.mixB!.value = mixB;
@@ -2069,7 +2125,16 @@ export class StageRenderer {
     const o = this.actorOverlay;
     const live = this.liveSprite?.() ?? [];
     const flights = (state.ghostFlights ?? []).filter((f) => now >= f.startAt && now < f.endAt);
-    if (all.length === 0 && !live.length && !(flights.length && this.ghostImages)) {
+    const facade = state.facade;
+    const facadeEdit = !!state.facadeEdit && state.facadeEdit > now;
+    const lampsOn = !!facade?.lamps?.length && (facade.lampFx ?? 'auto') !== 'off';
+    if (
+      all.length === 0 &&
+      !live.length &&
+      !(flights.length && this.ghostImages) &&
+      !lampsOn &&
+      !facadeEdit
+    ) {
       if (o.dirty) {
         o.clear();
         o.upload();
@@ -2194,6 +2259,15 @@ export class StageRenderer {
       }
     }
     if (this.actorSoundAt.size > 200) this.actorSoundAt.clear();
+    // the floodlights on the house front (and, while setting it up, the outlines)
+    const mainF = this.worldFor(state).surfaces.find((w) => w.role === 'main');
+    if (facade && mainF) {
+      if (lampsOn && drawLamps(g, facade, mainF.rect, now)) drew = true;
+      if (facadeEdit) {
+        drawFacadeOutline(g, facade, mainF.rect, now);
+        drew = true;
+      }
+    }
     if (flights.length && this.ghostImages) {
       for (const f of flights) {
         const gi = this.ghostImages(f.ghostId);

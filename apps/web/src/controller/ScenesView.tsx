@@ -317,6 +317,25 @@ function ParamsPanel({ surface, state, L }: { surface: Surface; state: SessionSt
         {sc.params.map((p) => (
           <ParamControl key={p.key} def={p} value={local[p.key]} onChange={(v) => change(p.key, v)} L={L} />
         ))}
+        {state.facade?.door && surface.role === 'main' && (
+          <Slider
+            label={L('Frame around the door (house front)', 'Rahmen um das Tor (Hausfront)')}
+            value={Math.round((state.facade.frame?.[`${act.scene.themeId}/${act.scene.sceneId}`] ?? 1) * 100)}
+            min={0}
+            max={100}
+            step={5}
+            format={(v) =>
+              v >= 100 ? L('like the door', 'wie das Tor') : v <= 0 ? L('dark', 'dunkel') : `${v} %`
+            }
+            onChange={(v) =>
+              void store.send({
+                t: 'facade.setFrame',
+                scene: `${act.scene.themeId}/${act.scene.sceneId}`,
+                level: v / 100,
+              })
+            }
+          />
+        )}
         <Slider
           label={L('Surface brightness', 'Helligkeit der Fläche')}
           value={Math.round(surface.intensity * 100)}

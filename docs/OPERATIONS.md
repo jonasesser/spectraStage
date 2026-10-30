@@ -246,3 +246,21 @@ Before the first public show, run the *Full Halloween Show* for ≥ 4 hours on t
 watch the status info (`I`): fps should stay stable and the browser's memory (Task Manager) should
 not grow continuously. Lower *Density* or projector resolution on weak PCs; the renderer also
 reduces its internal resolution automatically when the frame rate drops.
+
+## Hausfront: Tor, Rahmen, Strahler
+
+Raum → **🏠 Hausfront (Hauptwand)**:
+- **Umrisse auf den Beamern zeigen**: Die Beamer zeigen dann das Tor (gestrichelt) und die Strahler (Fadenkreuz). Die Umrisse mit den Reglern auf das echte Tor und die echten Lampen schieben. Alle Maße sind in cm ab der linken unteren Ecke der Hauptwand.
+- **Tor**: Abstand links, Breite, Abstand unten, Höhe. Pro Szene stellt man unter Szenen → Regler „Rahmen um das Tor“ ein, wie hell der verputzte Rahmen bespielt wird: 100 % heißt wie das Tor, 0 % heißt dunkel. Figuren, Geister und Flüge (Akteure) laufen immer über die ganze Wand, auch über den Rahmen.
+- **Strahler**: bis zu 8 Stück. Der Beamer malt Lichtkegel nach oben und nach unten sowie einen Glasschein. Effekte: Wechselnd (alle 25 s ein anderer), Warm, Kaputt flackernd, Atmend, Suchscheinwerfer, Blitze, Abwechselnd, Farben, Feuer. Mit „Aus“ werden keine Kegel gemalt. Die Helligkeit lässt sich regeln.
+
+## Echte Kürbisse
+
+Objekte → 🎃 **Kürbis**: Den Kürbis wie andere Objekte im Raum platzieren, Größe einstellen (B × H × T) und drehen, sodass die Vorderseite (+z) zum Publikum zeigt. Looks:
+- Gesicht: 4 Gesichter, die ab und zu sprechen.
+- Glühen von innen.
+- Risse.
+- Wurm aus dem Mund.
+- Wechselnd: alle 12 s ein anderer Look.
+
+Hinweis: Der Beamer strahlt von der Seite. Das Gesicht wird zwar korrekt auf die Kürbisform gerechnet, aber die vom Beamer abgewandte Seite bleibt unbeleuchtet. Darum den Kürbis so drehen, dass die Gesichtsseite zum Beamer und zum Publikum zeigt, also einen Kompromiss wählen.

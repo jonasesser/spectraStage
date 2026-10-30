@@ -6,3 +6,4 @@ export * from './warp.ts';
 export * from './masks.ts';
 export * from './renderer.ts';
 export * from './draw.ts';
+export * from './facade.ts';

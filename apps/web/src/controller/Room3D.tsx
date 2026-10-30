@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { catalog } from '@spectrastage/catalog/manifests';
 import { loadThemeRuntime } from '@spectrastage/catalog/runtime';
-import { StageRenderer } from '@spectrastage/engine';
+import { pumpkinGeometry, StageRenderer } from '@spectrastage/engine';
 import {
   activeProfile,
   aimPose,
@@ -249,10 +249,12 @@ export function Room3D({
       for (const o of objectsOf(stateRef.current)) {
         const sel = o.id === objSelRef.current && modeRef.current === 'objects';
         const g =
-          o.shape === 'box'
-            ? new THREE.BoxGeometry(o.size[0], o.size[1], o.size[2])
-            : new THREE.CylinderGeometry(0.5, 0.5, 1, 32).scale(o.size[0], o.size[1], o.size[2]);
-        g.translate(0, o.size[1] / 2, 0);
+          o.shape === 'pumpkin'
+            ? pumpkinGeometry(o.size[0], o.size[1], o.size[2])
+            : o.shape === 'box'
+              ? new THREE.BoxGeometry(o.size[0], o.size[1], o.size[2])
+              : new THREE.CylinderGeometry(0.5, 0.5, 1, 32).scale(o.size[0], o.size[1], o.size[2]);
+        if (o.shape !== 'pumpkin') g.translate(0, o.size[1] / 2, 0);
         const m = new THREE.Mesh(
           g,
           new THREE.MeshBasicMaterial({

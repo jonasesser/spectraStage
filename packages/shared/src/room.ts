@@ -911,6 +911,35 @@ export function objectEdges(o: RoomObject): [V3, V3][] {
       segs.push([objectPoint(o, xs[0]!, y, zs[1]!), objectPoint(o, xs[0]!, y, zs[0]!)]);
     }
     for (const x of xs) for (const z of zs) segs.push([objectPoint(o, x, 0, z), objectPoint(o, x, h, z)]);
+  } else if (o.shape === 'pumpkin') {
+    // a squat ball: rings at three heights and four meridians
+    const n = 32;
+    for (const k of [0.2, 0.5, 0.8]) {
+      const rr = Math.sqrt(Math.max(0, 1 - (2 * k - 1) ** 2));
+      for (let i = 0; i < n; i++) {
+        const a0 = (i / n) * Math.PI * 2;
+        const a1 = ((i + 1) / n) * Math.PI * 2;
+        segs.push([
+          objectPoint(o, (Math.cos(a0) * w * rr) / 2, k * h, (Math.sin(a0) * d * rr) / 2),
+          objectPoint(o, (Math.cos(a1) * w * rr) / 2, k * h, (Math.sin(a1) * d * rr) / 2),
+        ]);
+      }
+    }
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2;
+      for (let j = 0; j < 12; j++) {
+        const b0 = (j / 12) * Math.PI - Math.PI / 2;
+        const b1 = ((j + 1) / 12) * Math.PI - Math.PI / 2;
+        const p = (b: number): V3 =>
+          objectPoint(
+            o,
+            (Math.cos(a) * Math.cos(b) * w) / 2,
+            (Math.sin(b) * 0.5 + 0.5) * h,
+            (Math.sin(a) * Math.cos(b) * d) / 2,
+          );
+        segs.push([p(b0), p(b1)]);
+      }
+    }
   } else {
     const n = 32;
     for (const y of [0, h])
