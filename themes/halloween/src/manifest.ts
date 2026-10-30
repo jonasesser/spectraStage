@@ -71,6 +71,8 @@ function breakoutScene(
     name: L(...name),
     description: L(...description),
     kinds: ['wall'],
+    // rehearsed for the main wall: never on the other sides
+    sides: ['main'],
     icon,
     colors,
     params: [
@@ -311,14 +313,14 @@ const scenes: SceneManifest[] = [
     id: 'wallWitch',
     name: L('Little witch magic show (3D)', 'Kleine Hexe zaubert (3D)'),
     description: L(
-      'For kids: the little witch arrives (on her broom, in a puff of magic or tumbling off her broom), waves hello and does a magic show on the right wall – a laughing pumpkin, bats out of the moon, a bubbling cauldron, fireworks, or a spell that goes wrong and leaves a frog – then she vanishes or flies away. Plays on all sides at once.',
-      'Für Kinder: Die kleine Hexe kommt an (auf dem Besen, per Zauberwolke oder purzelt vom Besen), winkt und zaubert auf der rechten Wand – lachender Kürbis, Fledermäuse aus dem Mond, blubbernder Kessel, Feuerwerk oder ein Zauber geht schief und es sitzt ein Frosch da – dann zaubert sie sich weg oder fliegt davon. Läuft auf allen Seiten gleichzeitig.',
+      'For kids: the little witch arrives (on her broom, in a puff of magic or tumbling off her broom), waves hello and does a magic show on the right wall – a laughing pumpkin, bats out of the moon, a bubbling cauldron, fireworks, or a spell that goes wrong and leaves a frog – then she vanishes or flies away. Plays on the main wall, the right wall and the floor in front.',
+      'Für Kinder: Die kleine Hexe kommt an (auf dem Besen, per Zauberwolke oder purzelt vom Besen), winkt und zaubert auf der rechten Wand – lachender Kürbis, Fledermäuse aus dem Mond, blubbernder Kessel, Feuerwerk oder ein Zauber geht schief und es sitzt ein Frosch da – dann zaubert sie sich weg oder fliegt davon. Läuft auf Hauptwand, rechter Wand und dem Boden davor.',
     ),
     kinds: ['wall'],
     icon: '🧙',
     colors: ['#000000', '#a24cff'],
     oneShotSec: 60,
-    allSides: true,
+    sides: ['main', 'right', 'floorFront'],
     params: [
       {
         key: 'speed',

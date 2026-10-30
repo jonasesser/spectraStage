@@ -473,6 +473,34 @@ export function surfacesInViewport(state: Pick<SessionState, 'surfaces'>, vp: Vi
 // ---------------------------------------------------------------------------
 export type WorldRole = 'main' | 'side' | 'ground' | 'ceiling';
 
+/**
+ * The surfaces that make up the given sides: the main wall, the walls right / left of it (they
+ * join it in the unfolded layout) and the floor in front of it (laid out below it).
+ */
+export function surfacesForSides(surfaces: readonly Surface[], sides: readonly string[]): Surface[] {
+  const lay = worldLayout(surfaces);
+  const main = lay.find((w) => w.role === 'main');
+  if (!main) return [];
+  const m = main.rect;
+  const ids = new Set<string>();
+  for (const side of sides) {
+    if (side === 'main') ids.add(main.id);
+    for (const w of lay) {
+      if (w.role === 'side' && side === 'right' && Math.abs(w.rect.x - (m.x + m.w)) < 0.3) ids.add(w.id);
+      if (w.role === 'side' && side === 'left' && Math.abs(w.rect.x + w.rect.w - m.x) < 0.3) ids.add(w.id);
+      if (
+        w.role === 'ground' &&
+        side === 'floorFront' &&
+        w.rect.x < m.x + m.w &&
+        w.rect.x + w.rect.w > m.x &&
+        w.rect.y >= m.y + m.h - 0.6
+      )
+        ids.add(w.id);
+    }
+  }
+  return surfaces.filter((s) => ids.has(s.id));
+}
+
 export interface WorldSurface {
   id: string;
   kind: SurfaceKind;

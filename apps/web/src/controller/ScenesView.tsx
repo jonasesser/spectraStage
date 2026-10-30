@@ -3,6 +3,7 @@ import { catalog } from '@spectrastage/catalog/manifests';
 import {
   activeSceneFor,
   sanitizeParams,
+  surfacesForSides,
   type ParamDef,
   type ParamValues,
   type SceneManifest,
@@ -89,9 +90,7 @@ export function ScenesView() {
           </div>
         </section>
       )}
-      {oneShots.length > 0 && (
-        <InsertPanel themeId={theme.id} scenes={oneShots} targets={targets} state={state} L={L} />
-      )}
+      {oneShots.length > 0 && <InsertPanel themeId={theme.id} scenes={oneShots} state={state} L={L} />}
       <section className="panel">
         <div className="section-title">
           <h2>{L('Single scenes', 'Einzelne Szenen')}</h2>
@@ -110,15 +109,16 @@ export function ScenesView() {
                   background: `linear-gradient(135deg, ${sc.colors[0]}, ${sc.colors[1]})`,
                   opacity: fits || kinds.size === 0 ? 1 : 0.6,
                 }}
-                onClick={() =>
-                  targets.length &&
-                  store.send({
+                onClick={() => {
+                  const to = sc.sides ? surfacesForSides(state.surfaces, sc.sides) : targets;
+                  if (!to.length) return;
+                  void store.send({
                     t: 'surface.setScene',
-                    surfaceIds: targets.map((s) => s.id),
+                    surfaceIds: to.map((s) => s.id),
                     themeId: theme.id,
                     sceneId: sc.id,
-                  })
-                }
+                  });
+                }}
                 title={L.text(sc.description)}
               >
                 <span className="ti" aria-hidden="true">
@@ -188,13 +188,11 @@ export function ScenesView() {
 function InsertPanel({
   themeId,
   scenes,
-  targets,
   state,
   L,
 }: {
   themeId: string;
   scenes: SceneManifest[];
-  targets: Surface[];
   state: SessionState;
   L: Tr;
 }) {
@@ -204,14 +202,9 @@ function InsertPanel({
   const sc = scenes.find((x) => x.id === pick);
   // without a selection: the main wall
   const main = state.surfaces.find((s) => s.role === 'main') ?? state.surfaces.find((s) => s.kind === 'wall');
-  // shows that move over all sides play on all of them unless sides are chosen
-  const on = targets.length
-    ? targets
-    : sc?.allSides
-      ? state.surfaces.filter((s) => s.kind === 'wall' || s.kind === 'floor')
-      : main
-        ? [main]
-        : [];
+  // rehearsed shows play only on their own sides (the others keep their programme)
+  const own = sc?.sides ? surfacesForSides(state.surfaces, sc.sides) : [];
+  const on = own.length ? own : main ? [main] : [];
   const [, tick] = useState(0);
   const now = store.conn.clock.now();
   const running = on.map((s) => s.insert).find((i) => i && now < i.endAt && now >= i.startedAt - 1000);
@@ -250,6 +243,9 @@ function InsertPanel({
       {sc && (
         <div className="stack" style={{ marginTop: '0.6rem' }}>
           <span className="muted small">{L.text(sc.description)}</span>
+          <span className="small">
+            {L('Plays on', 'Läuft auf')}: {on.map((x) => x.name).join(', ') || '–'}
+          </span>
           {sc.params.map((p) => (
             <ParamControl
               key={p.key}

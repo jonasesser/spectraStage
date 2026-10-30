@@ -49,6 +49,7 @@ import {
   placeNewSurface,
   tidyRoom,
   polygonBBox,
+  surfacesForSides,
 } from './stage.ts';
 import { normalizeCode, isValidCode, formatCode } from './codes.ts';
 
@@ -573,6 +574,20 @@ describe('world layout', () => {
       polygon: rectPolygon(x, y, 4, 2.5),
       playback: { mode: 'off' },
     }) as unknown as Surface;
+  it('rehearsed shows find their sides: main, right, left, floor in front', () => {
+    const all = [
+      surf('l', 'wall', -4, 0),
+      surf('m', 'wall', 0, 0, 'main'),
+      surf('r', 'wall', 4, 0),
+      surf('b', 'wall', 8, 0),
+      surf('f', 'floor', 0, 2.5),
+      surf('f2', 'floor', 4, 2.5),
+    ];
+    const ids = (sides: string[]) => surfacesForSides(all, sides).map((s) => s.id);
+    expect(ids(['main'])).toEqual(['m']);
+    expect(ids(['main', 'right', 'floorFront'])).toEqual(['m', 'r', 'f']);
+    expect(ids(['left'])).toEqual(['l']);
+  });
   it('first wall is the main part, other walls are sides, floors are ground', () => {
     const w = worldLayout([surf('g', 'wall', 0, 0), surf('s', 'wall', 4, 0), surf('f', 'floor', 0, 2.5)]);
     expect(w.map((x) => x.role)).toEqual(['main', 'side', 'ground']);

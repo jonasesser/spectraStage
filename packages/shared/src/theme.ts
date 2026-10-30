@@ -51,11 +51,15 @@ export interface SceneManifest {
    */
   oneShotSec?: number;
   /**
-   * Played in on every side at once (main wall, side walls, floor): the show moves from one side
-   * to the other.
+   * The sides a rehearsed show belongs to (e.g. only the main wall; the witch also the right wall
+   * and the floor in front). It is played only there – whatever sides are selected – and the
+   * other sides keep running their programme.
    */
-  allSides?: boolean;
+  sides?: SceneSide[];
 }
+
+/** Sides of the house, found from the stage layout. */
+export type SceneSide = 'main' | 'right' | 'left' | 'floorFront';
 
 export interface EffectManifest {
   id: string;

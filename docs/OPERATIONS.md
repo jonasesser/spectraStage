@@ -267,7 +267,7 @@ Hinweis: Der Beamer strahlt von der Seite. Das Gesicht wird zwar korrekt auf die
 
 ## Kleine Hexe (Kinder-Show, 60 s)
 
-Szenen → 🎬 Einmalig einspielen → 🧙 **Kleine Hexe zaubert (3D)**. Ist keine Seite ausgewählt, läuft die Show auf allen Wänden und dem Boden gleichzeitig. Die Hexe steht vor der Hauptwand, die Zaubertricks passieren auf der rechten Seitenwand. Das ist die Seitenwand, die direkt rechts an die Hauptwand anschließt. Gibt es keine rechte Wand, zaubert sie auf den rechten Teil der Hauptwand.
+Szenen → 🎬 Einmalig einspielen → 🧙 **Kleine Hexe zaubert (3D)**. Die Show läuft immer auf Hauptwand, rechter Wand und dem Boden davor, egal welche Seiten ausgewählt sind; die anderen Seiten laufen normal weiter. Mumie, Brautpaar und Monster laufen nur auf der Hauptwand. Die Hexe steht vor der Hauptwand, die Zaubertricks passieren auf der rechten Seitenwand. Das ist die Seitenwand, die direkt rechts an die Hauptwand anschließt. Gibt es keine rechte Wand, zaubert sie auf den rechten Teil der Hauptwand.
 
 Jeder Durchlauf wird zufällig zusammengestellt:
 - **Auftritt** (eine Variante):
