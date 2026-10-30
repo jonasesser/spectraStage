@@ -595,6 +595,37 @@ export class FigureLayer {
     this.scene.add(this.key, this.key.target, this.front, this.front.target, this.fill, ...this.glow);
   }
 
+  private warmed = false;
+  /**
+   * Prepares every shader and texture of the figures and props once, while the show is still
+   * dark – otherwise the graphics card does it in the moment a figure first appears, and the
+   * picture stutters for a moment.
+   */
+  warm(r: THREE.WebGLRenderer) {
+    if (this.warmed) return;
+    this.warmed = true;
+    const hidden: THREE.Object3D[] = [];
+    this.scene.traverse((o) => {
+      if (!o.visible) {
+        hidden.push(o);
+        o.visible = true;
+      }
+    });
+    try {
+      r.compile(this.scene, this.camera);
+      this.scene.traverse((o) => {
+        const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+        for (const mat of m ? (Array.isArray(m) ? m : [m]) : [])
+          for (const v of Object.values(mat))
+            if (v instanceof THREE.Texture && !(v as THREE.VideoTexture).isVideoTexture) r.initTexture(v);
+      });
+    } catch {
+      /* nothing – it then happens on the first frame as before */
+    } finally {
+      for (const o of hidden) o.visible = false;
+    }
+  }
+
   /** The off-axis camera: from the eye point through the wall rectangle. */
   view(F: Frame) {
     const ro = F.ro;
@@ -1309,6 +1340,8 @@ function showScene(def: ShowDef): SceneModule {
           rigs[i]?.setFace(id, id ? (ctx.photos?.get(id)?.img ?? null) : null);
         });
         for (const r of rigs) r.root.visible = visible && r.ready;
+        // all figures loaded: shaders and textures ready before the first one shows up
+        if (rigs.every((x) => x.ready)) layer.warm(ctx.renderer);
         return {
           uRo: new THREE.Vector3(...F.ro),
           uP0: new THREE.Vector3(...F.p0),

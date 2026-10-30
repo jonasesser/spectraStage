@@ -1697,7 +1697,26 @@ export class GlbFigure {
     this.setWorldQ(rig.hand, want.multiply(have.invert()));
   }
 
+  private warmed = false;
   render(r: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget) {
+    // shaders and textures prepared once while it is still hidden (no stutter when it appears)
+    if (this.model && !this.warmed) {
+      this.warmed = true;
+      const vis = this.root.visible;
+      this.root.visible = true;
+      try {
+        r.compile(this.scene, this.camera);
+        this.scene.traverse((o) => {
+          const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+          for (const mat of m ? (Array.isArray(m) ? m : [m]) : [])
+            for (const v of Object.values(mat)) if (v instanceof THREE.Texture) r.initTexture(v);
+        });
+      } catch {
+        /* then on the first frame as before */
+      } finally {
+        this.root.visible = vis;
+      }
+    }
     if (!this.visible || !this.model) return;
     // at most ~1920 px: a 4K multisampled half-float target eats hundreds of MB of GPU memory
     const k = Math.min(1, 1920 / Math.max(target.width, target.height));

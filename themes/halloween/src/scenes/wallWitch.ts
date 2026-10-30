@@ -721,6 +721,8 @@ void main(){ vUv = uv; vec4 mvPosition = modelViewMatrix * vec4(position,1.0); g
           clipAll(rig.root);
           rigClipped = true;
         }
+        // everything prepared once (shaders, textures) – no stutter when the props first appear
+        if (rig.ready && rigClipped) layer.warm(r);
         sparks.n = 0;
         smoke.n = 0;
         const sc = (target.height * layer.camera.projectionMatrix.elements[5]!) / 2;
