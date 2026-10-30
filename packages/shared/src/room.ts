@@ -8,6 +8,7 @@
  */
 import type { Pose, RoomObject, Surface, Viewer } from './schema.ts';
 import { completeRoom, worldLayout, type BBox } from './stage.ts';
+import { applyHomography, computeHomography, pointInPolygon, type Quad } from './homography.ts';
 
 export type V3 = [number, number, number];
 
@@ -1319,6 +1320,39 @@ export function wallQuads(
     if (ok) out.push({ wall, face: f, keys: keys as string[], uv, measured });
   }
   return out;
+}
+
+/**
+ * Where a point of the projector picture (u, v: 0..1, as the measuring cross) lies in the room:
+ * on which side, its stage coordinates there and the room point – with the same pinning as the
+ * picture (the measured corners), so what the cross covers is exactly what is found.
+ */
+export function pictureToRoom(
+  fold: RoomFold,
+  pose: Pose,
+  aspect: number,
+  anchors: readonly { c: string; u: number; v: number; q?: V3 | undefined }[],
+  walls: readonly RoomWall[],
+  u: number,
+  v: number,
+): { face: RoomFace; x: number; y: number; P: V3 } | null {
+  for (const q of wallQuads(fold, pose, aspect, anchors, walls)) {
+    const poly = q.uv.map(([x, y]) => ({ x, y }));
+    if (!pointInPolygon({ x: u, y: v }, poly)) continue;
+    const m = computeHomography(poly as Quad, [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ]);
+    if (!m) continue;
+    const t = applyHomography(m, { x: u, y: v });
+    const r = q.face.rect;
+    const x = r.x + t.x * r.w;
+    const y = r.y + t.y * r.h;
+    return { face: q.face, x, y, P: facePoint(q.face, x, y) };
+  }
+  return null;
 }
 
 /** The sides the app adds itself (no own surface): rect in the stage and their name. */

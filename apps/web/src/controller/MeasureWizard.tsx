@@ -19,6 +19,7 @@ import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
 import { WallPicker } from './WallPicker.tsx';
 import { ProportionSliders } from './ProportionSliders.tsx';
+import { PlacePanel } from './PlacePanel.tsx';
 
 interface Target {
   id: string;
@@ -314,6 +315,8 @@ export function MeasureWizard({
   const [history, setHistory] = useState<string[]>(() => (profile.anchors ?? []).map((a) => a.c));
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
   const [fine, setFine] = useState(false);
+  // measuring the room – or placing door, lamps, pumpkins and dark areas with a free cross
+  const [tab, setTab] = useState<'measure' | 'place'>('measure');
   const dragBase = useRef<{ id: string; u: number; v: number } | null>(null);
   const timer = useRef(0);
   const pending = useRef<Anchor[] | null>(null);
@@ -367,8 +370,15 @@ export function MeasureWizard({
 
   // the projector shows edges, corners and the cross of the active step
   useEffect(() => {
-    void store.send({ t: 'output.align', outputId: output.id, on: true, sel: target?.id ?? null });
-  }, [output.id, target?.id, store]);
+    if (tab !== 'measure') return;
+    void store.send({
+      t: 'output.align',
+      outputId: output.id,
+      on: true,
+      sel: target?.id ?? null,
+      mark: null,
+    });
+  }, [output.id, target?.id, store, tab]);
   useEffect(
     () => () => void store.send({ t: 'output.align', outputId: output.id, on: false, sel: null }),
     [output.id, store],
@@ -506,8 +516,32 @@ export function MeasureWizard({
   const doneSteps = history.length + skipped.size;
   const total = doneSteps + targets.filter((t) => !history.includes(t.id) && !skipped.has(t.id)).length;
 
+  const tabs = (
+    <div className="row" role="tablist">
+      <button className={`chip${tab === 'measure' ? ' on' : ''}`} onClick={() => setTab('measure')}>
+        📐 {L('Measure', 'Einmessen')}
+      </button>
+      <button className={`chip${tab === 'place' ? ' on' : ''}`} onClick={() => setTab('place')}>
+        🎯 {L('Place things', 'Platzieren')}
+      </button>
+    </div>
+  );
+  if (tab === 'place')
+    return (
+      <div className="panel stack">
+        {tabs}
+        <PlacePanel output={output} state={state} L={L} />
+        <div className="row">
+          <button className="btn small primary" onClick={onDone}>
+            ✓ {L('Done', 'Fertig')}
+          </button>
+        </div>
+      </div>
+    );
+
   return (
     <div className="panel stack">
+      {tabs}
       <strong>📐 {L('Measure projector', 'Beamer einmessen')}</strong>
       <WallPicker output={output} state={state} L={L} />
       {target ? (

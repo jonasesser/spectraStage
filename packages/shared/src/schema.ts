@@ -203,7 +203,17 @@ export const OutputSchema = z.object({
   /** Until when the projector sends a live picture to the admin (ms epoch). */
   diagUntil: z.number().optional(),
   /** Corner measuring in progress: the projector shows room edges, corners and markers. */
-  align: z.object({ until: z.number(), sel: z.string().max(80).nullable() }).optional(),
+  align: z
+    .object({
+      until: z.number(),
+      sel: z.string().max(80).nullable(),
+      /** A free cross for placing things (door, lamps, pumpkins, masks) – projector picture 0..1. */
+      mark: z
+        .object({ u: z.number().min(-0.5).max(1.5), v: z.number().min(-0.5).max(1.5) })
+        .nullable()
+        .optional(),
+    })
+    .optional(),
   /** Set when the client reported a resolution different from the active profile. */
   resolutionMismatch: z.object({ w: z.number().int(), h: z.number().int() }).nullable(),
 });
@@ -750,6 +760,10 @@ export const CommandSchema = z.discriminatedUnion('t', [
     outputId: id,
     on: z.boolean(),
     sel: z.string().max(80).nullable(),
+    mark: z
+      .object({ u: z.number().min(-0.5).max(1.5), v: z.number().min(-0.5).max(1.5) })
+      .nullable()
+      .optional(),
   }),
   /** Plan a projector before any PC is connected (a device can be approved onto it later). */
   z.object({ t: z.literal('output.create'), name }),

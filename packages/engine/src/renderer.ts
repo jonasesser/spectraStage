@@ -1723,6 +1723,7 @@ export class StageRenderer {
           align.sel,
           Date.now(),
           profile.walls ?? [],
+          align.mark ?? null,
         );
       else if (markers) drawCornerMarkers(this.viewOverlay.g, ow, oh, this.previewFocus, now);
       if (editObj) drawObjectOutline(this.viewOverlay.g, ow, oh, pose, editObj, Date.now());

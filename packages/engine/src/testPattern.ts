@@ -228,6 +228,7 @@ export function drawAlignOverlay(
   sel: string | null,
   now: number,
   walls: readonly RoomWall[] = [],
+  mark: { u: number; v: number } | null = null,
 ): void {
   const aspect = w / h;
   const quads = walls.length ? wallQuads(fold, pose, aspect, anchors, walls) : [];
@@ -236,8 +237,11 @@ export function drawAlignOverlay(
     return q ? [((q[0] + 1) / 2) * w, ((1 - q[1]) / 2) * h] : null;
   };
   g.save();
-  g.fillStyle = 'rgba(0,0,0,0.55)';
-  g.fillRect(0, 0, w, h);
+  // placing things: the picture stays visible (only lines and the cross on top)
+  if (!mark) {
+    g.fillStyle = 'rgba(0,0,0,0.55)';
+    g.fillRect(0, 0, w, h);
+  }
   const lw = Math.max(2, w / 640);
   // room edges
   g.strokeStyle = '#3ff2ff';
@@ -351,6 +355,32 @@ export function drawAlignOverlay(
     const lx = Math.min(w - fs, Math.max(fs, q[0] + (q[0] < w / 2 ? fs : -fs)));
     const ly = Math.min(h - fs, Math.max(fs, q[1] + (q[1] < h / 2 ? fs : -fs)));
     g.fillText(String(c.n), lx, ly);
+  }
+  // the free cross for placing: big, orange, pulsing, with a fine centre
+  if (mark) {
+    const x = mark.u * w;
+    const y = mark.v * h;
+    const s = fs * (2 + 0.25 * Math.sin(now / 150));
+    g.strokeStyle = '#ffb347';
+    g.shadowColor = '#000';
+    g.shadowBlur = lw * 2;
+    g.lineWidth = lw * 1.8;
+    g.beginPath();
+    g.moveTo(x - s, y);
+    g.lineTo(x - s * 0.15, y);
+    g.moveTo(x + s * 0.15, y);
+    g.lineTo(x + s, y);
+    g.moveTo(x, y - s);
+    g.lineTo(x, y - s * 0.15);
+    g.moveTo(x, y + s * 0.15);
+    g.lineTo(x, y + s);
+    g.stroke();
+    g.fillStyle = '#ffb347';
+    g.beginPath();
+    g.arc(x, y, lw * 1.2, 0, Math.PI * 2);
+    g.fill();
+    g.restore();
+    return;
   }
   // measured markers: big crosshairs (the selected one pulses)
   for (const a of anchors) {

@@ -19,7 +19,6 @@ import { kindColor, kindLabel } from './ui.tsx';
 import { Room3D } from './Room3D.tsx';
 import { ZoomSliders } from './ZoomSliders.tsx';
 import { ViewerSliders } from './ViewerSliders.tsx';
-import { FacadePanel } from './FacadePanel.tsx';
 
 type V = { x: number; y: number };
 type Sel = { type: 'surface'; id: string; vertex: number | null } | { type: 'output'; id: string } | null;
@@ -629,7 +628,6 @@ function RoomPanel({ state, L }: { state: SessionState; L: Tr }) {
         </button>
       )}
       <ViewerSliders state={state} L={L} />
-      <FacadePanel state={state} L={L} />
       {extra.length > 0 && (
         <button className="btn small" onClick={() => void reset()}>
           🧹 {L('Reset to the 6 fixed sides', 'Auf die 6 festen Seiten zurücksetzen')} ({extra.length}{' '}

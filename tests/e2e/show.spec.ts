@@ -100,3 +100,44 @@ test('a second show is isolated and cannot see the first show’s devices', asyn
   await expect(a.phone.locator('.list-item.pending', { hasText: 'A-Garage' })).toBeVisible();
   await expect(b.phone.locator('.list-item.pending')).toHaveCount(0);
 });
+
+test('projector calibration: place the garage door and a lamp with the cross', async ({ browser }) => {
+  const { phone, code } = await createShow(browser);
+  const garage = await openDisplay(browser, code, 'Garage');
+  await approve(phone, 'Garage');
+  await expect(garage.getByText(/Warte auf Freigabe/)).toBeHidden({ timeout: 10_000 });
+  const errors: string[] = [];
+  phone.on('pageerror', (e) => errors.push(e.message));
+  await phone
+    .getByRole('button', { name: /Kalibrieren|Einmessen/ })
+    .first()
+    .click();
+  await phone.getByRole('button', { name: /Tor, Strahler, Kürbisse/ }).click();
+  await expect(phone.getByText(/oranges Kreuz/)).toBeVisible();
+  // the cross starts in the middle of the picture: take it as the top left of the door,
+  // move it right and down, take it as the bottom right
+  await phone.getByRole('button', { name: /Oben links am Tor/ }).click();
+  for (let i = 0; i < 8; i++) await phone.getByRole('button', { name: 'rechts', exact: true }).click();
+  for (let i = 0; i < 8; i++) await phone.getByRole('button', { name: 'runter', exact: true }).click();
+  await phone.getByRole('button', { name: /Unten rechts am Tor/ }).click();
+  await phone.getByRole('button', { name: /^💡 Strahler$/ }).click();
+  await phone.getByRole('button', { name: /Strahler am Kreuz/ }).click();
+  await expect(phone.getByText(/💡 1:/)).toBeVisible();
+  await phone.getByRole('button', { name: /Kürbisse & Dinge/ }).click();
+  await phone.getByRole('button', { name: /Dunkel lassen/ }).click();
+  await phone.getByRole('button', { name: /Neuer dunkler Bereich/ }).click();
+  for (let i = 0; i < 3; i++) {
+    await phone.getByRole('button', { name: /Ecke hier/ }).click();
+    await phone.getByRole('button', { name: 'rechts', exact: true }).click();
+    await phone.getByRole('button', { name: 'runter', exact: true }).click();
+  }
+  await phone
+    .getByRole('button', { name: /^✓ Fertig$/ })
+    .first()
+    .click();
+  await expect(phone.getByText(/Dunkler Bereich 1/)).toBeVisible();
+  await garage.waitForTimeout(800);
+  await garage.screenshot({ path: 'test-results/garage-place.png' });
+  await phone.screenshot({ path: 'test-results/phone-place.png', fullPage: true });
+  expect(errors).toEqual([]);
+});

@@ -4,6 +4,7 @@ import {
   bboxIntersects,
   polygonBBox,
   formatCode,
+  poseForSurface,
   type Device,
   type Output,
   type SessionState,
@@ -13,7 +14,6 @@ import { useT, type Tr } from '../lib/i18n.tsx';
 import { api } from '../lib/api.ts';
 import { useShow, useStore } from './store.ts';
 import { Light, outputHealth, Sheet, Slider, kindLabel } from './ui.tsx';
-import { CalibrationEditor } from './CalibrationEditor.tsx';
 import { MeasureWizard } from './MeasureWizard.tsx';
 import { WallPicker } from './WallPicker.tsx';
 import { MountPicker } from './MountPicker.tsx';
@@ -23,30 +23,30 @@ import { StagePreview } from './Preview.tsx';
 export function OutputsView() {
   const L = useT();
   const { state, presence, role } = useShow();
+  const store = useStore();
   const [calibrate, setCalibrate] = useState<string | null>(null);
   const pending = state.devices.filter((d) => d.status === 'pending');
   const out = calibrate ? state.outputs.find((o) => o.id === calibrate) : undefined;
-  const [flat, setFlat] = useState(false);
-  // projectors in the 3D room are measured against the real room (guided); the flat 2D
-  // calibration stays available for fine corrections
-  if (out && activeProfile(out).pose && !flat)
-    return (
-      <div className="stack">
-        <MeasureWizard output={out} state={state} L={L} onDone={() => setCalibrate(null)} />
-        <button className="btn small ghost" onClick={() => setFlat(true)}>
-          {L('Flat 2D corner correction (experts)', 'Flache 2D-Eckkorrektur (Experten)')}
-        </button>
-      </div>
-    );
+  // every projector is measured against the real room (3D); there is no flat 2D calibration
   if (out)
     return (
-      <CalibrationEditor
-        output={out}
-        onClose={() => {
-          setCalibrate(null);
-          setFlat(false);
-        }}
-      />
+      <div className="stack">
+        {!activeProfile(out).pose && (
+          <button
+            className="btn primary"
+            onClick={() =>
+              void store.send({
+                t: 'output.setPose',
+                outputId: out.id,
+                pose: poseForSurface(state.surfaces, null, new Set()),
+              })
+            }
+          >
+            {L('Put this projector into the room', 'Diesen Beamer in den Raum stellen')}
+          </button>
+        )}
+        <MeasureWizard output={out} state={state} L={L} onDone={() => setCalibrate(null)} />
+      </div>
     );
   return (
     <div className="stack">

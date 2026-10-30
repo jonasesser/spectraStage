@@ -972,7 +972,7 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
     }
     case 'output.align': {
       const o = requireOutput(state, cmd.outputId);
-      o.align = cmd.on ? { until: ctx.now + 30 * 60_000, sel: cmd.sel } : undefined;
+      o.align = cmd.on ? { until: ctx.now + 30 * 60_000, sel: cmd.sel, mark: cmd.mark ?? null } : undefined;
       return res(`${o.name} ${cmd.on ? 'measuring corners' : 'measuring done'}`);
     }
     case 'output.create': {
