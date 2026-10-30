@@ -116,6 +116,9 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
   things standing on the real floor (jack-o'-lanterns, ghosts, the cat, rolling pumpkins; not
   webs, spiders or footprints) are painted stretched away from there (like 3D street art), so
   from that spot they look upright; from elsewhere they look stretched.
+  Mummy, cute monster and bloody groom are real rigged 3D models (`apps/web/public/models/*.glb`,
+  Mixamo skeleton in T-pose, e.g. from Meshy; shrink new ones with `scripts/optimize-glb.py in.glb
+  out.glb`); the scene places them, turns the head and solves the arms itself.
   The 3D wall scenes **Mummy breaks out** / **Cute monster peeks out** / **Guests break out** (the
   newest ghost photos come out of the wall one per round) (wall scenes, dark wall,
   ~50 s loop with sound; tempo and dark pause adjustable) are rendered from the same standpoint, so

@@ -17,6 +17,8 @@ import type { SoundApi } from '@spectrastage/engine';
 type V3 = [number, number, number];
 
 const LOOP = 44;
+/** The dim lamp in the room (local units) – same as KEY in the shader. */
+const KEY_POS: V3 = [1.3, 1.7, 2.4];
 
 // ---------------------------------------------------------------------------
 // Small math helpers
@@ -130,8 +132,10 @@ interface Hand {
   pitch: number;
   roll: number;
   curl: number;
-  /** Where the elbow goes when gripping the edge (weight e), else a relaxed default. */
+  /** Where the elbow goes when waving (weight e), else a relaxed default. */
   elbow?: V3;
+  /** Gripping the edge: the elbow from a real hinge (weight e). */
+  ik?: boolean;
   e?: number;
 }
 
@@ -162,6 +166,18 @@ const holeR = (th: number) =>
   0.62 + 0.06 * Math.sin(th * 3 + 1.3) + 0.04 * Math.sin(th * 7 + 0.4) + 0.025 * Math.sin(th * 13 + 2.1);
 const HOLE_C: [number, number] = [0, -0.08];
 const norm = (v: V3): V3 => scale(v, 1 / (Math.hypot(...v) || 1));
+
+/** Two-bone arm: elbow from shoulder S, wrist W, bone lengths and the direction the elbow points. */
+function elbowIK(S: V3, W: V3, l1: number, l2: number, pole: V3): V3 {
+  let d = sub(W, S);
+  let dist = Math.hypot(...d);
+  d = scale(d, 1 / (dist || 1));
+  dist = Math.min(dist, (l1 + l2) * 0.999);
+  const a = (l1 * l1 - l2 * l2 + dist * dist) / (2 * dist);
+  const h = Math.sqrt(Math.max(0, l1 * l1 - a * a));
+  const pp = norm(sub(pole, scale(d, dot(pole, d))));
+  return add(add(S, scale(d, a)), scale(pp, h));
+}
 
 const cross = (a: V3, b: V3): V3 => [
   a[1] * b[2] - a[2] * b[1],
@@ -326,15 +342,13 @@ function pose(a: number, cute: boolean, ro: V3): Pose {
     const inside: V3 = [side * 0.25, -0.3, -0.45];
     const pos = mixV(inside, g.pos, e);
     pos[2] += 0.18 * Math.sin(Math.PI * Math.min(1, e * 1.15));
-    const dir = norm([g.pos[0] - HOLE_C[0], g.pos[1] - HOLE_C[1], 0]);
-    const rr = Math.hypot(g.pos[0] - HOLE_C[0], g.pos[1] - HOLE_C[1]);
     return {
       pos,
       yaw: 0,
       pitch: mix(1.3, 0, e),
       roll: mix(-side * 0.3, g.roll, e),
       curl: mix(0.4, cute ? 0.35 : g.curl, e) + scratch * (cute ? 0.3 : 0.6),
-      elbow: [HOLE_C[0] + dir[0] * rr * 0.62, HOLE_C[1] + dir[1] * rr * 0.62 - 0.04, 0.14],
+      ik: true,
       e,
     };
   };
@@ -411,7 +425,7 @@ uniform vec3 uHandL; uniform mat3 uHandLM; uniform float uCurlL; uniform vec3 uE
 uniform vec3 uHandR; uniform mat3 uHandRM; uniform float uCurlR; uniform vec3 uElbR;
 uniform vec3 uLook;
 uniform vec3 uRib1, uRib2;
-uniform float uPhoto, uPhotoA, uPhotoTilt;
+uniform float uPhoto, uPhotoA, uPhotoTilt, uHide;
 uniform vec3 uPhotoB;
 uniform vec2 uPhotoSize;
 uniform sampler2D uPhotoTex;
@@ -626,7 +640,7 @@ vec2 hand(vec3 q, float curl) {
 vec2 monster(vec3 p) {
   vec2 res = vec2(1e5, 2.0);
   // guest photo: only the bulge before the burst comes from a (cute) body, then the photo comes out
-  if (uPhoto > 0.5 && uHole > 0.0) return res;
+  if (uHide > 0.5 && uHole > 0.0) return res;
   // head
   vec3 hp = p - uHead;
   float bh = length(hp) - 0.5;
@@ -649,8 +663,9 @@ vec2 monster(vec3 p) {
     b = smin(b, length(p - uElbR) - 0.06 * ak, 0.04);
     b = smin(b, sdCapT(p, sl, uElbL, 0.075 * ak, 0.058 * ak), 0.05);
     b = smin(b, sdCapT(p, sr, uElbR, 0.075 * ak, 0.058 * ak), 0.05);
-    b = smin(b, sdCapT(p, uElbL, uHandL, 0.058 * ak, 0.045 * ak), 0.03);
-    b = smin(b, sdCapT(p, uElbR, uHandR, 0.058 * ak, 0.045 * ak), 0.03);
+    // the forearm narrows to the wrist, as thick as the hand's wrist
+    b = smin(b, sdCapT(p, uElbL, uHandL, 0.058 * ak, 0.036 * ak), 0.03);
+    b = smin(b, sdCapT(p, uElbR, uHandR, 0.058 * ak, 0.036 * ak), 0.03);
   } else {
     // thin, dried-out arms: bony shoulder, elbow and wrist
     for (int k = 0; k < 2; k++) {
@@ -675,13 +690,17 @@ vec2 monster(vec3 p) {
   vec3 lp = p - uHandL;
   float bl = length(lp) - 0.27 * HS;
   vec2 hl = vec2(bl, 2.0);
-  if (bl < 0.15) { vec3 q = uHandLM * lp; q.x = -q.x; hl = hand(q / HS, uCurlL); hl.x *= HS; }
-  if (hl.x < res.x) res = hl;
+  // the monster faces us: its right hand is on our left (x < 0) – the hand on our right is its
+  // left hand, the mirror image (thumb on the other side)
+  if (bl < 0.15) { hl = hand(uHandLM * lp / HS, uCurlL); hl.x *= HS; }
+  // the hand grows out of the forearm (blended, no seam at the wrist)
+  if (hl.x < res.x + 0.04) res = vec2(smin(res.x, hl.x, 0.03), hl.x < res.x ? hl.y : res.y);
   vec3 rp = p - uHandR;
   float br = length(rp) - 0.27 * HS;
   vec2 hr = vec2(br, 2.0);
-  if (br < 0.15) { hr = hand(uHandRM * rp / HS, uCurlR); hr.x *= HS; }
-  if (hr.x < res.x) res = hr;
+  if (br < 0.15) { vec3 q = uHandRM * rp; q.x = -q.x; hr = hand(q / HS, uCurlR); hr.x *= HS; }
+  // the hand grows out of the forearm (blended, no seam at the wrist)
+  if (hr.x < res.x + 0.04) res = vec2(smin(res.x, hr.x, 0.03), hr.x < res.x ? hr.y : res.y);
   return res;
 }
 
@@ -1024,7 +1043,7 @@ const pauseOf = (s: DrawState) => Math.max(0, Number(s.params.pause ?? 6));
 /** The scene clock as last rendered (for the sound, which runs outside the render loop). */
 const clocks: Record<string, { time: number; at: number; speed: number; loop: number }> = {};
 
-export function uniformsFor(id: string, cute: boolean, guest?: GuestPhoto) {
+export function uniformsFor(id: string, cute: boolean, guest?: GuestPhoto, figure?: GlbFigure, glow?: V3) {
   return (s: DrawState, f: { time: number }) => {
     const F = (s.cache.wmFrame as Frame | undefined) ?? (s.cache.wmFrame = frameOf(s));
     const speed = speedOf(s);
@@ -1037,12 +1056,18 @@ export function uniformsFor(id: string, cute: boolean, guest?: GuestPhoto) {
     const sr: V3 = add(P.body, [0.27, 0.07, 0]);
     const elbowOf = (sh: V3, h: Hand, side: number): V3 => {
       const relaxed = add(mixV(sh, h.pos, 0.5), [side * 0.14, -0.13, -0.16]);
-      return h.elbow ? mixV(relaxed, h.elbow, h.e ?? 0) : relaxed;
+      // gripping the edge like climbing out over a ledge: the elbow is a hinge – it bends
+      // backwards and down (behind the wall, inside the opening), never outwards
+      let E = h.ik
+        ? mixV(relaxed, elbowIK(sh, h.pos, 0.38, 0.38, [side * 0.35, -0.6, -0.75]), h.e ?? 0)
+        : relaxed;
+      if (h.elbow) E = mixV(E, h.elbow, h.e ?? 0);
+      return E;
     };
     const elbL = elbowOf(sl, P.handL, -1);
     const elbR = elbowOf(sr, P.handR, 1);
-    const HL = handFrame(elbL, P.handL.pos, P.handL);
-    const HR = handFrame(elbR, P.handR.pos, P.handR);
+    const HL = handFrame(elbL, P.handL.pos, P.handL, 1.45);
+    const HR = handFrame(elbR, P.handR.pos, P.handR, 1.45);
     const elbow = (_sh: V3, _w: V3, side: number): V3 => (side < 0 ? elbL : elbR);
     // direction to the audience in head space (for the pupils)
     const toEye = sub(F.ro, P.head);
@@ -1079,8 +1104,16 @@ export function uniformsFor(id: string, cute: boolean, guest?: GuestPhoto) {
       uLook: v3(look),
       uRib1: v3(add(P.head, apply(P.headR, [0.11, -0.03, 0.03]))),
       uRib2: v3(add(mixV(elbow(sl, P.handL.pos, -1), P.handL.pos, 0.55), [0, -0.03, 0])),
-      uGlowCol: cute ? new THREE.Vector3(0.55, 0.35, 1.0) : new THREE.Vector3(0.3, 0.95, 0.45),
-      ...(guest ? guest.uniforms(a, Math.floor((f.time * speed) / loop)) : { uPhoto: 0, uPhotoA: 0 }),
+      uGlowCol: glow
+        ? v3(glow)
+        : cute
+          ? new THREE.Vector3(0.55, 0.35, 1.0)
+          : new THREE.Vector3(0.3, 0.95, 0.45),
+      ...(guest
+        ? guest.uniforms(a, Math.floor((f.time * speed) / loop))
+        : { uPhoto: 0, uPhotoA: 0, uPhotoTex: NO_TEX as unknown as number }),
+      // a real 3D model takes over once the wall is open (the drawn one only makes the bulge)
+      uHide: figure?.update(P, F, a) || (guest?.has(Math.floor((f.time * speed) / loop)) ?? false) ? 1 : 0,
     };
   };
 }
@@ -1195,6 +1228,435 @@ function soundFor(id: string, cues: Cue[]) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Real 3D figures (rigged GLB, Mixamo skeleton)
+// ---------------------------------------------------------------------------
+const HOLE_GLSL = /* glsl */ `
+uniform float uHoleOpen;
+varying vec3 vWallPos;
+`;
+
+/** Shared tone curve + gamma (as the wall shader) for drawing the figure over the wall. */
+const COMPOSITE_FRAG = /* glsl */ `
+uniform sampler2D map;
+uniform float uFade;
+varying vec2 vUv;
+void main() {
+  vec4 c = texture2D(map, vUv);
+  if (c.a <= 0.001) discard;
+  vec3 col = c.rgb / c.a * uFade;
+  col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);
+  col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
+  gl_FragColor = vec4(col, c.a);
+}
+`;
+
+const loaders: Record<string, Promise<THREE.Group | null>> = {};
+function loadModel(url: string): Promise<THREE.Group | null> {
+  return (loaders[url] ??= import('three/examples/jsm/loaders/GLTFLoader.js')
+    .then(({ GLTFLoader }) => new GLTFLoader().loadAsync(url))
+    .then((g) => g.scene)
+    .catch((e: unknown) => {
+      console.warn('[wallMonster] model failed', url, e);
+      return null;
+    }));
+}
+
+const qv = (v: V3) => new THREE.Vector3(v[0], v[1], v[2]);
+/** A 1×1 placeholder so no sampler is left unbound. */
+const NO_TEX = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1);
+NO_TEX.needsUpdate = true;
+
+interface ArmRig {
+  upper: THREE.Bone;
+  fore: THREE.Bone;
+  hand: THREE.Bone;
+  l1: number;
+  l2: number;
+  /** In the hand bone's own space: where the fingers point and where the palm faces (bind pose). */
+  finger: THREE.Vector3;
+  palm: THREE.Vector3;
+  /** Bind pose (T-pose, world): arm direction, the way the elbow flexes (forwards), bone rotations. */
+  a0: THREE.Vector3;
+  f0: THREE.Vector3;
+  upperQ0: THREE.Quaternion;
+  foreQ0: THREE.Quaternion;
+}
+
+/**
+ * A rigged figure that comes out of the hole: placed with the chest where the pose wants the
+ * body, the head turned towards the audience, the arms solved as real two-bone limbs (the elbow a
+ * hinge, the hand following the forearm) – each hand is its own hand, so thumbs are where they
+ * belong. Seen through the same off-axis camera as the wall (from the audience standpoint);
+ * hidden behind the wall except through the hole.
+ */
+export class GlbFigure {
+  private scene = new THREE.Scene();
+  private root = new THREE.Group();
+  private model: THREE.Group | null = null;
+  private bind = new Map<THREE.Object3D, THREE.Quaternion>();
+  private bones: Record<string, THREE.Bone> = {};
+  private arms: { R: ArmRig; L: ArmRig } | null = null;
+  private hipsBind = new THREE.Vector3();
+  private headH = 1;
+  private rootQ = new THREE.Quaternion();
+  private size = 1;
+  private camera = new THREE.PerspectiveCamera();
+  private rt: THREE.WebGLRenderTarget | null = null;
+  private quad: THREE.Mesh | null = null;
+  private quadScene = new THREE.Scene();
+  private ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  private holeU = { value: 0 };
+  private glowLight = new THREE.PointLight(0xffffff, 0, 0, 2);
+  private key = new THREE.DirectionalLight(0xfff0dd, 1.6);
+  private fill = new THREE.HemisphereLight(0x8899bb, 0x110808, 0.25);
+  private visible = false;
+  private fade = 1;
+  private disposed = false;
+
+  constructor(
+    url: string,
+    private readonly cute: boolean,
+    private readonly glow: V3,
+  ) {
+    this.scene.add(this.root, this.glowLight, this.key, this.key.target, this.fill);
+    this.key.position.set(KEY_POS[0], KEY_POS[1], KEY_POS[2]);
+    this.glowLight.position.set(HOLE_C[0], HOLE_C[1], -0.45);
+    void loadModel(url).then((g) => {
+      if (!g || this.disposed) return;
+      this.setup(g.clone(true));
+    });
+  }
+
+  private setup(g: THREE.Group) {
+    // clone of a skinned model: re-bind the skeleton to the cloned bones
+    const byName: Record<string, THREE.Bone> = {};
+    g.traverse((o) => {
+      if ((o as THREE.Bone).isBone) byName[o.name.replace(/^mixamorig:?/, '')] = o as THREE.Bone;
+    });
+    g.traverse((o) => {
+      const m = o as THREE.SkinnedMesh;
+      if (m.isSkinnedMesh) {
+        m.frustumCulled = false;
+        m.skeleton = new THREE.Skeleton(
+          m.skeleton.bones.map((b) => byName[b.name.replace(/^mixamorig:?/, '')] ?? b),
+          m.skeleton.boneInverses,
+        );
+        m.bind(m.skeleton, m.bindMatrix);
+        const mats = Array.isArray(m.material) ? m.material : [m.material];
+        for (const mat of mats) this.occlude(mat as THREE.MeshStandardMaterial);
+      }
+    });
+    this.bones = byName;
+    const need = [
+      'Hips',
+      'Spine2',
+      'Neck',
+      'Head',
+      'LeftArm',
+      'LeftForeArm',
+      'LeftHand',
+      'RightArm',
+      'RightForeArm',
+      'RightHand',
+    ];
+    if (need.some((n) => !byName[n])) {
+      console.warn('[wallMonster] model has no Mixamo skeleton');
+      return;
+    }
+    g.updateMatrixWorld(true);
+    g.traverse((o) => this.bind.set(o, o.quaternion.clone()));
+    const wp = (n: string) => byName[n]!.getWorldPosition(new THREE.Vector3());
+    // size: shoulder width as wide as the drawn monster's (so it fits the hole)
+    const shoulders = wp('LeftArm').distanceTo(wp('RightArm'));
+    this.size = (this.cute ? 0.56 : 0.56) / Math.max(1e-3, shoulders);
+    this.hipsBind = wp('Hips');
+    this.headH = wp('Head').y - this.hipsBind.y;
+    const arm = (side: 'Left' | 'Right'): ArmRig => {
+      const up = byName[side + 'Arm']!;
+      const fo = byName[side + 'ForeArm']!;
+      const ha = byName[side + 'Hand']!;
+      const a = wp(side + 'Arm');
+      const b = wp(side + 'ForeArm');
+      const c = wp(side + 'Hand');
+      const hq = ha.getWorldQuaternion(new THREE.Quaternion()).invert();
+      // T-pose: fingers continue the arm, palms face down
+      const finger = c.clone().sub(b).normalize().applyQuaternion(hq);
+      const palm = new THREE.Vector3(0, -1, 0).applyQuaternion(hq);
+      const a0 = b.clone().sub(a).normalize();
+      // an elbow flexes forwards (towards the front of the body) in the T-pose
+      const f0 = new THREE.Vector3(0, 0, 1).sub(a0.clone().multiplyScalar(a0.z)).normalize();
+      return {
+        upper: up,
+        fore: fo,
+        hand: ha,
+        l1: a.distanceTo(b),
+        l2: b.distanceTo(c),
+        finger,
+        palm,
+        a0,
+        f0,
+        upperQ0: up.getWorldQuaternion(new THREE.Quaternion()),
+        foreQ0: fo.getWorldQuaternion(new THREE.Quaternion()),
+      };
+    };
+    this.arms = { R: arm('Left'), L: arm('Right') }; // the figure faces us: its left hand is on our right
+    this.model = g;
+    this.root.add(g);
+  }
+
+  /** Hide the parts behind the wall (except through the hole); darker deeper inside. */
+  private occlude(mat: THREE.MeshStandardMaterial) {
+    mat.side = THREE.FrontSide;
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uHoleOpen = this.holeU;
+      sh.vertexShader =
+        HOLE_GLSL +
+        sh.vertexShader.replace(
+          '#include <project_vertex>',
+          '#include <project_vertex>\n  vWallPos = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+        );
+      sh.fragmentShader =
+        HOLE_GLSL +
+        sh.fragmentShader
+          .replace(
+            '#include <clipping_planes_fragment>',
+            `#include <clipping_planes_fragment>
+  if (vWallPos.z < 0.0) {
+    vec2 hp = vWallPos.xy - vec2(${HOLE_C[0].toFixed(3)}, ${HOLE_C[1].toFixed(3)});
+    float th = atan(hp.y, hp.x);
+    float R = uHoleOpen * (0.62 + 0.06 * sin(th * 3.0 + 1.3) + 0.04 * sin(th * 7.0 + 0.4) + 0.025 * sin(th * 13.0 + 2.1));
+    if (length(hp) > R - 0.015) discard;
+  }`,
+          )
+          .replace(
+            '#include <dithering_fragment>',
+            '#include <dithering_fragment>\n  gl_FragColor.rgb *= mix(1.0, 0.3, smoothstep(0.0, -0.6, vWallPos.z));',
+          );
+    };
+    mat.needsUpdate = true;
+  }
+
+  /** Puts the figure into the pose; true when it is shown (the wall is open and it has loaded). */
+  update(P: Pose, F: Frame, a: number): boolean {
+    this.visible = !!(this.model && this.arms && P.hole > 0.001 && a >= 13.5);
+    this.fade = P.fade;
+    this.holeU.value = P.hole;
+    this.glowLight.color.setRGB(this.glow[0], this.glow[1], this.glow[2]);
+    this.glowLight.intensity = P.glow * 1.2;
+    // camera: from the eye point through the wall rectangle (off-axis)
+    const ro = F.ro;
+    const near = 0.05;
+    const k = near / Math.max(0.1, ro[2]);
+    const x0 = F.p0[0];
+    const x1 = F.p0[0] + F.pu[0];
+    const y0 = F.p0[1];
+    const y1 = F.p0[1] + F.pv[1];
+    this.camera.position.set(ro[0], ro[1], ro[2]);
+    this.camera.quaternion.identity();
+    this.camera.projectionMatrix.makePerspective(
+      (x0 - ro[0]) * k,
+      (x1 - ro[0]) * k,
+      (y0 - ro[1]) * k,
+      (y1 - ro[1]) * k,
+      near,
+      50,
+    );
+    this.camera.projectionMatrixInverse.copy(this.camera.projectionMatrix).invert();
+    this.camera.updateMatrixWorld(true);
+    if (!this.visible || !this.model || !this.arms) return this.visible;
+
+    // back to the bind pose, then: place, turn the head, solve the arms
+    for (const [o, q] of this.bind) o.quaternion.copy(q);
+    // the hips stay behind the wall; the body leans forward out of the hole so the head gets
+    // where the pose wants it (nothing below the hole can come through the wall)
+    const s = this.size;
+    const zh = this.cute ? -0.55 : -0.5;
+    const hh = this.headH * s;
+    const lean = Math.asin(Math.max(-0.2, Math.min(0.75, (P.head[2] - zh) / hh)));
+    this.rootQ.setFromAxisAngle(new THREE.Vector3(1, 0, 0), lean);
+    const hips = new THREE.Vector3(
+      P.head[0],
+      P.head[1] - hh * Math.cos(lean) - (this.cute ? 0.05 : 0.08),
+      zh,
+    );
+    this.root.scale.setScalar(s);
+    this.root.quaternion.copy(this.rootQ);
+    this.root.position.copy(hips).sub(this.hipsBind.clone().multiplyScalar(s).applyQuaternion(this.rootQ));
+    this.root.updateMatrixWorld(true);
+    // head: towards where the pose looks (neck takes a part)
+    const look = new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().set(
+        P.headR[0]!,
+        P.headR[1]!,
+        P.headR[2]!,
+        0,
+        P.headR[3]!,
+        P.headR[4]!,
+        P.headR[5]!,
+        0,
+        P.headR[6]!,
+        P.headR[7]!,
+        P.headR[8]!,
+        0,
+        0,
+        0,
+        0,
+        1,
+      ),
+    );
+    // (the lean already tips the head forward – take it out again)
+    look.multiply(this.rootQ.clone().invert());
+    this.turn(this.bones.Neck!, new THREE.Quaternion().slerp(look, 0.4));
+    this.turn(this.bones.Head!, new THREE.Quaternion().slerp(look, 0.6));
+    this.solveArm(this.arms.L, P.handL, -1);
+    this.solveArm(this.arms.R, P.handR, 1);
+    return true;
+  }
+
+  /** Adds a world-space rotation to a bone. */
+  private turn(b: THREE.Object3D, q: THREE.Quaternion) {
+    const wq = b.getWorldQuaternion(new THREE.Quaternion());
+    this.setWorldQ(b, q.clone().multiply(wq));
+  }
+
+  private setWorldQ(b: THREE.Object3D, wq: THREE.Quaternion) {
+    const pq = b.parent ? b.parent.getWorldQuaternion(new THREE.Quaternion()) : new THREE.Quaternion();
+    b.quaternion.copy(pq.invert().multiply(wq));
+    b.updateMatrixWorld(true);
+  }
+
+  private solveArm(rig: ArmRig, h: Hand, side: number) {
+    const s = this.size;
+    const S = rig.upper.getWorldPosition(new THREE.Vector3());
+    const Sv: V3 = [S.x, S.y, S.z];
+    // where the hand goes: the pose's wrist, pulled in if the arm is too short
+    let W = h.pos;
+    const reach = (rig.l1 + rig.l2) * s * 0.98;
+    const d = sub(W, Sv);
+    const dist = Math.hypot(...d);
+    if (dist > reach) W = add(Sv, scale(d, reach / dist));
+    // the elbow: hanging relaxed, or a real hinge bending back and down when gripping
+    const relaxed: V3 = add(mixV(Sv, W, 0.5), [side * 0.12, -0.14, -0.12]);
+    // the elbow may not be inside the wall: try where it can point (back, down, out, forward) and
+    // take the first that stays in the opening or in front of the wall
+    const poles: V3[] = h.elbow
+      ? [[side * 0.6, -1, 0]]
+      : [
+          [side * 0.35, -0.6, -0.75],
+          [side * 0.4, -1, -0.2],
+          [side * 1, -0.6, 0],
+          [side * 0.8, -0.4, 0.5],
+          [side * 0.3, -0.3, 1],
+        ];
+    const free = (e: V3) => {
+      if (e[2] >= 0.02) return true;
+      const dx = e[0] - HOLE_C[0];
+      const dy = e[1] - HOLE_C[1];
+      return Math.hypot(dx, dy) < holeR(Math.atan2(dy, dx)) - 0.09;
+    };
+    let ik = elbowIK(Sv, W, rig.l1 * s, rig.l2 * s, poles[0]!);
+    for (const pole of poles) {
+      const e = elbowIK(Sv, W, rig.l1 * s, rig.l2 * s, pole);
+      if (free(e)) {
+        ik = e;
+        break;
+      }
+    }
+    const E = h.ik || h.elbow ? mixV(relaxed, ik, h.e ?? 0) : relaxed;
+    // the elbow is a hinge: the upper arm points at the elbow, turned so the forearm can only
+    // fold forwards (the elbow tip points back), the forearm then turns about the hinge axis only
+    const u = qv(E).sub(S).normalize();
+    const fw = qv(W).sub(qv(E));
+    let v = fw.clone().sub(u.clone().multiplyScalar(fw.dot(u)));
+    if (v.length() < 1e-4) {
+      // straight arm: the elbow tip points to the pole, so it folds the other way
+      const pole = qv(h.elbow ? [side * 0.6, -1, 0] : [side * 0.35, -0.6, -0.75]);
+      v = pole.sub(u.clone().multiplyScalar(pole.dot(u))).negate();
+    }
+    v.normalize();
+    const rq = this.rootQ;
+    const a0 = rig.a0.clone().applyQuaternion(rq);
+    const f0 = rig.f0.clone().applyQuaternion(rq);
+    const R = basisQ(u, v).multiply(basisQ(a0, f0).invert());
+    this.setWorldQ(rig.upper, R.clone().multiply(rq.clone().multiply(rig.upperQ0)));
+    const axis = new THREE.Vector3().crossVectors(u, v).normalize();
+    const w = fw.normalize();
+    const bend = Math.atan2(w.dot(v), w.dot(u));
+    const R2 = new THREE.Quaternion().setFromAxisAngle(axis, bend).multiply(R);
+    this.setWorldQ(rig.fore, R2.multiply(rq.clone().multiply(rig.foreQ0)));
+    // the hand: fingers and palm as the pose wants, bent at the wrist as far as a wrist goes
+    const M = handFrame(E, W, h, 1.45);
+    const fingers = new THREE.Vector3(M[1], M[4], M[7]);
+    const back = new THREE.Vector3(M[2], M[5], M[8]);
+    const palm = back.clone().negate();
+    const want = basisQ(fingers, palm);
+    const have = basisQ(rig.finger, rig.palm);
+    // world rotation that maps the hand's own finger/palm axes onto the wanted ones
+    this.setWorldQ(rig.hand, want.multiply(have.invert()));
+  }
+
+  render(r: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget) {
+    if (!this.visible || !this.model) return;
+    const w = target.width;
+    const h = target.height;
+    if (!this.rt || this.rt.width !== w || this.rt.height !== h) {
+      this.rt?.dispose();
+      this.rt = new THREE.WebGLRenderTarget(w, h, { samples: 4, type: THREE.HalfFloatType });
+      if (!this.quad) {
+        this.quad = new THREE.Mesh(
+          new THREE.PlaneGeometry(2, 2),
+          new THREE.ShaderMaterial({
+            uniforms: { map: { value: null }, uFade: { value: 1 } },
+            vertexShader:
+              'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+            fragmentShader: COMPOSITE_FRAG,
+            transparent: true,
+            depthTest: false,
+            depthWrite: false,
+          }),
+        );
+        this.quad.frustumCulled = false;
+        this.quadScene.add(this.quad);
+      }
+    }
+    const prevAuto = r.autoClear;
+    const prevColor = r.getClearColor(new THREE.Color());
+    const prevAlpha = r.getClearAlpha();
+    r.setRenderTarget(this.rt);
+    r.setClearColor(0x000000, 0);
+    r.clear(true, true, false);
+    r.render(this.scene, this.camera);
+    const qm = this.quad!.material as THREE.ShaderMaterial;
+    qm.uniforms.map!.value = this.rt.texture;
+    qm.uniforms.uFade!.value = this.fade;
+    r.autoClear = false;
+    r.setRenderTarget(target);
+    r.render(this.quadScene, this.ortho);
+    r.autoClear = prevAuto;
+    r.setClearColor(prevColor, prevAlpha);
+  }
+
+  dispose() {
+    this.disposed = true;
+    this.rt?.dispose();
+    this.quad?.geometry.dispose();
+    (this.quad?.material as THREE.Material | undefined)?.dispose();
+    // geometry / textures are shared through the loader cache (cloned scene) – kept for reuse
+  }
+}
+
+/** Rotation whose x/y/z axes are (y × z, y, z) for the given y (fingers) and z (palm). */
+function basisQ(y: THREE.Vector3, z: THREE.Vector3): THREE.Quaternion {
+  const Y = y.clone().normalize();
+  const Z = z
+    .clone()
+    .sub(Y.clone().multiplyScalar(z.dot(Y)))
+    .normalize();
+  const X = new THREE.Vector3().crossVectors(Y, Z);
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Z));
+}
+
 /**
  * The guest whose photo comes out of the wall this round: the newest one not shown yet, else the
  * one shown longest ago. No photos (or not loaded yet) → the cute monster comes instead.
@@ -1291,17 +1753,43 @@ function guestBreakout(id: string): SceneModule {
   };
 }
 
-function breakout(id: string, cute: boolean): SceneModule {
-  return shaderScene(id, WALL_MONSTER_FRAG, uniformsFor(id, cute), {
-    shaderScale: 0.6,
-    ambientSound: soundFor(id, cute ? CUTE_SOUND : MUMMY_SOUND),
-  });
+function breakout(id: string, cute: boolean, model?: string, glow?: V3): SceneModule {
+  const sound = soundFor(id, cute ? CUTE_SOUND : MUMMY_SOUND);
+  if (!model)
+    return shaderScene(id, WALL_MONSTER_FRAG, uniformsFor(id, cute), {
+      shaderScale: 0.6,
+      ambientSound: sound,
+    });
+  const glowCol: V3 = glow ?? (cute ? [0.55, 0.35, 1.0] : [0.3, 0.95, 0.45]);
+  return {
+    id,
+    ambientSound: sound,
+    create: (ctx) => {
+      const figure = new GlbFigure(model, cute, glowCol);
+      const wall = shaderScene(id, WALL_MONSTER_FRAG, uniformsFor(id, cute, undefined, figure, glowCol), {
+        shaderScale: 0.6,
+      }).create(ctx);
+      return {
+        render: (t, f) => {
+          wall.render(t, f);
+          figure.render(ctx.renderer, t);
+        },
+        resize: (w, h, ppm) => wall.resize(w, h, ppm),
+        setParams: (p) => wall.setParams(p),
+        dispose: () => {
+          figure.dispose();
+          wall.dispose();
+        },
+      };
+    },
+  };
 }
 
 export const wallMonsterScenes: SceneModule[] = [
-  breakout('wallMummy', false),
+  breakout('wallMummy', false, '/models/mummy.glb'),
   // old id (the demon was replaced by the mummy): shows the mummy
-  breakout('wallDemon', false),
-  breakout('wallBuddy', true),
+  breakout('wallDemon', false, '/models/mummy.glb'),
+  breakout('wallBuddy', true, '/models/cute-monster.glb'),
+  breakout('wallGroom', false, '/models/groom.glb', [1.0, 0.18, 0.1]),
   guestBreakout('wallGuest'),
 ];

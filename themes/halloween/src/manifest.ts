@@ -266,6 +266,16 @@ const scenes: SceneManifest[] = [
     ['#000000', '#5dff8a'],
   ),
   breakoutScene(
+    'wallGroom',
+    ['Bloody groom breaks out (3D)', 'Blutiger Bräutigam bricht durch die Wand (3D)'],
+    [
+      'Real 3D model: the wall bursts, a blood-smeared groom in a white tuxedo pushes out and grabs the edge, in red light. Looks real from the audience standpoint.',
+      'Echtes 3D-Modell: die Wand bricht, ein blutverschmierter Bräutigam im weißen Smoking kommt heraus und greift die Kante, in rotem Licht. Wirkt echt vom Zuschauer-Standpunkt.',
+    ],
+    '🤵',
+    ['#000000', '#ff3020'],
+  ),
+  breakoutScene(
     'wallGuest',
     ['Guests break out (3D)', 'Gäste brechen durch die Wand (3D)'],
     [
