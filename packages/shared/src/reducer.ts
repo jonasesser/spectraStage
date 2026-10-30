@@ -759,6 +759,15 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       }
       return res(`${scene.name.en} → ${names(state.surfaces, cmd.surfaceIds)}`);
     }
+    case 'surface.resetProgram': {
+      for (const s of surfaces(cmd.surfaceIds)) {
+        // join whatever playlist the other sides run (lockstep) – else the theme's default
+        const running = state.surfaces.find((x) => x !== s && x.playback.mode === 'playlist');
+        s.playback = running ? structuredClone(running.playback) : defaultPlayback(state, s.kind, ctx);
+        delete s.insert;
+      }
+      return res(`back to the programme → ${names(state.surfaces, cmd.surfaceIds)}`);
+    }
     case 'surface.setParams': {
       const s = requireSurface(state, cmd.surfaceId);
       let ref = s.playback.mode === 'scene' ? s.playback.scene : null;

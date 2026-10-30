@@ -644,6 +644,8 @@ export const CommandSchema = z.discriminatedUnion('t', [
     transition: TransitionSchema.optional(),
   }),
   z.object({ t: z.literal('surface.setParams'), surfaceId: id, params: ParamValuesSchema }),
+  /** Back to the show's normal programme (the running world playlist, in lockstep). */
+  z.object({ t: z.literal('surface.resetProgram'), surfaceIds }),
   z.object({
     t: z.literal('surface.playPlaylist'),
     surfaceIds,

@@ -13,17 +13,23 @@ import {
 import { useT, type Tr } from '../lib/i18n.tsx';
 import { ghostImagesFor } from '../lib/ghostImages.ts';
 import { useShow, useStore } from './store.ts';
-import { Slider, SurfacePicker, useSelection } from './ui.tsx';
+import { kindColor, Slider } from './ui.tsx';
 
 export function ScenesView() {
   const L = useT();
   const store = useStore();
   const { state } = useShow();
-  const sel = useSelection(state);
+  // own selection here: by default only the main wall (never silently all projectors)
+  const [picked, setPicked] = useState<string[] | null>(null);
+  const mainWall =
+    state.surfaces.find((s) => s.role === 'main') ?? state.surfaces.find((s) => s.kind === 'wall');
+  const selIds = (picked ?? (mainWall ? [mainWall.id] : [])).filter((id) =>
+    state.surfaces.some((s) => s.id === id),
+  );
   const [themeId, setThemeId] = useState(state.defaultThemeId);
   const theme = catalog.get(themeId) ?? catalog.themes[0]!;
   const now = store.conn.clock.now();
-  const targets = state.surfaces.filter((s) => sel.ids.includes(s.id));
+  const targets = state.surfaces.filter((s) => selIds.includes(s.id));
   const activeIds = new Set(
     targets.map((s) => {
       const a = activeSceneFor(s, state.playlists, now);
@@ -41,7 +47,51 @@ export function ScenesView() {
 
   return (
     <div className="stack">
-      <SurfacePicker state={state} L={L} />
+      <section className="panel stack" style={{ gap: '0.4rem' }}>
+        <div className="row" role="group" aria-label={L('Target surfaces', 'Ziel-Flächen')}>
+          <button
+            className={`chip${selIds.length === state.surfaces.length ? ' on' : ''}`}
+            onClick={() =>
+              setPicked(selIds.length === state.surfaces.length ? [] : state.surfaces.map((s) => s.id))
+            }
+          >
+            {L('All surfaces', 'Alle Flächen')}
+          </button>
+          {state.surfaces.map((s) => {
+            const on = selIds.includes(s.id);
+            return (
+              <button
+                key={s.id}
+                className={`chip${on ? ' on' : ''}`}
+                aria-pressed={on}
+                onClick={() => setPicked(on ? selIds.filter((x) => x !== s.id) : [...selIds, s.id])}
+              >
+                <span className="dot" style={{ background: kindColor(s.kind) }} />
+                {s.name}
+              </button>
+            );
+          })}
+        </div>
+        <div className="row">
+          <span className="muted small" style={{ flex: 1 }}>
+            {targets.length
+              ? L(
+                  'Single scenes and playlists go to the selected surfaces.',
+                  'Einzelne Szenen und Playlists gehen auf die gewählten Flächen.',
+                )
+              : L('Select at least one surface.', 'Wähle mindestens eine Fläche.')}
+          </span>
+          <button
+            className="btn small"
+            disabled={!targets.length}
+            onClick={() =>
+              void store.send({ t: 'surface.resetProgram', surfaceIds: targets.map((s) => s.id) })
+            }
+          >
+            ⏹ {L('Back to the programme', 'Zurück zum Programm')}
+          </button>
+        </div>
+      </section>
       <div className="row">
         {catalog.themes.map((t) => (
           <button
