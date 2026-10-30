@@ -9,6 +9,7 @@ import {
   type Surface,
 } from '@spectrastage/shared';
 import { useT, type Tr } from '../lib/i18n.tsx';
+import { ghostImagesFor } from '../lib/ghostImages.ts';
 import { useShow, useStore } from './store.ts';
 import { Slider, SurfacePicker, useSelection } from './ui.tsx';
 
@@ -276,6 +277,15 @@ export function ParamControl({
           />
         </label>
       );
+    case 'photo':
+      return (
+        <PhotoPicker
+          label={L.text(def.label)}
+          value={typeof value === 'string' ? value : ''}
+          onChange={onChange}
+          L={L}
+        />
+      );
     case 'select':
       return (
         <div>
@@ -296,4 +306,71 @@ export function ParamControl({
         </div>
       );
   }
+}
+
+/** Pick one of the guests' photos (ghost photos) – or none. */
+function PhotoPicker({
+  label,
+  value,
+  onChange,
+  L,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  L: Tr;
+}) {
+  const store = useStore();
+  const { state } = useShow();
+  const ghosts = state.ghosts ?? [];
+  const [urls, setUrls] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let alive = true;
+    const cache = ghostImagesFor(store.conn);
+    for (const g of ghosts) {
+      if (urls[g.id]) continue;
+      void cache.url(g.id).then((u) => {
+        if (alive && u) setUrls((m) => ({ ...m, [g.id]: u }));
+      });
+    }
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ghosts.map((g) => g.id).join(',')]);
+  return (
+    <div>
+      <div className="muted small" style={{ fontWeight: 600, marginBottom: 4 }}>
+        {label}
+      </div>
+      {!ghosts.length ? (
+        <p className="muted small" style={{ margin: 0 }}>
+          {L(
+            'No guest photos yet (take some with the ghost photo camera).',
+            'Noch keine Gäste-Fotos (mit der Geister-Foto-Kamera aufnehmen).',
+          )}
+        </p>
+      ) : (
+        <div className="ghost-grid">
+          <button
+            className={`ghost-thumb${!value ? ' on' : ''}`}
+            onClick={() => onChange('')}
+            aria-pressed={!value}
+          >
+            <span>✖</span>
+          </button>
+          {[...ghosts].reverse().map((g) => (
+            <button
+              key={g.id}
+              className={`ghost-thumb${value === g.id ? ' on' : ''}`}
+              onClick={() => onChange(g.id)}
+              aria-pressed={value === g.id}
+            >
+              {urls[g.id] ? <img src={urls[g.id]} alt="" /> : <span>👻</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

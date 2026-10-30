@@ -18,6 +18,8 @@ export type ParamDef =
     }
   | { key: string; label: LocalizedText; type: 'boolean'; default: boolean }
   | { key: string; label: LocalizedText; type: 'color'; default: string }
+  /** One of the show's guest photos (ghost photo id, '' = none / automatic). */
+  | { key: string; label: LocalizedText; type: 'photo'; default: string }
   | {
       key: string;
       label: LocalizedText;
@@ -162,6 +164,9 @@ export function sanitizeParams(defs: readonly ParamDef[], input: ParamValues | u
         break;
       case 'select':
         if (typeof v === 'string' && d.options.some((o) => o.value === v)) out[d.key] = v;
+        break;
+      case 'photo':
+        if (typeof v === 'string' && /^[A-Za-z0-9_-]{0,40}$/.test(v)) out[d.key] = v;
         break;
     }
   }

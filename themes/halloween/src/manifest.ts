@@ -64,6 +64,7 @@ function breakoutScene(
   description: [string, string],
   icon: string,
   colors: [string, string],
+  extra: ParamDef[] = [],
 ): SceneManifest {
   return {
     id,
@@ -83,6 +84,16 @@ function breakoutScene(
         default: 1,
       },
       {
+        key: 'ending',
+        label: L('At the end', 'Am Ende'),
+        type: 'select',
+        options: [
+          { value: 'rebuild', label: L('The wall builds itself up again', 'Die Wand mauert sich wieder zu') },
+          { value: 'fade', label: L('Fade out', 'Ausblenden') },
+        ],
+        default: 'rebuild',
+      },
+      {
         key: 'pause',
         label: L('Dark pause between appearances (s)', 'Dunkle Pause zwischen den Auftritten (s)'),
         type: 'number',
@@ -91,6 +102,7 @@ function breakoutScene(
         step: 1,
         default: 6,
       },
+      ...extra,
     ],
   };
 }
@@ -254,6 +266,50 @@ const scenes: SceneManifest[] = [
     ['wall'],
     '🏚️',
     ['#2b1a4a', '#ff8a1f'],
+  ),
+  breakoutScene(
+    'wallCouple',
+    ['Bloody bride & groom waltz (3D)', 'Blutiges Brautpaar tanzt (3D)'],
+    [
+      'Two holes break open, the bloody bride and groom step out, walk to each other and waltz in front of the wall – she twirls under his arm – then they bow and go back in; the wall builds itself up again.',
+      'Zwei Löcher brechen auf, die blutige Braut und der Bräutigam steigen heraus, gehen aufeinander zu und tanzen Walzer vor der Wand – sie dreht sich unter seinem Arm – dann verbeugen sie sich und gehen zurück; die Wand mauert sich wieder zu.',
+    ],
+    '💃',
+    ['#000000', '#ff2a2a'],
+    [
+      {
+        key: 'bridePhoto',
+        label: L("Bride's face (guest photo)", 'Gesicht der Braut (Gäste-Foto)'),
+        type: 'photo',
+        default: '',
+      },
+      {
+        key: 'groomPhoto',
+        label: L("Groom's face (guest photo)", 'Gesicht des Bräutigams (Gäste-Foto)'),
+        type: 'photo',
+        default: '',
+      },
+    ],
+  ),
+  breakoutScene(
+    'wallMummyWalk',
+    ['Mummy walks out (3D)', 'Mumie kommt heraus (3D)'],
+    [
+      'The wall bursts open to the floor, the mummy steps out, staggers towards you with its arms stretched out, screams and goes back in.',
+      'Die Wand bricht bis zum Boden auf, die Mumie steigt heraus, schlurft mit ausgestreckten Armen auf euch zu, schreit und geht zurück.',
+    ],
+    '🧟',
+    ['#000000', '#5dff8a'],
+  ),
+  breakoutScene(
+    'wallBuddyDance',
+    ['Cute monster dances (3D)', 'Süßes Monster tanzt (3D)'],
+    [
+      'The cute monster breaks out, waves hello, dances, jumps and waves goodbye – for kids.',
+      'Das süße Monster bricht heraus, winkt, tanzt, springt und winkt zum Abschied – für Kinder.',
+    ],
+    '🕺',
+    ['#000000', '#8a5cff'],
   ),
   breakoutScene(
     'wallMummy',

@@ -16,9 +16,9 @@ import type { SoundApi } from '@spectrastage/engine';
 
 type V3 = [number, number, number];
 
-const LOOP = 44;
+export const LOOP = 44;
 /** The dim lamp in the room (local units) – same as KEY in the shader. */
-const KEY_POS: V3 = [1.3, 1.7, 2.4];
+export const KEY_POS: V3 = [1.3, 1.7, 2.4];
 
 // ---------------------------------------------------------------------------
 // Small math helpers
@@ -68,7 +68,7 @@ const applyT = (R: M3, v: V3): V3 => [
  * Local frame of the monster (units: meters / size): x right along the wall, y up, z out of the
  * wall into the room; origin on the wall at the height of the head.
  */
-interface Frame {
+export interface Frame {
   /** Eye point (local). */
   ro: V3;
   /** Pixel (u, v from top) → local point on the wall: p0 + pu·u + pv·v. */
@@ -77,9 +77,11 @@ interface Frame {
   pv: V3;
   /** Floor height (local y). */
   floorY: number;
+  /** Meters per local unit. */
+  k: number;
 }
 
-function frameOf(s: DrawState): Frame {
+export function frameOf(s: DrawState): Frame {
   const w = s.world;
   const face = w?.room.faces.find((f) => f.id === w.self.id);
   if (!w || !face) {
@@ -94,6 +96,7 @@ function frameOf(s: DrawState): Frame {
       pu: [W / k, 0, 0],
       pv: [0, -H / k, 0],
       floorY: -hy / k,
+      k,
     };
   }
   const H = face.rect.h;
@@ -120,6 +123,7 @@ function frameOf(s: DrawState): Frame {
     pu: dirL(scale(ax, W)),
     pv: dirL(scale(face.ay as V3, H)),
     floorY: -hy / k,
+    k,
   };
 }
 
@@ -162,13 +166,13 @@ const KNOCKS = [1.0, 1.45, 1.9, 3.7, 4.1];
 const PUSHES = [9.4, 10.9, 12.3];
 
 /** Radius of the broken hole at angle th (same as holeR in the shader, for uHole = 1). */
-const holeR = (th: number) =>
+export const holeR = (th: number) =>
   0.62 + 0.06 * Math.sin(th * 3 + 1.3) + 0.04 * Math.sin(th * 7 + 0.4) + 0.025 * Math.sin(th * 13 + 2.1);
-const HOLE_C: [number, number] = [0, -0.08];
+export const HOLE_C: [number, number] = [0, -0.08];
 const norm = (v: V3): V3 => scale(v, 1 / (Math.hypot(...v) || 1));
 
 /** Two-bone arm: elbow from shoulder S, wrist W, bone lengths and the direction the elbow points. */
-function elbowIK(S: V3, W: V3, l1: number, l2: number, pole: V3): V3 {
+export function elbowIK(S: V3, W: V3, l1: number, l2: number, pole: V3): V3 {
   let d = sub(W, S);
   let dist = Math.hypot(...d);
   d = scale(d, 1 / (dist || 1));
@@ -229,18 +233,19 @@ function lookAngles(from: V3, to: V3): [number, number] {
   return [Math.atan2(d[0], d[2]), Math.atan2(d[1], Math.hypot(d[0], d[2]))];
 }
 
-function pose(a: number, cute: boolean, ro: V3): Pose {
-  // --- the wall
+function pose(a: number, cute: boolean, ro: V3, rebuild = true): Pose {
+  // --- the wall (and at the end: built up again – the bits fly back – or just faded out)
   const bulge = ease(a, 5, 8.5);
-  const crack = ease(a, 10.4, 13.4);
-  const hole = ease(a, 13.5, 13.95);
-  const debrisT = a >= 13.5 && a < 18 ? a - 13.5 : -1;
+  const crack = ease(a, 10.4, 13.4) * (rebuild ? 1 - ease(a, 42, 43.6) : 1);
+  const hole = ease(a, 13.5, 13.95) * (rebuild ? 1 - ease(a, 41, 42.4) : 1);
+  let debrisT = a >= 13.5 && a < 18 ? a - 13.5 : -1;
+  if (rebuild && a >= 39.6 && a < 42.2) debrisT = Math.max(0, 42.2 - a);
   const flash = a >= 13.5 ? Math.exp(-(a - 13.5) * 2.5) : 0;
   const glow =
     (0.18 * ease(a, 10.4, 13.4) + 0.82 * hole + 0.8 * flash) *
     (1 - ease(a, 38.5, 41.5)) *
     (0.9 + 0.1 * Math.sin(a * 13.1) * Math.sin(a * 7.3));
-  const fade = ease(a, 0, 1.2) * (1 - ease(a, 41.5, 44));
+  const fade = ease(a, 0, 1.2) * (1 - ease(a, rebuild ? 43 : 41.5, 44));
 
   // --- head
   let head: V3;
@@ -426,12 +431,32 @@ uniform vec3 uHandR; uniform mat3 uHandRM; uniform float uCurlR; uniform vec3 uE
 uniform vec3 uLook;
 uniform vec3 uRib1, uRib2;
 uniform float uPhoto, uPhotoA, uPhotoTilt, uHide;
+// holes: centre xy, size xy (1 = the standard hole); how far each is open; how many; bulge blobs
+uniform vec4 uH0, uH1;
+uniform vec2 uHO;
+uniform float uHN, uBlob, uBlobY;
 uniform vec3 uPhotoB;
 uniform vec2 uPhotoSize;
 uniform sampler2D uPhotoTex;
 uniform vec3 uGlowCol;
 
 #define HOLE_C vec2(0.0, -0.08)
+
+vec4 hh(int i) { return i == 0 ? uH0 : uH1; }
+float ho(int i) { return i == 0 ? uHO.x : uHO.y; }
+float baseR(float th) {
+  return 0.62 + 0.06 * sin(th * 3.0 + 1.3) + 0.04 * sin(th * 7.0 + 0.4) + 0.025 * sin(th * 13.0 + 2.1);
+}
+vec2 holeQ(vec2 xy, int i) { vec4 h = hh(i); return (xy - h.xy) / h.zw; }
+/** > 0 inside hole i (about meters). */
+float holeIn(vec2 xy, int i) {
+  vec4 h = hh(i);
+  vec2 q = holeQ(xy, i);
+  return (ho(i) * baseR(atan(q.y, q.x)) - length(q)) * min(h.z, h.w);
+}
+float holeAll(vec2 xy) { float v = holeIn(xy, 0); if (uHN > 1.5) v = max(v, holeIn(xy, 1)); return v; }
+/** Distance to the nearest hole centre, in hole sizes. */
+float holeNear(vec2 xy) { float d = length(holeQ(xy, 0)); if (uHN > 1.5) d = min(d, length(holeQ(xy, 1))); return d; }
 const vec3 KEY = vec3(1.3, 1.7, 2.4);
 
 float hash1(float n) { return fract(sin(n) * 43758.5453123); }
@@ -705,8 +730,18 @@ vec2 monster(vec3 p) {
 }
 
 // ---------------------------------------------------------------- the wall
-float holeR(float th) {
-  return uHole * (0.62 + 0.06 * sin(th * 3.0 + 1.3) + 0.04 * sin(th * 7.0 + 0.4) + 0.025 * sin(th * 13.0 + 2.1));
+/** Someone pressing against the wall from behind (head and shoulders) – for each hole. */
+vec2 blobs(vec3 p) {
+  float d = 1e5;
+  if (uHole > 0.0) return vec2(d, 2.0);
+  for (int i = 0; i < 2; i++) {
+    if (float(i) >= uHN) break;
+    vec3 c = vec3(hh(i).x, uBlobY, -0.36 + 0.3 * uBulge);
+    float b = sdEll(p - c, vec3(0.12, 0.15, 0.13));
+    b = smin(b, sdEll(p - c - vec3(0.0, -0.26, -0.06), vec3(0.25, 0.13, 0.12)), 0.08);
+    d = min(d, b);
+  }
+  return vec2(d, 2.0);
 }
 
 vec2 debris(vec3 p) {
@@ -717,7 +752,8 @@ vec2 debris(vec3 p) {
     float fi = float(i);
     float a = fi * 2.399 + 0.3;
     float r0 = 0.12 + 0.45 * hash1(fi * 3.1);
-    vec3 p0 = vec3(HOLE_C + vec2(cos(a), sin(a)) * r0, 0.02);
+    vec4 hq = hh(int(mod(fi, max(uHN, 1.0))));
+    vec3 p0 = vec3(hq.xy + vec2(cos(a), sin(a)) * r0 * hq.zw, 0.02);
     vec3 v = vec3(cos(a) * (0.4 + 0.5 * hash1(fi * 7.7)), 0.5 + 0.9 * hash1(fi * 5.3), 0.9 + 1.4 * hash1(fi * 1.9));
     vec3 c = p0 + v * t + vec3(0.0, -4.9, 0.0) * t * t;
     // bounce on the floor and come to rest
@@ -732,17 +768,14 @@ vec2 debris(vec3 p) {
 }
 
 vec2 map(vec3 p) {
-  vec2 m = monster(p);
+  vec2 m = uBlob > 0.5 ? blobs(p) : monster(p);
   if (uHole < 0.001) {
     // nothing broken yet: the wall is a membrane – whatever pushes against it bulges it out
     float w = smin(p.z, m.x + 0.012, 0.04 + 0.06 * uBulge);
     return vec2(w, 1.0);
   }
   float slab = max(p.z, -p.z - 0.09);
-  vec2 hp = p.xy - HOLE_C;
-  float r = length(hp);
-  float R = holeR(atan(hp.y, hp.x)) + (noise3(p * 40.0) - 0.5) * 0.03 * uHole;
-  vec2 res = vec2(max(slab, R - r), 1.0);
+  vec2 res = vec2(max(slab, holeAll(p.xy) + (noise3(p * 40.0) - 0.5) * 0.03 * uHole), 1.0);
   if (m.x < res.x) res = m;
   vec2 db = debris(p);
   if (db.x < res.x) res = db;
@@ -750,7 +783,7 @@ vec2 map(vec3 p) {
 }
 
 float mapM(vec3 p) {
-  float d = monster(p).x;
+  float d = (uBlob > 0.5 ? blobs(p) : monster(p)).x;
   if (uDebrisT >= 0.0) d = min(d, debris(p).x);
   return d;
 }
@@ -798,10 +831,10 @@ float crackSet(vec2 hp, float r, float N, float reach, float seed, float w) {
   }
   return best;
 }
-float cracks(vec2 xy) {
-  vec2 hp = xy - HOLE_C;
+float crackAt(vec2 hp, float open) {
+  vec2 xy = hp;
   float r = length(hp);
-  float reach = uCrack * 1.15 + uHole * 0.2;
+  float reach = uCrack * 1.15 + open * 0.2;
   if (r > reach + 0.05 || reach < 0.01) return 0.0;
   float d = crackSet(hp, r, 9.0, reach, 0.0, 0.004);
   d = min(d, crackSet(hp, r, 23.0, reach * 0.65, 11.0, 0.0025));
@@ -818,6 +851,11 @@ float cracks(vec2 xy) {
   float web = smoothstep(0.05, 0.0, d2 - d1) * smoothstep(reach * 0.45, reach * 0.15, r);
   float line = smoothstep(0.0015, -0.001, d);
   return max(line, web) * smoothstep(reach + 0.02, reach - 0.05, r);
+}
+float cracks(vec2 xy) {
+  float c = crackAt(holeQ(xy, 0), uHO.x);
+  if (uHN > 1.5) c = max(c, crackAt(holeQ(xy, 1) + 3.7, uHO.y) * step(0.0, 1.0));
+  return c;
 }
 
 vec3 skinAlbedo(vec3 p) {
@@ -849,13 +887,16 @@ vec3 light(vec3 p, vec3 n, vec3 rd, vec3 alb, float spec, float gloss, float sss
   vec3 hk = normalize(lk - rd);
   col += kc * spec * pow(max(dot(n, hk), 0.0), gloss) * sh * step(0.0, ndl);
   // glow from inside the wall (through the hole)
-  vec3 gp = vec3(HOLE_C, -0.4) - p;
-  float dg = length(gp);
-  gp /= dg;
-  float att = uGlow / (1.0 + 6.0 * dg * dg);
-  float gd = max(dot(n, gp), 0.0);
-  col += alb * uGlowCol * att * (gd + sss * 0.5 * max(-dot(n, gp) + 0.3, 0.0)) * (isWall > 0.5 ? 0.5 : 2.2);
-  col += uGlowCol * att * spec * pow(max(dot(n, normalize(gp - rd)), 0.0), gloss) * 1.5;
+  for (int i = 0; i < 2; i++) {
+    if (float(i) >= uHN) break;
+    vec3 gp = vec3(hh(i).xy, -0.4) - p;
+    float dg = length(gp);
+    gp /= dg;
+    float att = uGlow / (1.0 + 6.0 * dg * dg);
+    float gd = max(dot(n, gp), 0.0);
+    col += alb * uGlowCol * att * (gd + sss * 0.5 * max(-dot(n, gp) + 0.3, 0.0)) * (isWall > 0.5 ? 0.5 : 2.2);
+    col += uGlowCol * att * spec * pow(max(dot(n, normalize(gp - rd)), 0.0), gloss) * 1.5;
+  }
   // the eyes light the face a little
   if (uCute < 0.5) {
     vec3 ep = uHead + vec3(0.0, 0.025, 0.15) - p;
@@ -880,10 +921,10 @@ void main() {
   // flat wall far away from everything: no marching needed
   float twall = -ro.z / rd.z;
   vec3 hw = ro + rd * twall;
-  float far = length(hw.xy - HOLE_C);
+  float far = holeNear(hw.xy);
   bool debrisOn = uDebrisT >= 0.0;
   float tHit = 1e9;
-  if (far > 1.75 && !(debrisOn && abs(hw.x) < 1.8)) {
+  if (far > 1.75 && !(debrisOn && far < 2.8)) {
     // the plain wall stays black (the real wall)
     col = vec3(0.0);
     tHit = twall;
@@ -900,7 +941,7 @@ void main() {
     }
     if (mat < 0.0) {
       // into the dark behind the wall: the glow in the depth
-      float r = length(hw.xy - HOLE_C);
+      float r = far;
       float fl = 0.75 + 0.25 * noise3(vec3(hw.xy * 4.0, uTime * 1.5));
       col = uGlowCol * uGlow * fl * (0.02 + 0.22 * exp(-r * r * 9.0)) * mix(0.4, 1.0, noise3(vec3(hw.xy * 6.0, 2.0)));
     } else {
@@ -917,7 +958,7 @@ void main() {
         alb *= 1.0 - 0.85 * c;
         col = light(p, n, rd, alb, 0.0, 8.0, 0.0, 1.0) * ao;
         // glowing cracks
-        col += uGlowCol * c * uGlow * 0.3 * smoothstep(0.8, 0.0, length(p.xy - HOLE_C));
+        col += uGlowCol * c * uGlow * 0.3 * smoothstep(0.8, 0.0, holeNear(p.xy));
       } else if (mat < 2.5) {
         if (uCute > 0.5) {
           col = light(p, n, rd, skinAlbedo(p), 0.05, 6.0, 0.7, 0.0) * ao * ao;
@@ -1005,7 +1046,7 @@ void main() {
   // dust cloud after the burst, embers / sparkles drifting out of the hole
   if (uDebrisT >= 0.0) {
     float dt = uDebrisT;
-    float r = length(hw.xy - HOLE_C);
+    float r = far;
     float dust = fbm3(vec3(hw.xy * 3.0 - vec2(0.0, -dt * 0.3), dt * 0.4)) * exp(-r * r * 1.2) * exp(-dt * 0.9) * smoothstep(0.0, 0.15, dt);
     col += (uCute > 0.5 ? vec3(0.5, 0.47, 0.44) : vec3(0.55, 0.48, 0.36)) * dust * (0.12 + 0.3 * uGlow * (uCute > 0.5 ? 0.6 : 1.0));
   }
@@ -1015,7 +1056,8 @@ void main() {
       float life = 3.0 + 2.0 * hash1(fi * 4.1);
       float age = mod(uTime + hash1(fi * 2.3) * life, life);
       float a = fi * 2.399;
-      vec2 s = HOLE_C + vec2(cos(a), sin(a)) * (0.15 + 0.4 * hash1(fi)) * (0.4 + age * 0.3);
+      vec4 hq = hh(int(mod(fi, max(uHN, 1.0))));
+      vec2 s = hq.xy + vec2(cos(a), sin(a)) * (0.15 + 0.4 * hash1(fi)) * (0.4 + age * 0.3) * hq.zw;
       s.y += uCute > 0.5 ? age * 0.08 * sin(fi) : -age * 0.18;
       s.x += sin(age * 2.0 + fi) * 0.04;
       float k = exp(-dot(hw.xy - s, hw.xy - s) / (uCute > 0.5 ? 0.00012 : 0.00005));
@@ -1037,11 +1079,11 @@ void main() {
 // Scene modules
 // ---------------------------------------------------------------------------
 const v3 = (v: V3) => new THREE.Vector3(v[0], v[1], v[2]);
-const speedOf = (s: DrawState) => Math.max(0.2, Number(s.params.speed ?? 1));
-const pauseOf = (s: DrawState) => Math.max(0, Number(s.params.pause ?? 6));
+export const speedOf = (s: DrawState) => Math.max(0.2, Number(s.params.speed ?? 1));
+export const pauseOf = (s: DrawState) => Math.max(0, Number(s.params.pause ?? 6));
 
 /** The scene clock as last rendered (for the sound, which runs outside the render loop). */
-const clocks: Record<string, { time: number; at: number; speed: number; loop: number }> = {};
+export const clocks: Record<string, { time: number; at: number; speed: number; loop: number }> = {};
 
 export function uniformsFor(id: string, cute: boolean, guest?: GuestPhoto, figure?: GlbFigure, glow?: V3) {
   return (s: DrawState, f: { time: number }) => {
@@ -1050,7 +1092,7 @@ export function uniformsFor(id: string, cute: boolean, guest?: GuestPhoto, figur
     const loop = LOOP + pauseOf(s);
     clocks[id] = { time: f.time, at: performance.now(), speed, loop };
     const a = (f.time * speed) % loop;
-    const P = pose(a, cute, F.ro);
+    const P = pose(a, cute, F.ro, s.params.ending !== 'fade');
     // arms: shoulder → elbow → wrist; the elbow relaxed (down, out, back) unless gripping
     const sl: V3 = add(P.body, [-0.27, 0.07, 0]);
     const sr: V3 = add(P.body, [0.27, 0.07, 0]);
@@ -1113,12 +1155,18 @@ export function uniformsFor(id: string, cute: boolean, guest?: GuestPhoto, figur
         ? guest.uniforms(a, Math.floor((f.time * speed) / loop))
         : { uPhoto: 0, uPhotoA: 0, uPhotoTex: NO_TEX as unknown as number }),
       // a real 3D model takes over once the wall is open (the drawn one only makes the bulge)
+      uH0: new THREE.Vector4(HOLE_C[0], HOLE_C[1], 1, 1),
+      uH1: new THREE.Vector4(0, 0, 1, 1),
+      uHO: new THREE.Vector2(P.hole, 0),
+      uHN: 1,
+      uBlob: 0,
+      uBlobY: 0,
       uHide: figure?.update(P, F, a) || (guest?.has(Math.floor((f.time * speed) / loop)) ?? false) ? 1 : 0,
     };
   };
 }
 
-interface Cue {
+export interface Cue {
   at: number;
   play: (snd: SoundApi) => void;
 }
@@ -1207,7 +1255,7 @@ const GUEST_SOUND: Cue[] = [
   { at: 35.5, play: (s) => s.whoosh({ duration: 2.0, from: 400, to: 80, gain: 0.3 }) },
 ];
 
-function soundFor(id: string, cues: Cue[]) {
+export function soundFor(id: string, cues: Cue[]) {
   return (snd: SoundApi) => {
     let last = -1;
     const timer = window.setInterval(() => {
@@ -1232,12 +1280,76 @@ function soundFor(id: string, cues: Cue[]) {
 // Real 3D figures (rigged GLB, Mixamo skeleton)
 // ---------------------------------------------------------------------------
 const HOLE_GLSL = /* glsl */ `
-uniform float uHoleOpen;
+uniform vec4 uH0, uH1;
+uniform vec2 uHO;
+uniform float uHN;
 varying vec3 vWallPos;
 `;
 
+/** The holes in the wall, shared by the wall shader settings and the figures' materials. */
+export interface HoleUniforms {
+  uH0: { value: THREE.Vector4 };
+  uH1: { value: THREE.Vector4 };
+  uHO: { value: THREE.Vector2 };
+  uHN: { value: number };
+}
+export function makeHoles(): HoleUniforms {
+  return {
+    uH0: { value: new THREE.Vector4(HOLE_C[0], HOLE_C[1], 1, 1) },
+    uH1: { value: new THREE.Vector4(0, 0, 1, 1) },
+    uHO: { value: new THREE.Vector2(0, 0) },
+    uHN: { value: 1 },
+  };
+}
+
+/**
+ * A figure's material: hidden behind the wall except through a hole, darker deeper inside.
+ * `extra` may add uniforms / code (e.g. a guest's face).
+ */
+export function occludeMaterial(
+  mat: THREE.MeshStandardMaterial,
+  holes: HoleUniforms,
+  extra?: (sh: THREE.WebGLProgramParametersWithUniforms) => void,
+) {
+  mat.side = THREE.FrontSide;
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, holes);
+    sh.vertexShader =
+      HOLE_GLSL +
+      sh.vertexShader.replace(
+        '#include <project_vertex>',
+        '#include <project_vertex>\n  vWallPos = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+      );
+    sh.fragmentShader =
+      HOLE_GLSL +
+      sh.fragmentShader
+        .replace(
+          '#include <clipping_planes_fragment>',
+          `#include <clipping_planes_fragment>
+  if (vWallPos.z < 0.0) {
+    float inside = -1.0;
+    for (int i = 0; i < 2; i++) {
+      if (float(i) >= uHN) break;
+      vec4 h = i == 0 ? uH0 : uH1;
+      vec2 q = (vWallPos.xy - h.xy) / h.zw;
+      float th = atan(q.y, q.x);
+      float R = (i == 0 ? uHO.x : uHO.y) * (0.62 + 0.06 * sin(th * 3.0 + 1.3) + 0.04 * sin(th * 7.0 + 0.4) + 0.025 * sin(th * 13.0 + 2.1));
+      inside = max(inside, (R - length(q)) * min(h.z, h.w) - 0.015);
+    }
+    if (inside < 0.0) discard;
+  }`,
+        )
+        .replace(
+          '#include <dithering_fragment>',
+          '#include <dithering_fragment>\n  gl_FragColor.rgb *= mix(1.0, 0.3, smoothstep(0.0, -0.6, vWallPos.z));',
+        );
+    extra?.(sh);
+  };
+  mat.needsUpdate = true;
+}
+
 /** Shared tone curve + gamma (as the wall shader) for drawing the figure over the wall. */
-const COMPOSITE_FRAG = /* glsl */ `
+export const COMPOSITE_FRAG = /* glsl */ `
 uniform sampler2D map;
 uniform float uFade;
 varying vec2 vUv;
@@ -1252,7 +1364,7 @@ void main() {
 `;
 
 const loaders: Record<string, Promise<THREE.Group | null>> = {};
-function loadModel(url: string): Promise<THREE.Group | null> {
+export function loadModel(url: string): Promise<THREE.Group | null> {
   return (loaders[url] ??= import('three/examples/jsm/loaders/GLTFLoader.js')
     .then(({ GLTFLoader }) => new GLTFLoader().loadAsync(url))
     .then((g) => g.scene)
@@ -1264,7 +1376,7 @@ function loadModel(url: string): Promise<THREE.Group | null> {
 
 const qv = (v: V3) => new THREE.Vector3(v[0], v[1], v[2]);
 /** A 1×1 placeholder so no sampler is left unbound. */
-const NO_TEX = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1);
+export const NO_TEX = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1);
 NO_TEX.needsUpdate = true;
 
 interface ArmRig {
@@ -1306,7 +1418,7 @@ export class GlbFigure {
   private quad: THREE.Mesh | null = null;
   private quadScene = new THREE.Scene();
   private ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-  private holeU = { value: 0 };
+  private holes = makeHoles();
   private glowLight = new THREE.PointLight(0xffffff, 0, 0, 2);
   private key = new THREE.DirectionalLight(0xfff0dd, 1.6);
   private fill = new THREE.HemisphereLight(0x8899bb, 0x110808, 0.25);
@@ -1344,7 +1456,7 @@ export class GlbFigure {
         );
         m.bind(m.skeleton, m.bindMatrix);
         const mats = Array.isArray(m.material) ? m.material : [m.material];
-        for (const mat of mats) this.occlude(mat as THREE.MeshStandardMaterial);
+        for (const mat of mats) occludeMaterial(mat as THREE.MeshStandardMaterial, this.holes);
       }
     });
     this.bones = byName;
@@ -1405,43 +1517,11 @@ export class GlbFigure {
     this.root.add(g);
   }
 
-  /** Hide the parts behind the wall (except through the hole); darker deeper inside. */
-  private occlude(mat: THREE.MeshStandardMaterial) {
-    mat.side = THREE.FrontSide;
-    mat.onBeforeCompile = (sh) => {
-      sh.uniforms.uHoleOpen = this.holeU;
-      sh.vertexShader =
-        HOLE_GLSL +
-        sh.vertexShader.replace(
-          '#include <project_vertex>',
-          '#include <project_vertex>\n  vWallPos = (modelMatrix * vec4(transformed, 1.0)).xyz;',
-        );
-      sh.fragmentShader =
-        HOLE_GLSL +
-        sh.fragmentShader
-          .replace(
-            '#include <clipping_planes_fragment>',
-            `#include <clipping_planes_fragment>
-  if (vWallPos.z < 0.0) {
-    vec2 hp = vWallPos.xy - vec2(${HOLE_C[0].toFixed(3)}, ${HOLE_C[1].toFixed(3)});
-    float th = atan(hp.y, hp.x);
-    float R = uHoleOpen * (0.62 + 0.06 * sin(th * 3.0 + 1.3) + 0.04 * sin(th * 7.0 + 0.4) + 0.025 * sin(th * 13.0 + 2.1));
-    if (length(hp) > R - 0.015) discard;
-  }`,
-          )
-          .replace(
-            '#include <dithering_fragment>',
-            '#include <dithering_fragment>\n  gl_FragColor.rgb *= mix(1.0, 0.3, smoothstep(0.0, -0.6, vWallPos.z));',
-          );
-    };
-    mat.needsUpdate = true;
-  }
-
   /** Puts the figure into the pose; true when it is shown (the wall is open and it has loaded). */
   update(P: Pose, F: Frame, a: number): boolean {
     this.visible = !!(this.model && this.arms && P.hole > 0.001 && a >= 13.5);
     this.fade = P.fade;
-    this.holeU.value = P.hole;
+    this.holes.uHO.value.set(P.hole, 0);
     this.glowLight.color.setRGB(this.glow[0], this.glow[1], this.glow[2]);
     this.glowLight.intensity = P.glow * 1.2;
     // camera: from the eye point through the wall rectangle (off-axis)
@@ -1647,7 +1727,7 @@ export class GlbFigure {
 }
 
 /** Rotation whose x/y/z axes are (y × z, y, z) for the given y (fingers) and z (palm). */
-function basisQ(y: THREE.Vector3, z: THREE.Vector3): THREE.Quaternion {
+export function basisQ(y: THREE.Vector3, z: THREE.Vector3): THREE.Quaternion {
   const Y = y.clone().normalize();
   const Z = z
     .clone()

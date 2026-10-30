@@ -119,6 +119,12 @@ Everything is done from the phone (Stage → 3D room); nothing has to be set on 
   Mummy, cute monster and bloody groom are real rigged 3D models (`apps/web/public/models/*.glb`,
   Mixamo skeleton in T-pose, e.g. from Meshy; shrink new ones with `scripts/optimize-glb.py in.glb
   out.glb`); the scene places them, turns the head and solves the arms itself.
+  Full-body shows (**Bloody bride & groom waltz**, **Mummy walks out**, **Cute monster dances**):
+  door-high holes, the figures step out, move procedurally on their skeleton (stepping feet,
+  real elbow / knee hinges, the couple holding each other) and go back in; at the end the wall
+  builds itself up again (or fades out – scene setting). The couple scene takes two guest photos
+  whose faces are projected onto the bride's and groom's heads. The bride model goes to
+  `apps/web/public/models/bride.glb` (rigged); without it the groom dances alone.
   The 3D wall scenes **Mummy breaks out** / **Cute monster peeks out** / **Guests break out** (the
   newest ghost photos come out of the wall one per round) (wall scenes, dark wall,
   ~50 s loop with sound; tempo and dark pause adjustable) are rendered from the same standpoint, so

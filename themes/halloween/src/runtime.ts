@@ -2,6 +2,7 @@ import type { SceneModule, ThemeRuntime } from '@spectrastage/engine';
 import { withObjectScale } from './shapes.ts';
 import { wallScenes } from './scenes/wall.ts';
 import { wallMonsterScenes } from './scenes/wallMonster.ts';
+import { wallShowScenes } from './scenes/wallShow.ts';
 import { floorScenes } from './scenes/floor.ts';
 import { neonScenes } from './scenes/neon.ts';
 import { darkScenes } from './scenes/dark.ts';
@@ -14,6 +15,7 @@ const parts: Record<string, SceneModule> = Object.fromEntries(
   [
     ...wallScenes,
     ...wallMonsterScenes,
+    ...wallShowScenes,
     ...floorScenes,
     ...neonScenes,
     ...darkScenes,
