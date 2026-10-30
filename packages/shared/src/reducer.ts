@@ -629,6 +629,9 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       state.ghosts = (state.ghosts ?? []).filter((g) => g.id !== cmd.ghostId);
       state.ghostFlights = (state.ghostFlights ?? []).filter((f) => f.ghostId !== cmd.ghostId);
       return res('ghost deleted');
+    case 'video.delete':
+      state.videos = (state.videos ?? []).filter((v) => v.id !== cmd.id);
+      return res('video deleted');
     case 'ghost.deleteAll':
       state.ghosts = [];
       state.ghostFlights = [];
@@ -733,7 +736,7 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       const speed = typeof params.speed === 'number' && params.speed > 0 ? params.speed : 1;
       const seed = ctx.newSeed();
       const startedAt = ctx.now + lead;
-      const endAt = startedAt + ((scene.oneShotSec ?? 60) * 1000) / speed;
+      const endAt = startedAt + ((cmd.sec ?? scene.oneShotSec ?? 60) * 1000) / speed;
       for (const s of surfaces(cmd.surfaceIds))
         s.insert = {
           id: `${seed.toString(36)}${state.surfaces.indexOf(s)}`,

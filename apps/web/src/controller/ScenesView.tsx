@@ -249,7 +249,43 @@ function InsertPanel({
   const store = useStore();
   const [pick, setPick] = useState<string | null>(null);
   const [params, setParams] = useState<ParamValues>({});
-  const sc = scenes.find((x) => x.id === pick);
+  // uploaded videos (e.g. Kling): each is its own tile, played by the video player scene
+  const player = catalog.themes
+    .flatMap((t) => t.scenes.map((x) => ({ t, x })))
+    .find(({ x }) => x.params.some((p) => p.type === 'video'));
+  const video = pick?.startsWith('video:')
+    ? (state.videos ?? []).find((v) => `video:${v.id}` === pick)
+    : undefined;
+  const sc = video ? player?.x : scenes.find((x) => x.id === pick);
+  const [upload, setUpload] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const onFile = async (f: File) => {
+    // the length from the file itself (the show needs it to know when to go on)
+    const sec = await new Promise<number>((res) => {
+      const v = document.createElement('video');
+      v.preload = 'metadata';
+      v.onloadedmetadata = () => res(Number.isFinite(v.duration) ? v.duration : 10);
+      v.onerror = () => res(10);
+      v.src = URL.createObjectURL(f);
+    });
+    const name = f.name.replace(/\.[^.]+$/, '').slice(0, 80) || 'Video';
+    setUpload('0 %');
+    const xhr = new XMLHttpRequest();
+    xhr.open(
+      'POST',
+      `/api/videos?name=${encodeURIComponent(name)}&sec=${Math.min(600, Math.max(0.5, sec)).toFixed(2)}`,
+    );
+    xhr.setRequestHeader('authorization', `Bearer ${store.conn.authToken}`);
+    xhr.setRequestHeader('content-type', f.type || 'video/mp4');
+    xhr.upload.onprogress = (e) =>
+      e.lengthComputable && setUpload(`${Math.round((e.loaded / e.total) * 100)} %`);
+    xhr.onload = () =>
+      setUpload(
+        xhr.status < 300 ? null : L('Upload failed', 'Hochladen fehlgeschlagen') + ` (${xhr.status})`,
+      );
+    xhr.onerror = () => setUpload(L('Upload failed', 'Hochladen fehlgeschlagen'));
+    xhr.send(f);
+  };
   // without a selection: the main wall
   const main = state.surfaces.find((s) => s.role === 'main') ?? state.surfaces.find((s) => s.kind === 'wall');
   // rehearsed shows play only on their own sides (the others keep their programme)
@@ -272,39 +308,104 @@ function InsertPanel({
         </span>
       </div>
       <div className="tiles">
-        {scenes.map((x) => (
+        {scenes
+          .filter((x) => !x.params.some((p) => p.type === 'video'))
+          .map((x) => (
+            <button
+              key={x.id}
+              className={`tile scene-tile${pick === x.id ? ' active' : ''}`}
+              style={{ background: `linear-gradient(135deg, ${x.colors[0]}, ${x.colors[1]})` }}
+              onClick={() => {
+                setPick(pick === x.id ? null : x.id);
+                setParams(sanitizeParams(x.params, {}));
+              }}
+              title={L.text(x.description)}
+            >
+              <span className="ti" aria-hidden="true">
+                {x.icon}
+              </span>
+              {L.text(x.name)}
+            </button>
+          ))}
+        {player &&
+          (state.videos ?? []).map((v) => (
+            <button
+              key={v.id}
+              className={`tile scene-tile${pick === `video:${v.id}` ? ' active' : ''}`}
+              style={{ background: 'linear-gradient(135deg, #000000, #3a6cff)' }}
+              onClick={() => {
+                setPick(pick === `video:${v.id}` ? null : `video:${v.id}`);
+                setParams(sanitizeParams(player.x.params, {}));
+              }}
+              title={v.name}
+            >
+              <span className="ti" aria-hidden="true">
+                🎥
+              </span>
+              {v.name} ({Math.round(v.sec)} s)
+            </button>
+          ))}
+        {player && (
           <button
-            key={x.id}
-            className={`tile scene-tile${pick === x.id ? ' active' : ''}`}
-            style={{ background: `linear-gradient(135deg, ${x.colors[0]}, ${x.colors[1]})` }}
-            onClick={() => {
-              setPick(pick === x.id ? null : x.id);
-              setParams(sanitizeParams(x.params, {}));
-            }}
-            title={L.text(x.description)}
+            className="tile scene-tile"
+            onClick={() => fileRef.current?.click()}
+            disabled={!!upload && upload.endsWith('%')}
           >
             <span className="ti" aria-hidden="true">
-              {x.icon}
+              ⬆
             </span>
-            {L.text(x.name)}
+            {upload && upload.endsWith('%')
+              ? `${L('Uploading', 'Lädt hoch')} ${upload}`
+              : L('Upload a video', 'Video hochladen')}
           </button>
-        ))}
+        )}
       </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="video/mp4,video/webm,video/quicktime"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (f) void onFile(f);
+        }}
+      />
+      {upload && !upload.endsWith('%') && <p className="safety-note small">{upload}</p>}
       {sc && (
         <div className="stack" style={{ marginTop: '0.6rem' }}>
           <span className="muted small">{L.text(sc.description)}</span>
           <span className="small">
             {L('Plays on', 'Läuft auf')}: {on.map((x) => x.name).join(', ') || '–'}
           </span>
-          {sc.params.map((p) => (
-            <ParamControl
-              key={p.key}
-              def={p}
-              value={params[p.key]}
-              onChange={(v) => setParams((o) => ({ ...o, [p.key]: v }))}
-              L={L}
-            />
-          ))}
+          {video && (
+            <div className="row">
+              <span className="small" style={{ flex: 1 }}>
+                🎥 {video.name} · {Math.round(video.sec)} s
+              </span>
+              <button
+                className="btn small ghost"
+                onClick={() => {
+                  if (!window.confirm(L('Delete this video?', 'Dieses Video löschen?'))) return;
+                  void store.send({ t: 'video.delete', id: video.id });
+                  setPick(null);
+                }}
+              >
+                🗑 {L('Delete', 'Löschen')}
+              </button>
+            </div>
+          )}
+          {sc.params
+            .filter((p) => p.type !== 'video')
+            .map((p) => (
+              <ParamControl
+                key={p.key}
+                def={p}
+                value={params[p.key]}
+                onChange={(v) => setParams((o) => ({ ...o, [p.key]: v }))}
+                L={L}
+              />
+            ))}
           <button
             className="btn primary"
             disabled={!on.length}
@@ -312,9 +413,10 @@ function InsertPanel({
               void store.send({
                 t: 'surface.insert',
                 surfaceIds: on.map((s) => s.id),
-                themeId,
+                themeId: video && player ? player.t.id : themeId,
                 sceneId: sc.id,
-                params,
+                params: video ? { ...params, video: video.id } : params,
+                ...(video ? { sec: Math.min(600, Math.max(1, video.sec + 0.5)) } : {}),
               })
             }
           >

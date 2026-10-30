@@ -20,6 +20,8 @@ export type ParamDef =
   | { key: string; label: LocalizedText; type: 'color'; default: string }
   /** One of the show's guest photos (ghost photo id, '' = none / automatic). */
   | { key: string; label: LocalizedText; type: 'photo'; default: string }
+  /** One of the show's uploaded videos (video id). */
+  | { key: string; label: LocalizedText; type: 'video'; default: string }
   | {
       key: string;
       label: LocalizedText;
@@ -180,6 +182,7 @@ export function sanitizeParams(defs: readonly ParamDef[], input: ParamValues | u
         if (typeof v === 'string' && d.options.some((o) => o.value === v)) out[d.key] = v;
         break;
       case 'photo':
+      case 'video':
         if (typeof v === 'string' && /^[A-Za-z0-9_-]{0,40}$/.test(v)) out[d.key] = v;
         break;
     }

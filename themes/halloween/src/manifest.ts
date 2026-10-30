@@ -310,6 +310,36 @@ const scenes: SceneManifest[] = [
     ['#000000', '#5dff8a'],
   ),
   {
+    // plays an uploaded video (e.g. made with Kling) once on the main wall – every video is its
+    // own tile under "Play in once"
+    id: 'wallVideo',
+    name: L('Video', 'Video'),
+    description: L(
+      'Plays an uploaded video once on the main wall.',
+      'Spielt ein hochgeladenes Video einmal auf der Hauptwand.',
+    ),
+    kinds: ['wall'],
+    icon: '🎥',
+    colors: ['#000000', '#3a6cff'],
+    oneShotSec: 10,
+    sides: ['main'],
+    params: [
+      { key: 'video', label: L('Video', 'Video'), type: 'video', default: '' },
+      {
+        key: 'fit',
+        label: L('Picture', 'Bild'),
+        type: 'select',
+        options: [
+          { value: 'cover', label: L('Fill the wall (crop)', 'Wand füllen (beschneiden)') },
+          { value: 'contain', label: L('Whole video (black edges)', 'Ganzes Video (schwarze Ränder)') },
+          { value: 'stretch', label: L('Stretch to the wall', 'Auf die Wand ziehen') },
+        ],
+        default: 'cover',
+      },
+      { key: 'sound', label: L('Sound of the video', 'Ton des Videos'), type: 'boolean', default: true },
+    ],
+  },
+  {
     id: 'wallWitch',
     name: L('Little witch magic show (3D)', 'Kleine Hexe zaubert (3D)'),
     description: L(

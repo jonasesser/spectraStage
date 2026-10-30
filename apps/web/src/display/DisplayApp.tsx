@@ -6,6 +6,7 @@ import { formatCode, normalizeCode, type SessionState } from '@spectrastage/shar
 import { Connection, type ConnStatus } from '../lib/connection.ts';
 import { ZombieReceiver } from './zombie.ts';
 import { ghostImagesFor } from '../lib/ghostImages.ts';
+import { showVideosFor } from '../lib/videos.ts';
 import type { ApiError } from '../lib/api.ts';
 import { api } from '../lib/api.ts';
 import { KEYS, storage } from '../lib/storage.ts';
@@ -275,14 +276,19 @@ function Projection({
     if (!c || !r) return;
     const z = new ZombieReceiver(c, r);
     r.setGhostImages(ghostImagesFor(c).get);
+    r.setVideos(showVideosFor(c).url);
     return () => {
       r.setGhostImages(null);
+      r.setVideos(null);
       z.dispose();
     };
   }, [slot, renderMode]);
 
   useEffect(() => {
     rendererRef.current?.setState(phase === 'run' ? state : null, outputId);
+    // the show's videos are loaded ahead on every projector PC
+    const c = connRef.current;
+    if (c && state) showVideosFor(c).sync((state.videos ?? []).map((v) => v.id));
     if (state) soundRef.current.setVolume(state.masterVolume * (output?.volume ?? 0.8), state.muted);
   }, [state, outputId, output?.volume, phase]);
 

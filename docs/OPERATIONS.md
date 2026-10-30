@@ -283,3 +283,8 @@ Jeder Durchlauf wird zufällig zusammengestellt:
 - **Abgang:** Sie zaubert sich in einer Funkenspirale weg, wenn sie per Besen kam. Sonst fliegt sie auf dem Besen davon, in die Ferne hinter der rechten Wand.
 
 Optional legt der Parameter „Gesicht der Hexe“ ein Gäste-Foto auf ihr Gesicht. Modell: `apps/web/public/models/witch.glb`.
+
+## Videos (z. B. Kling)
+
+Szenen → 🎬 Einmalig einspielen → **⬆ Video hochladen** (mp4 oder webm, bis 250 MB). Jedes Video wird eine eigene Kachel 🎥. Antippen → Bild (Wand füllen / ganzes Video / auf die Wand ziehen), Ton an/aus → „Jetzt einspielen“. Es läuft einmal auf der Hauptwand, danach geht das Programm weiter. Alle Beamer-PCs laden die Videos vorab, damit sie sofort starten. Löschen: Kachel antippen → 🗑.
+Hinweis: Läuft der Server hinter einem Proxy (Easypanel), muss dessen Upload-Grenze groß genug sein.

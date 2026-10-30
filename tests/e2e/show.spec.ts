@@ -112,7 +112,7 @@ test('projector calibration: place the garage door and a lamp with the cross', a
     .getByRole('button', { name: /Kalibrieren|Einmessen/ })
     .first()
     .click();
-  await phone.getByRole('button', { name: /Tor, Strahler, Kürbisse/ }).click();
+  await phone.getByRole('button', { name: /Platzieren/ }).click();
   await expect(phone.getByText(/oranges Kreuz/)).toBeVisible();
   // the cross starts in the middle of the picture: take it as the top left of the door,
   // move it right and down, take it as the bottom right
@@ -139,5 +139,37 @@ test('projector calibration: place the garage door and a lamp with the cross', a
   await garage.waitForTimeout(800);
   await garage.screenshot({ path: 'test-results/garage-place.png' });
   await phone.screenshot({ path: 'test-results/phone-place.png', fullPage: true });
+  expect(errors).toEqual([]);
+});
+
+test('a video (e.g. Kling) is uploaded and played in once on the main wall', async ({ browser }) => {
+  const { phone, code } = await createShow(browser);
+  const garage = await openDisplay(browser, code, 'Garage');
+  await approve(phone, 'Garage');
+  await expect(garage.getByText(/Warte auf Freigabe/)).toBeHidden({ timeout: 10_000 });
+  const errors: string[] = [];
+  garage.on('pageerror', (e) => errors.push(e.message));
+  phone.on('pageerror', (e) => errors.push(e.message));
+  await phone
+    .getByRole('button', { name: /Szenen/ })
+    .first()
+    .click();
+  await phone
+    .locator('input[type=file][accept*="video"]')
+    .setInputFiles('tests/e2e/fixtures/kling-test.webm');
+  const tile = phone.locator('.tile', { hasText: /kling-test/ });
+  await expect(tile).toBeVisible({ timeout: 20_000 });
+  await tile.click();
+  await phone.getByRole('button', { name: /Jetzt einspielen/ }).click();
+  await expect
+    .poll(
+      () => garage.evaluate(() => (globalThis as { __ssVideo?: { ready: number } }).__ssVideo?.ready ?? -1),
+      {
+        timeout: 30_000,
+      },
+    )
+    .toBeGreaterThanOrEqual(2);
+  await garage.waitForTimeout(800);
+  await garage.screenshot({ path: 'test-results/garage-video.png' });
   expect(errors).toEqual([]);
 });

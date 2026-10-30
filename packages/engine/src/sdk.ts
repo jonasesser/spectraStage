@@ -50,6 +50,12 @@ export interface SceneContext {
    * picture once loaded (null while loading – call again later).
    */
   photos?: ScenePhotos;
+  /** The show's uploaded videos: a playable (local) URL once loaded, null while loading. */
+  videos?: SceneVideos;
+}
+
+export interface SceneVideos {
+  url(id: string): string | null;
 }
 
 export interface ScenePhotos {

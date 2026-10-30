@@ -1,8 +1,19 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
-import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import {
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+} from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import { Transform } from 'node:stream';
+import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import {
   ClientMessageSchema,
@@ -43,6 +54,22 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
   const store = new Store(config.databasePath);
   const hub = new Hub(store, config, catalog, app.log);
   const limiter = createLimiter(config.testMode);
+  // uploaded videos live next to the database, one folder per show
+  const videoRoot = resolve(dirname(config.databasePath), 'videos');
+  const videoDir = (sessionId: string) => join(videoRoot, sessionId.replace(/[^A-Za-z0-9_-]/g, ''));
+  const videoFile = (sessionId: string, id: string) =>
+    join(videoDir(sessionId), `${id.replace(/[^A-Za-z0-9_-]/g, '')}.bin`);
+  hub.onVideoGone = (sessionId, id) => {
+    try {
+      unlinkSync(videoFile(sessionId, id));
+      unlinkSync(`${videoFile(sessionId, id)}.type`);
+    } catch {
+      /* already gone */
+    }
+  };
+  // video uploads arrive as a raw stream (written straight to disk, not held in memory)
+  for (const type of ['video/mp4', 'video/webm', 'video/quicktime'])
+    app.addContentTypeParser(type, (_req, payload, done) => done(null, payload));
 
   await app.register(websocket, { options: { maxPayload: 256 * 1024 } });
 
@@ -121,6 +148,7 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
   app.delete('/api/sessions/current', async (req) => {
     const row = auth(req, ['owner']);
     hub.deleteSession(row.session_id);
+    rmSync(videoDir(row.session_id), { recursive: true, force: true });
     return { ok: true };
   });
 
@@ -236,6 +264,63 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
       .header('Content-Type', g.mime)
       .header('Cache-Control', 'private, max-age=86400')
       .send(g.data);
+  });
+
+  // Videos (e.g. made with Kling) to play in once: upload (raw body), fetch.
+  const VIDEO_MAX = 250 * 1024 * 1024;
+  app.post('/api/videos', { bodyLimit: VIDEO_MAX }, async (req, reply) => {
+    const row = auth(req, ['owner', 'controller']);
+    if (!limiter.take('rest', clientIp(req, config))) return tooMany(reply);
+    const q = z
+      .object({ name: z.string().max(80).default('Video'), sec: z.coerce.number().min(0.5).max(600) })
+      .parse(req.query);
+    const mime = String(req.headers['content-type'] ?? '')
+      .split(';')[0]!
+      .trim();
+    if (!['video/mp4', 'video/webm', 'video/quicktime'].includes(mime))
+      throw new HubError(415, 'unsupported', 'Only mp4 / webm videos');
+    const id = randomBytes(9).toString('base64url');
+    mkdirSync(videoDir(row.session_id), { recursive: true });
+    const file = videoFile(row.session_id, id);
+    let n = 0;
+    const count = new Transform({
+      transform(chunk: Buffer, _enc, cb) {
+        n += chunk.length;
+        cb(n > VIDEO_MAX ? new Error('too large') : null, chunk);
+      },
+    });
+    try {
+      await pipeline(req.body as NodeJS.ReadableStream, count, createWriteStream(file));
+    } catch {
+      rmSync(file, { force: true });
+      throw new HubError(413, 'too_large', 'Video too large');
+    }
+    // the type is kept in a little side file
+    createWriteStream(`${file}.type`).end(mime);
+    if (!hub.addVideo(row.session_id, id, q.name, q.sec)) {
+      rmSync(file, { force: true });
+      throw new HubError(404, 'not_found', 'Show not found');
+    }
+    return reply.code(201).send({ id });
+  });
+
+  app.get('/api/videos/:id', async (req, reply) => {
+    const row = auth(req, ['owner', 'controller', 'device']);
+    const { id } = z.object({ id: z.string().max(40) }).parse(req.params);
+    const file = videoFile(row.session_id, id);
+    if (!existsSync(file)) return reply.code(404).send({ error: 'not_found', message: 'Video not found' });
+    let type = 'video/mp4';
+    try {
+      type =
+        (await import('node:fs/promises').then((f) => f.readFile(`${file}.type`, 'utf8'))).trim() || type;
+    } catch {
+      /* default */
+    }
+    return reply
+      .header('Content-Type', type)
+      .header('Content-Length', statSync(file).size)
+      .header('Cache-Control', 'private, max-age=86400')
+      .send(createReadStream(file));
   });
 
   app.get('/api/sessions/audit', async (req) => {

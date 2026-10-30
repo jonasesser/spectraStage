@@ -530,6 +530,19 @@ export const SessionStateSchema = z.object({
     .array(z.lazy(() => RoomObjectSchema))
     .max(24)
     .optional(),
+  /** Uploaded videos (e.g. made with Kling) to play in once; the files live on the server. */
+  videos: z
+    .array(
+      z.object({
+        id: z.string().max(40),
+        name: z.string().max(80),
+        at: z.number(),
+        /** Length (s). */
+        sec: z.number().min(0.5).max(600),
+      }),
+    )
+    .max(40)
+    .optional(),
   /** Saved ghost photos (zombie camera); the pictures themselves live on the server. */
   ghosts: z
     .array(
@@ -601,6 +614,7 @@ export const CommandSchema = z.discriminatedUnion('t', [
     patch: RoomObjectSchema.omit({ id: true }).partial(),
   }),
   z.object({ t: z.literal('object.delete'), id: z.string().max(40) }),
+  z.object({ t: z.literal('video.delete'), id: z.string().max(40) }),
   /** Let saved ghost photos fly around again (several at once, staggered). */
   z.object({
     t: z.literal('ghost.release'),
@@ -644,6 +658,8 @@ export const CommandSchema = z.discriminatedUnion('t', [
     themeId: id,
     sceneId: id,
     params: ParamValuesSchema.optional(),
+    /** How long it runs (s) – e.g. the length of a video; else the scene's own length. */
+    sec: z.number().min(1).max(600).optional(),
   }),
   z.object({
     t: z.literal('surface.setScene'),

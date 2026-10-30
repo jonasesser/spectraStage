@@ -441,6 +441,7 @@ export class Hub {
       if (r.changed) {
         const next = r.state;
         this.commit(ls, next, controller.name, r.summary);
+        if (cmd.t === 'video.delete') this.onVideoGone?.(ls.state.id, cmd.id);
         if (cmd.t === 'ghost.delete' || cmd.t === 'ghost.deleteAll')
           this.store.pruneGhosts(
             ls.state.id,
@@ -504,6 +505,22 @@ export class Hub {
         next.ghosts.map((g) => g.id),
       );
     return id;
+  }
+
+  /** Called when a video was removed from a show (the file can go). */
+  onVideoGone: ((sessionId: string, id: string) => void) | null = null;
+
+  /** An uploaded video: listed in the show (the file is stored by the caller). */
+  addVideo(sessionId: string, id: string, name: string, sec: number): boolean {
+    const ls = this.live.get(sessionId) ?? this.load(sessionId);
+    if (!ls) return false;
+    const next = structuredClone(ls.state);
+    const list = [...(next.videos ?? []), { id, name, at: this.now(), sec }];
+    const dropped = list.slice(0, Math.max(0, list.length - 40));
+    next.videos = list.slice(-40);
+    this.commit(ls, next, 'system', 'video');
+    for (const d of dropped) this.onVideoGone?.(sessionId, d.id);
+    return true;
   }
 
   ghostImage(sessionId: string, id: string): { mime: string; data: Buffer } | null {
