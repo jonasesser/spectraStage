@@ -25,7 +25,7 @@ import {
   pauseOf,
   soundFor,
   speedOf,
-  WALL_MONSTER_FRAG,
+  WALL_FRAG_LEAN,
   type Cue,
   type Frame,
   type HoleUniforms,
@@ -1338,7 +1338,7 @@ function showScene(def: ShowDef): SceneModule {
           uPhotoTex: NO_TEX as unknown as number,
         };
       };
-      const wall = shaderScene(def.id, WALL_MONSTER_FRAG, uniforms, {
+      const wall = shaderScene(def.id, WALL_FRAG_LEAN, uniforms, {
         shaderScale: 0.6,
         shaderMaxPx: 1280,
       }).create(ctx);

@@ -769,7 +769,11 @@ vec2 debris(vec3 p) {
 }
 
 vec2 map(vec3 p) {
+#ifdef BLOBS_ONLY
+  vec2 m = blobs(p);
+#else
   vec2 m = uBlob > 0.5 ? blobs(p) : monster(p);
+#endif
   if (uHole < 0.001) {
     // nothing broken yet: the wall is a membrane – whatever pushes against it bulges it out
     float w = smin(p.z, m.x + 0.012, 0.04 + 0.06 * uBulge);
@@ -784,7 +788,11 @@ vec2 map(vec3 p) {
 }
 
 float mapM(vec3 p) {
+#ifdef BLOBS_ONLY
+  float d = blobs(p).x;
+#else
   float d = (uBlob > 0.5 ? blobs(p) : monster(p)).x;
+#endif
   if (uDebrisT >= 0.0) d = min(d, debris(p).x);
   return d;
 }
@@ -966,10 +974,14 @@ void main() {
         } else {
           // old linen: dirty, stained, darker between the strips; dried skin in the gaps
           vec3 w;
+#ifdef BLOBS_ONLY
+          w = vec3(0.0, 0.0, 0.7);
+#else
           vec3 hq = uHeadM * (p - uHead);
           if (length(p - uHead) < 0.3) w = headWraps(hq);
           else if (length(p - uHandL) < 0.2 || length(p - uHandR) < 0.2) w = vec3(0.0, 0.0, 0.7);
           else w = bodyWraps(p);
+#endif
           vec3 lin = vec3(0.58, 0.5, 0.37) * (0.65 + 0.45 * fbm3(p * 22.0));
           lin = mix(lin, vec3(0.28, 0.2, 0.11), smoothstep(0.5, 0.8, fbm3(p * 5.0 + 3.0)) * 0.7);
           lin *= 0.55 + 0.45 * w.z;
@@ -1075,6 +1087,14 @@ void main() {
   gl_FragColor = vec4(col, 1.0);
 }
 `;
+
+/**
+ * The same wall without the drawn (SDF) monster: only soft bulges push it out – the figures are
+ * real 3D models. Much smaller after compiling: the full shader inlines the whole drawn monster
+ * a dozen times (ray march, normals, shadow …), which on Windows (Direct3D) takes so long to
+ * compile that the graphics driver gives up – the picture is lost.
+ */
+export const WALL_FRAG_LEAN = '#define BLOBS_ONLY\n' + WALL_MONSTER_FRAG;
 
 // ---------------------------------------------------------------------------
 // Scene modules
@@ -1823,9 +1843,7 @@ function guestBreakout(id: string): SceneModule {
     create: (ctx) => {
       const guest = new GuestPhoto(ctx.photos);
       const base = uniformsFor(id, true, guest);
-      const inst = shaderScene(id, WALL_MONSTER_FRAG, base, { shaderScale: 0.6, shaderMaxPx: 1280 }).create(
-        ctx,
-      );
+      const inst = shaderScene(id, WALL_FRAG_LEAN, base, { shaderScale: 0.6, shaderMaxPx: 1280 }).create(ctx);
       return {
         render: (t, f) => inst.render(t, f),
         resize: (w, h, ppm) => inst.resize(w, h, ppm),
@@ -1842,7 +1860,7 @@ function guestBreakout(id: string): SceneModule {
 function breakout(id: string, cute: boolean, model?: string, glow?: V3): SceneModule {
   const sound = soundFor(id, cute ? CUTE_SOUND : MUMMY_SOUND);
   if (!model)
-    return shaderScene(id, WALL_MONSTER_FRAG, uniformsFor(id, cute), {
+    return shaderScene(id, WALL_FRAG_LEAN, uniformsFor(id, cute), {
       shaderScale: 0.6,
       shaderMaxPx: 1280,
       ambientSound: sound,
@@ -1853,7 +1871,7 @@ function breakout(id: string, cute: boolean, model?: string, glow?: V3): SceneMo
     ambientSound: sound,
     create: (ctx) => {
       const figure = new GlbFigure(model, cute, glowCol);
-      const wall = shaderScene(id, WALL_MONSTER_FRAG, uniformsFor(id, cute, undefined, figure, glowCol), {
+      const wall = shaderScene(id, WALL_FRAG_LEAN, uniformsFor(id, cute, undefined, figure, glowCol), {
         shaderScale: 0.6,
         shaderMaxPx: 1280,
       }).create(ctx);
