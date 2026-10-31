@@ -214,8 +214,11 @@ export function faceCrop(
   o.restore();
   // an oval just around the face: opaque inside, soft only at the edge
   o.globalCompositeOperation = 'destination-in';
-  const gr = o.createRadialGradient(S / 2, S / 2, S * 0.4, S / 2, S / 2, S * 0.5);
+  // eyes, nose and mouth fully the guest's; from the cheeks out it melts into the figure's face
+  const gr = o.createRadialGradient(S / 2, S / 2, S * 0.28, S / 2, S / 2, S * 0.5);
   gr.addColorStop(0, 'rgba(0,0,0,1)');
+  gr.addColorStop(0.35, 'rgba(0,0,0,0.85)');
+  gr.addColorStop(0.7, 'rgba(0,0,0,0.35)');
   gr.addColorStop(1, 'rgba(0,0,0,0)');
   o.fillStyle = gr;
   o.fillRect(0, 0, S, S);
@@ -363,8 +366,11 @@ export class Rig {
     vec3 fq = (uFaceM * vec4(vWallPos, 1.0)).xyz;
     if (fq.z > -0.5 && fq.z < 1.0 && abs(fq.x) < 1.0 && abs(fq.y) < 1.0) {
       vec4 fc = texture2D(uFaceTex, fq.xy * 0.5 + 0.5);
-      faceK = fc.a * smoothstep(-0.5, -0.2, fq.z);
-      faceC = fc.rgb;
+      faceK = fc.a * smoothstep(-0.5, -0.2, fq.z) * (1.0 - smoothstep(0.85, 1.0, max(abs(fq.x), abs(fq.y))));
+      // towards the edge the photo takes on the brightness of the figure's skin (no hard step)
+      float lb = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+      float lf = max(0.04, dot(fc.rgb, vec3(0.299, 0.587, 0.114)));
+      faceC = mix(fc.rgb, fc.rgb * clamp(lb / lf, 0.6, 1.6), (1.0 - fc.a) * 0.8);
       diffuseColor.rgb = mix(diffuseColor.rgb, faceC, faceK);
     }
   }`,
@@ -454,6 +460,7 @@ export class Rig {
   pose(body: Body, feet: [V3, V3], F: Frame) {
     if (!this.ready) return;
     for (const [o, q] of this.bind) o.quaternion.copy(q);
+    this.b.Hips!.position.copy(this.hips0);
     this.size = this.heightM / F.k / this.height;
     this.yaw = body.yaw;
     const yq = new THREE.Quaternion().setFromAxisAngle(UP, body.yaw);
@@ -475,6 +482,33 @@ export class Rig {
     this.limb(this.legs.L, vec(lifted[0]!), [fw.clone().add(left.clone().multiplyScalar(0.15))]);
     this.limb(this.legs.R, vec(lifted[1]!), [fw.clone().add(left.clone().multiplyScalar(-0.15))]);
     for (const leg of [this.legs.L, this.legs.R]) this.setWorldQ(leg.end, yq.clone().multiply(leg.q0[2]));
+  }
+
+  /** The pose as it is now (for blending into another one). */
+  capture(): {
+    root: [THREE.Vector3, THREE.Quaternion, number];
+    hips: THREE.Vector3;
+    q: Map<THREE.Object3D, THREE.Quaternion>;
+  } {
+    const q = new Map<THREE.Object3D, THREE.Quaternion>();
+    for (const o of this.bind.keys()) q.set(o, o.quaternion.clone());
+    return {
+      root: [this.root.position.clone(), this.root.quaternion.clone(), this.root.scale.x],
+      hips: this.ready ? this.b.Hips!.position.clone() : new THREE.Vector3(),
+      q,
+    };
+  }
+
+  /** Blends from a captured pose (w = 0) to the pose now (w = 1). */
+  blendFrom(snap: ReturnType<Rig['capture']>, w: number) {
+    if (!this.ready) return;
+    const k = clamp01(w);
+    for (const [o, q0] of snap.q) o.quaternion.copy(q0.clone().slerp(o.quaternion, k));
+    this.b.Hips!.position.lerpVectors(snap.hips, this.b.Hips!.position, k);
+    this.root.position.lerpVectors(snap.root[0], this.root.position, k);
+    this.root.quaternion.copy(snap.root[1].clone().slerp(this.root.quaternion, k));
+    this.root.scale.setScalar(mix(snap.root[2], this.root.scale.x, k));
+    this.root.updateMatrixWorld(true);
   }
 
   /** The figure's scale in this frame (local units per model unit). */
@@ -944,6 +978,12 @@ interface Move {
   /** Look at the audience (0…1) or at the other figure (lookAt). */
   look?: number;
   lookAt?: number;
+  /**
+   * A dance of our own instead of recorded motion (weight w, blended with the clips): the body
+   * over time and – shared by both – the arms (holding each other).
+   */
+  proc?: { w: number; body: (a: number) => Body };
+  procArms?: (a: number, rigs: Rig[], eye: THREE.Vector3) => void;
 }
 
 /** A row of steps over time; each blends into the next over `fade` seconds. */
@@ -971,6 +1011,15 @@ function steps(list: Step[], a: number, fade = 0.5): Move {
     ownYaw: k < 0.5 ? prev.ownYaw : cur.ownYaw,
     look: mix(prev.look ?? 0, cur.look ?? 0, k),
     lookAt: k < 0.5 ? prev.lookAt : cur.lookAt,
+    proc:
+      cur.proc && prev.proc
+        ? cur.proc
+        : cur.proc
+          ? { ...cur.proc, w: cur.proc.w * k }
+          : prev.proc
+            ? { ...prev.proc, w: prev.proc.w * (1 - k) }
+            : undefined,
+    procArms: cur.procArms ?? prev.procArms,
   };
 }
 const wrapAng = (d: number) => Math.atan2(Math.sin(d), Math.cos(d));
@@ -1068,6 +1117,102 @@ function coupleHoleX(F: Frame): number {
   return Math.max(0.7, Math.min(half * 0.68, half - 0.55));
 }
 
+/** Holding each other in the waltz (hold 0…1), the twirl under his arm (0…1), looking at you (0…1). */
+function coupleHold(rigs: Rig[], eye: THREE.Vector3, hold: number, twirl: number, atYou: number) {
+  const [groom, bride] = rigs as [Rig, Rig];
+  if (hold < 0.01 || !groom.ready || !bride.ready) return;
+  const gC = groom.pos('Spine2');
+  const bC = bride.pos('Spine2');
+  const toB = bC.clone().sub(gC).setY(0).normalize();
+  const gLeft = new THREE.Vector3(toB.z, 0, -toB.x); // his left (facing her)
+  // joined hands: his left, her right – out to his left side at shoulder height (raised over
+  // her head while she twirls)
+  const sh = groom.pos('LeftArm').add(bride.pos('RightArm')).multiplyScalar(0.5);
+  const joinLow = sh
+    .clone()
+    .add(gLeft.clone().multiplyScalar(0.2))
+    .add(new THREE.Vector3(0, 0.04, 0));
+  const joinHigh = bride
+    .pos('Head')
+    .add(new THREE.Vector3(0, 0.22, 0))
+    .add(gLeft.clone().multiplyScalar(0.03));
+  const join = joinLow.clone().lerp(joinHigh, twirl);
+  const blend = (rest: THREE.Vector3, t: THREE.Vector3) => rest.clone().lerp(t, hold);
+  const restG = (side: number) =>
+    groom.pos(side > 0 ? 'LeftArm' : 'RightArm').add(new THREE.Vector3(0, -groom.arm * 0.92, 0));
+  const restB = (side: number) =>
+    bride.pos(side > 0 ? 'LeftArm' : 'RightArm').add(new THREE.Vector3(0, -bride.arm * 0.92, 0));
+  // his right hand on her back (her left shoulder blade), her left hand on his right shoulder
+  const back = bC
+    .clone()
+    .add(toB.clone().multiplyScalar(0.11))
+    .add(gLeft.clone().multiplyScalar(-0.07))
+    .add(new THREE.Vector3(0, 0.03, 0));
+  const shoulder = groom
+    .pos('RightArm')
+    .add(new THREE.Vector3(0, 0.04, 0))
+    .add(toB.clone().multiplyScalar(-0.02));
+  const down = new THREE.Vector3(0, -1, 0);
+  groom.hands(
+    {
+      at: blend(restG(1), join),
+      fingers: UP.clone(),
+      palm: toB.clone(),
+      poles: [down.clone().add(gLeft.clone().multiplyScalar(0.6))],
+    },
+    {
+      at: blend(restG(-1), twirl > 0.5 ? restG(-1).add(gLeft.clone().multiplyScalar(-0.15)) : back),
+      fingers: gLeft.clone().multiplyScalar(-1).add(toB.clone().multiplyScalar(0.3)),
+      palm: toB.clone(),
+      poles: [down.clone().add(gLeft.clone().multiplyScalar(-0.8))],
+    },
+  );
+  bride.hands(
+    {
+      at: blend(
+        restB(1),
+        twirl > 0.5
+          ? restB(1)
+              .add(gLeft.clone().multiplyScalar(-0.25))
+              .add(new THREE.Vector3(0, 0.2, 0))
+          : shoulder,
+      ),
+      fingers: toB
+        .clone()
+        .negate()
+        .add(new THREE.Vector3(0, -0.3, 0)),
+      palm: down.clone(),
+      poles: [down.clone().add(gLeft.clone().multiplyScalar(-0.6))],
+    },
+    {
+      at: blend(restB(-1), join),
+      fingers: UP.clone(),
+      palm: toB.clone().negate(),
+      poles: [down.clone().add(gLeft.clone().multiplyScalar(0.6))],
+    },
+  );
+  // they look at each other (now and then at you)
+  groom.look(bride.pos('Head').lerp(eye, atYou), 0.8);
+  bride.look(groom.pos('Head').lerp(eye, atYou), 0.8);
+}
+
+/** Our own waltz: the couple turns slowly around its centre, rise and fall in three, she twirls once. */
+function ownWaltz(C: [number, number], W0: number, W1: number, twirlAt: number) {
+  const D = 0.23; // half the distance between them (bodies must not go into each other)
+  const omega = 0.55; // how fast the couple turns
+  return (a: number, who: number): Body => {
+    const phi = clamp01((a - W0) / Math.max(0.01, W1 - W0)) * (W1 - W0) * omega;
+    const ang = phi + (who === 0 ? 0 : Math.PI);
+    const x = C[0] + Math.cos(ang) * D;
+    const z = C[1] + Math.sin(ang) * D;
+    let yaw = Math.atan2(C[0] - x, C[1] - z);
+    const bar = (Math.max(0, a - W0) / 0.55) % 3;
+    const drop = 0.035 - 0.03 * Math.sin((Math.PI * Math.min(bar, 3)) / 3);
+    if (who === 1) yaw += Math.PI * 2 * ease(a, twirlAt, twirlAt + 1.8);
+    return { x, z, yaw, drop, hop: 0, lean: 0, sway: 0.05 * Math.sin(phi * 2), beat: 0.55, lift: 0.015 };
+  };
+}
+
 const COUPLE: ShowDef = {
   id: 'wallCouple',
   cute: false,
@@ -1161,10 +1306,17 @@ const COUPLE: ShowDef = {
     };
     // the dance: chosen – or by chance (the couple dance alone, or her solo first)
     const pick = String(params.dance ?? 'random');
+    const r4 = rnd(4);
     const kind =
-      pick === 'waltz' || pick === 'shake' || pick === 'jazz'
+      pick === 'classic' || pick === 'waltz' || pick === 'shake' || pick === 'jazz'
         ? pick
-        : (['waltz', 'shake', 'jazz'] as const)[Math.floor(rnd(4) * 3) % 3]!;
+        : r4 < 0.4
+          ? 'classic'
+          : r4 < 0.6
+            ? 'waltz'
+            : r4 < 0.8
+              ? 'shake'
+              : 'jazz';
     const solo = kind === 'jazz' ? 'DanceJazz' : 'DanceShake';
     const heClaps = rnd(2) < 0.5;
     const screamEnd = rnd(3) < 0.6;
@@ -1194,6 +1346,25 @@ const COUPLE: ShowDef = {
     const A7 = A6 + 3; // turn
     const A8 = A7 + 0.6; // into the hole
     const A9 = A8 + 2.6;
+    // our own waltz: holding each other, turning slowly, she twirls under his arm
+    const own = ownWaltz(C, A3, A5 - 0.4, A3 + 6.5);
+    const tw = A3 + 6.5;
+    const ownArms = (a: number, rs: Rig[], eye: THREE.Vector3) =>
+      coupleHold(
+        rs,
+        eye,
+        ease(a, A3 - 0.3, A3 + 0.6) * (1 - ease(a, A5 - 0.6, A5)),
+        ease(a, tw - 0.4, tw + 0.1) * (1 - ease(a, tw + 1.8, tw + 2.4)),
+        ease(a, A3 + 9.5, A3 + 10.5) * (1 - ease(a, A3 + 12, A3 + 12.8)),
+      );
+    const ownMove =
+      (who: 0 | 1) =>
+      (a: number): Move => ({
+        body: own(a, who),
+        layers: [],
+        proc: { w: 1, body: (t: number) => own(t, who) },
+        procArms: ownArms,
+      });
     const plan = (who: 0 | 1): Step[] => {
       const rig = who === 0 ? groom : bride;
       const hole = who === 0 ? hx : -hx;
@@ -1201,7 +1372,9 @@ const COUPLE: ShowDef = {
       const zpace = who === 0 ? 1.03 : 1.12;
       // the groom's zombie walk drifts to the side: turned back so he walks straight
       const zfix = who === 0 ? -0.43 : 0;
-      const at = who === 0 ? g0 : b0;
+      const at = kind === 'classic' ? own(A3, who) : who === 0 ? g0 : b0;
+      // where the dance ends
+      const end = () => (kind === 'classic' ? own(A5, who) : waltzBody(rig, 10));
       const idle = (x: number, z: number, yaw: number, t0: number, look = 0): Move =>
         who === 0
           ? { body: stand(x, z, yaw), layers: [{ clip: 'ZombieIdle', t: t0, w: 1 }], look }
@@ -1219,39 +1392,44 @@ const COUPLE: ShowDef = {
         [
           A3,
           (a) =>
-            kind === 'waltz'
-              ? {
-                  body: waltzBody(rig, WT0 + (a - A3)),
-                  layers: [{ clip: 'Waltz', t: WT0 + (a - A3), w: 1 }],
-                  lookAt: 1 - who,
-                }
-              : who === 1
+            kind === 'classic'
+              ? ownMove(who)(a)
+              : kind === 'waltz'
                 ? {
-                    body: stand(at.x, at.z, 0),
-                    layers: [{ clip: solo, t: a - A3, w: 1 }],
-                    ownYaw: true,
-                    look: 0.3,
+                    body: waltzBody(rig, WT0 + (a - A3)),
+                    layers: [{ clip: 'Waltz', t: WT0 + (a - A3), w: 1 }],
+                    lookAt: 1 - who,
                   }
-                : heClaps
+                : who === 1
                   ? {
-                      body: stand(at.x, at.z, at.yaw),
-                      layers: [{ clip: 'Gesture', t: a - A3, w: 1 }],
-                      lookAt: 1,
+                      body: stand(at.x, at.z, 0),
+                      layers: [{ clip: solo, t: a - A3, w: 1 }],
+                      ownYaw: true,
+                      look: 0.3,
                     }
-                  : { ...idle(at.x, at.z, at.yaw, a - A3), lookAt: 1 },
+                  : heClaps
+                    ? {
+                        body: stand(at.x, at.z, at.yaw),
+                        layers: [{ clip: 'Gesture', t: a - A3, w: 1 }],
+                        lookAt: 1,
+                      }
+                    : { ...idle(at.x, at.z, at.yaw, a - A3), lookAt: 1 },
         ],
         [
           A4,
-          (a) => ({
-            body: waltzBody(rig, WT0 + (a - A4)),
-            layers: [{ clip: 'Waltz', t: WT0 + (a - A4), w: 1 }],
-            lookAt: 1 - who,
-          }),
+          (a) =>
+            kind === 'classic'
+              ? ownMove(who)(a)
+              : {
+                  body: waltzBody(rig, WT0 + (a - A4)),
+                  layers: [{ clip: 'Waltz', t: WT0 + (a - A4), w: 1 }],
+                  lookAt: 1 - who,
+                },
         ],
         [
           A5,
           (a) => {
-            const e = waltzBody(rig, 10);
+            const e = end();
             return who === 1 && screamEnd
               ? { body: stand(e.x, e.z, 0), layers: [{ clip: 'Scream', t: a - A5, w: 1 }], look: 0.8 }
               : who === 0
@@ -1262,7 +1440,7 @@ const COUPLE: ShowDef = {
         [
           A6,
           (a) => {
-            const e = waltzBody(rig, 10);
+            const e = end();
             return walkMove(a, A6, A7, [e.x, e.z], [hole, 0.35], 'Walk', 1.25, F);
           },
         ],
@@ -1274,88 +1452,14 @@ const COUPLE: ShowDef = {
     return (a) => plans.map((p) => steps(p, a, 0.55));
   },
   arms: (a, rigs, F, eye) => {
-    const [groom, bride] = rigs as [Rig, Rig];
     const hold = ease(a, 16.8, 17.6) * (1 - ease(a, 33, 33.8));
     const twirl = ease(a, 25.2, 25.7) * (1 - ease(a, 27.4, 28));
-    if (hold < 0.01 || !groom.ready || !bride.ready) {
+    if (hold < 0.01) {
       // (walking arms stay) – they look at you when they come out and when they bow
       for (const r of rigs) r.look(eye, a < 16.3 || (a > 33.5 && a < 36) ? 0.8 : 0);
       return;
     }
-    const gC = groom.pos('Spine2');
-    const bC = bride.pos('Spine2');
-    const toB = bC.clone().sub(gC).setY(0).normalize();
-    const gLeft = new THREE.Vector3(toB.z, 0, -toB.x); // his left (facing her)
-    // joined hands: his left, her right – out to his left side at shoulder height (raised over
-    // her head while she twirls)
-    const sh = groom.pos('LeftArm').add(bride.pos('RightArm')).multiplyScalar(0.5);
-    const joinLow = sh
-      .clone()
-      .add(gLeft.clone().multiplyScalar(0.2))
-      .add(new THREE.Vector3(0, 0.04, 0));
-    const joinHigh = bride
-      .pos('Head')
-      .add(new THREE.Vector3(0, 0.22, 0))
-      .add(gLeft.clone().multiplyScalar(0.03));
-    const join = joinLow.clone().lerp(joinHigh, twirl);
-    const blend = (rest: THREE.Vector3, t: THREE.Vector3) => rest.clone().lerp(t, hold);
-    const restG = (side: number) =>
-      groom.pos(side > 0 ? 'LeftArm' : 'RightArm').add(new THREE.Vector3(0, -groom.arm * 0.92, 0));
-    const restB = (side: number) =>
-      bride.pos(side > 0 ? 'LeftArm' : 'RightArm').add(new THREE.Vector3(0, -bride.arm * 0.92, 0));
-    // his right hand on her back (her left shoulder blade), her left hand on his right shoulder
-    const back = bC
-      .clone()
-      .add(toB.clone().multiplyScalar(0.11))
-      .add(gLeft.clone().multiplyScalar(-0.07))
-      .add(new THREE.Vector3(0, 0.03, 0));
-    const shoulder = groom
-      .pos('RightArm')
-      .add(new THREE.Vector3(0, 0.04, 0))
-      .add(toB.clone().multiplyScalar(-0.02));
-    const down = new THREE.Vector3(0, -1, 0);
-    groom.hands(
-      {
-        at: blend(restG(1), join),
-        fingers: UP.clone(),
-        palm: toB.clone(),
-        poles: [down.clone().add(gLeft.clone().multiplyScalar(0.6))],
-      },
-      {
-        at: blend(restG(-1), twirl > 0.5 ? restG(-1).add(gLeft.clone().multiplyScalar(-0.15)) : back),
-        fingers: gLeft.clone().multiplyScalar(-1).add(toB.clone().multiplyScalar(0.3)),
-        palm: toB.clone(),
-        poles: [down.clone().add(gLeft.clone().multiplyScalar(-0.8))],
-      },
-    );
-    bride.hands(
-      {
-        at: blend(
-          restB(1),
-          twirl > 0.5
-            ? restB(1)
-                .add(gLeft.clone().multiplyScalar(-0.25))
-                .add(new THREE.Vector3(0, 0.2, 0))
-            : shoulder,
-        ),
-        fingers: toB
-          .clone()
-          .negate()
-          .add(new THREE.Vector3(0, -0.3, 0)),
-        palm: down.clone(),
-        poles: [down.clone().add(gLeft.clone().multiplyScalar(-0.6))],
-      },
-      {
-        at: blend(restB(-1), join),
-        fingers: UP.clone(),
-        palm: toB.clone().negate(),
-        poles: [down.clone().add(gLeft.clone().multiplyScalar(0.6))],
-      },
-    );
-    // they look at each other (now and then at you)
-    const atYou = ease(a, 29, 30) * (1 - ease(a, 31.5, 32.5));
-    groom.look(bride.pos('Head').lerp(eye, atYou), 0.8);
-    bride.look(groom.pos('Head').lerp(eye, atYou), 0.8);
+    coupleHold(rigs, eye, hold, twirl, ease(a, 29, 30) * (1 - ease(a, 31.5, 32.5)));
   },
 };
 
@@ -1560,32 +1664,22 @@ const BUDDY: ShowDef = {
 // ---------------------------------------------------------------------------
 // Scene modules
 // ---------------------------------------------------------------------------
+/** Where a show's music plays: the sound output handed to the scene (per play, by its seed). */
+const musicOut = new Map<number, SoundApi>();
+
 function showScene(def: ShowDef): SceneModule {
   const music = def.music;
   return {
     id: def.id,
-    // the show's music: once per round at its moment (follows the show clock)
+    // the show's music: the sound output is handed over here; the scene itself starts the piece
+    // at its moment (its own show time – every play, every round)
     ...(music
       ? {
-          ambientSound: (snd: SoundApi) => {
-            let last = -1;
-            let stop: (() => void) | null = null;
+          ambientSound: (snd: SoundApi, seed: number) => {
             snd.preload?.(music.url);
-            const timer = window.setInterval(() => {
-              const c = clocks[def.id];
-              if (!c || performance.now() - c.at > 1500) return;
-              const a = ((c.time + (performance.now() - c.at) / 1000) * c.speed) % c.loop;
-              // just passed its moment (not when joining long after)
-              if (last >= 0 && last < music.at && a >= music.at && a - music.at < 1) {
-                stop?.();
-                stop = null;
-                if (!snd.replaced?.(music.slot)) stop = snd.playUrl?.(music.url, 0, music.gain) ?? null;
-              }
-              last = a;
-            }, 80);
+            musicOut.set(seed, snd);
             return () => {
-              window.clearInterval(timer);
-              stop?.();
+              if (musicOut.get(seed) === snd) musicOut.delete(seed);
             };
           },
         }
@@ -1599,12 +1693,31 @@ function showScene(def: ShowDef): SceneModule {
       let visible = false;
       let motion: ((a: number) => Move[]) | null = null;
       let motionKey = -1;
+      let musicLast = -1;
+      let musicStop: (() => void) | null = null;
       const uniforms = (s: DrawState, f: { time: number }) => {
         const F = (s.cache.wsFrame as Frame | undefined) ?? (s.cache.wsFrame = frameOf(s));
         const speed = speedOf(s);
         const loop = SHOW + pauseOf(s);
         clocks[def.id] = { time: f.time, at: performance.now(), speed, loop };
         const a = (f.time * speed) % loop;
+        // the music: just passed its moment (not when joining long after); on / off and volume
+        if (music) {
+          const snd = musicOut.get(ctx.seed);
+          const on = s.params.music !== false;
+          if (snd && on && musicLast >= 0 && musicLast < music.at && a >= music.at && a - music.at < 1) {
+            musicStop?.();
+            const vol = typeof s.params.musicVolume === 'number' ? s.params.musicVolume : 0.8;
+            musicStop = snd.replaced?.(music.slot)
+              ? null
+              : (snd.playUrl?.(music.url, 0, music.gain * vol) ?? null);
+          }
+          if (!on && musicStop) {
+            musicStop();
+            musicStop = null;
+          }
+          musicLast = a;
+        }
         const rebuild = s.params.ending !== 'fade';
         const W = wallAt(a, rebuild);
         const xs = def.holes(F);
@@ -1639,11 +1752,26 @@ function showScene(def: ShowDef): SceneModule {
         }
         if (visible && recorded && motion) {
           const moves = motion(a);
-          moves.forEach((m, i) => {
+          // recorded motion first; where our own dance takes over, that pose is blended in
+          const snaps = moves.map((m, i) => {
             const r = rigs[i]!;
             r.root.visible = true;
-            r.play(m.body, F, m.layers, !!m.ownYaw);
+            if (m.layers.length) r.play(m.body, F, m.layers, !!m.ownYaw);
+            return m.proc && m.proc.w > 0.001 && m.proc.w < 0.999 ? r.capture() : null;
           });
+          if (moves.some((m) => m.proc && m.proc.w > 0.001)) {
+            moves.forEach((m, i) => {
+              if (!m.proc || m.proc.w <= 0.001) return;
+              const r = rigs[i]!;
+              r.pose(m.proc.body(a), feetAt(m.proc.body, a, 0.075, F.floorY), F);
+              r.hands(null, null);
+            });
+            moves.find((m) => m.procArms)?.procArms!(a, rigs, eye);
+            moves.forEach((m, i) => {
+              const sn = snaps[i];
+              if (sn && m.proc) rigs[i]!.blendFrom(sn, m.proc.w);
+            });
+          }
           moves.forEach((m, i) => {
             const r = rigs[i]!;
             if (m.lookAt !== undefined && rigs[m.lookAt]) r.look(rigs[m.lookAt]!.pos('Head'), 0.6);
@@ -1733,6 +1861,7 @@ function showScene(def: ShowDef): SceneModule {
         resize: (w, h, ppm) => wall.resize(w, h, ppm),
         setParams: (p) => wall.setParams(p),
         dispose: () => {
+          musicStop?.();
           for (const r of rigs) r.dispose();
           layer.dispose();
           wall.dispose();

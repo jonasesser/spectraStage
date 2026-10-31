@@ -291,7 +291,8 @@ const scenes: SceneManifest[] = [
         type: 'select',
         options: [
           { value: 'random', label: L('By chance', 'Zufall') },
-          { value: 'waltz', label: L('Only the couple dance', 'Nur der Paartanz') },
+          { value: 'classic', label: L('A real waltz, holding each other', 'Echter Walzer, Arm in Arm') },
+          { value: 'waltz', label: L('Dancing face to face (recorded)', 'Gegenüber tanzen (Aufnahme)') },
           {
             value: 'shake',
             label: L('She dances "Shake", then the couple', 'Sie tanzt „Shake“, dann das Paar'),
@@ -302,6 +303,16 @@ const scenes: SceneManifest[] = [
           },
         ],
         default: 'random',
+      },
+      { key: 'music', label: L('Waltz music', 'Walzer-Musik'), type: 'boolean', default: true },
+      {
+        key: 'musicVolume',
+        label: L('Music volume', 'Musik-Lautstärke'),
+        type: 'number',
+        min: 0,
+        max: 1,
+        step: 0.05,
+        default: 0.8,
       },
       {
         key: 'bridePhoto',
