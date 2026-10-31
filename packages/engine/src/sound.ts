@@ -38,6 +38,10 @@ export interface SoundApi {
    * muted), false = play the built-in one. Slots: 'b:ooh' … (building blocks), 'e:theme/effect'.
    */
   replaced?(slot: string, delay?: number): boolean;
+  /** Plays a recording (e.g. a show's music) once; returns a stop function. */
+  playUrl?(url: string, delay?: number, gain?: number): () => void;
+  /** Loads a recording ahead. */
+  preload?(url: string): void;
 }
 
 /** What replaces a sound: a recording (URL) or nothing. */
@@ -80,6 +84,11 @@ export class SoundEngine implements SoundApi {
     return true;
   }
 
+  /** Loads a recording ahead (so it starts on time later). */
+  preload(url: string): void {
+    this.load(url);
+  }
+
   /** Plays a recording once (loads it first if needed); returns a stop function. */
   playUrl(url: string, delay = 0, gain = 0.8): () => void {
     const ctx = this.ready();
@@ -90,15 +99,19 @@ export class SoundEngine implements SoundApi {
       // not loaded yet: play as soon as it is (if still within a second)
       const t = performance.now();
       let stop = false;
+      let inner: (() => void) | null = null;
       const wait = () => {
         if (stop) return;
         const bb = this.buffers.get(url);
         if (bb instanceof AudioBuffer) {
-          if (performance.now() - t < 1500) this.playUrl(url, delay, gain);
+          if (performance.now() - t < 1500) inner = this.playUrl(url, delay, gain);
         } else if (bb !== 'failed' && performance.now() - t < 5000) setTimeout(wait, 100);
       };
       setTimeout(wait, 100);
-      return () => (stop = true);
+      return () => {
+        stop = true;
+        inner?.();
+      };
     }
     const src = ctx.createBufferSource();
     src.buffer = b;

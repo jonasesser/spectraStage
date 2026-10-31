@@ -494,6 +494,12 @@ const BASICS = (L: Tr): SoundItem[] => [
     play: (s) => s.arpeggio(),
   },
   {
+    id: 'm:halloween/wallCouple',
+    group: L('Music', 'Musik'),
+    name: L('Bride & groom – waltz', 'Brautpaar – Walzer'),
+    play: (s) => s.playUrl?.('/sounds/couple-waltz.mp3', 0, 0.9),
+  },
+  {
     id: 'b:wind',
     group: L('Background', 'Hintergrund'),
     name: L('Wind', 'Wind'),

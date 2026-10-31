@@ -279,12 +279,30 @@ const scenes: SceneManifest[] = [
     'wallCouple',
     ['Bloody bride & groom waltz (3D)', 'Blutiges Brautpaar tanzt (3D)'],
     [
-      'Two holes break open, the bloody bride and groom step out, walk to each other and waltz in front of the wall – she twirls under his arm – then they bow and go back in; the wall builds itself up again.',
-      'Zwei Löcher brechen auf, die blutige Braut und der Bräutigam steigen heraus, gehen aufeinander zu und tanzen Walzer vor der Wand – sie dreht sich unter seinem Arm – dann verbeugen sie sich und gehen zurück; die Wand mauert sich wieder zu.',
+      'Two holes break open, the bloody bride and groom stagger out, she screams, they meet in the middle and dance (choose the dance, or let chance decide) to a piano waltz, then go back in; the wall builds itself up again.',
+      'Zwei Löcher brechen auf, das blutige Brautpaar wankt heraus, sie schreit, sie treffen sich in der Mitte und tanzen (Tanz wählbar, sonst Zufall) zu einem Klavier-Walzer, dann gehen sie zurück; die Wand mauert sich wieder zu.',
     ],
     '💃',
     ['#000000', '#ff2a2a'],
     [
+      {
+        key: 'dance',
+        label: L('Dance', 'Tanz'),
+        type: 'select',
+        options: [
+          { value: 'random', label: L('By chance', 'Zufall') },
+          { value: 'waltz', label: L('Only the couple dance', 'Nur der Paartanz') },
+          {
+            value: 'shake',
+            label: L('She dances "Shake", then the couple', 'Sie tanzt „Shake“, dann das Paar'),
+          },
+          {
+            value: 'jazz',
+            label: L('She dances "Jazz", then the couple', 'Sie tanzt „Jazz“, dann das Paar'),
+          },
+        ],
+        default: 'random',
+      },
       {
         key: 'bridePhoto',
         label: L("Bride's face (guest photo)", 'Gesicht der Braut (Gäste-Foto)'),

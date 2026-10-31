@@ -10,7 +10,13 @@
  * the wall), so in the room they look as if they stood in front of the wall.
  */
 import * as THREE from 'three';
-import { shaderScene, type DrawState, type FaceBox, type SceneModule } from '@spectrastage/engine';
+import {
+  shaderScene,
+  type DrawState,
+  type FaceBox,
+  type SceneModule,
+  type SoundApi,
+} from '@spectrastage/engine';
 import {
   basisQ,
   clocks,
@@ -918,7 +924,9 @@ interface ShowDef {
    * Recorded motion (motion capture clips in the model files) instead of the computed one: what
    * each actor does at show time a. Used when all figures have their clips (`clips`).
    */
-  motion?: (F: Frame, rigs: Rig[], seed: number) => (a: number) => Move[];
+  motion?: (F: Frame, rigs: Rig[], seed: number, params: Record<string, unknown>) => (a: number) => Move[];
+  /** A piece of music from show time `at` (once per round), replaceable in the sound list (slot). */
+  music?: { url: string; at: number; slot: string; gain: number };
   clips?: string[][];
 }
 
@@ -1143,15 +1151,21 @@ const COUPLE: ShowDef = {
     ['ZombieWalk', 'ZombieIdle', 'Walk', 'Waltz', 'Gesture'],
     ['StumbleWalk', 'Scream', 'Walk', 'Waltz', 'DanceShake', 'DanceJazz'],
   ],
-  motion: (F, rigs, seed) => {
+  music: { url: '/sounds/couple-waltz.mp3', at: 18.5, slot: 'm:halloween/wallCouple', gain: 0.9 },
+  motion: (F, rigs, seed, params) => {
     const [groom, bride] = rigs as [Rig, Rig];
     const hx = coupleHoleX(F);
     const rnd = (n: number) => {
       const v = Math.sin(seed * 127.1 + n * 311.7) * 43758.5453;
       return v - Math.floor(v);
     };
-    // this time: which solo dance she does, whether he joins in or claps, whether she screams at the end
-    const solo = rnd(1) < 0.5 ? 'DanceShake' : 'DanceJazz';
+    // the dance: chosen – or by chance (the couple dance alone, or her solo first)
+    const pick = String(params.dance ?? 'random');
+    const kind =
+      pick === 'waltz' || pick === 'shake' || pick === 'jazz'
+        ? pick
+        : (['waltz', 'shake', 'jazz'] as const)[Math.floor(rnd(4) * 3) % 3]!;
+    const solo = kind === 'jazz' ? 'DanceJazz' : 'DanceShake';
     const heClaps = rnd(2) < 0.5;
     const screamEnd = rnd(3) < 0.6;
     // the waltz: a recorded couple dance (both clips share one origin) – turned so they stand side
@@ -1205,20 +1219,26 @@ const COUPLE: ShowDef = {
         [
           A3,
           (a) =>
-            who === 1
+            kind === 'waltz'
               ? {
-                  body: stand(at.x, at.z, 0),
-                  layers: [{ clip: solo, t: a - A3, w: 1 }],
-                  ownYaw: true,
-                  look: 0.3,
+                  body: waltzBody(rig, WT0 + (a - A3)),
+                  layers: [{ clip: 'Waltz', t: WT0 + (a - A3), w: 1 }],
+                  lookAt: 1 - who,
                 }
-              : heClaps
+              : who === 1
                 ? {
-                    body: stand(at.x, at.z, at.yaw),
-                    layers: [{ clip: 'Gesture', t: a - A3, w: 1 }],
-                    lookAt: 1,
+                    body: stand(at.x, at.z, 0),
+                    layers: [{ clip: solo, t: a - A3, w: 1 }],
+                    ownYaw: true,
+                    look: 0.3,
                   }
-                : { ...idle(at.x, at.z, at.yaw, a - A3), lookAt: 1 },
+                : heClaps
+                  ? {
+                      body: stand(at.x, at.z, at.yaw),
+                      layers: [{ clip: 'Gesture', t: a - A3, w: 1 }],
+                      lookAt: 1,
+                    }
+                  : { ...idle(at.x, at.z, at.yaw, a - A3), lookAt: 1 },
         ],
         [
           A4,
@@ -1541,8 +1561,35 @@ const BUDDY: ShowDef = {
 // Scene modules
 // ---------------------------------------------------------------------------
 function showScene(def: ShowDef): SceneModule {
+  const music = def.music;
   return {
     id: def.id,
+    // the show's music: once per round at its moment (follows the show clock)
+    ...(music
+      ? {
+          ambientSound: (snd: SoundApi) => {
+            let last = -1;
+            let stop: (() => void) | null = null;
+            snd.preload?.(music.url);
+            const timer = window.setInterval(() => {
+              const c = clocks[def.id];
+              if (!c || performance.now() - c.at > 1500) return;
+              const a = ((c.time + (performance.now() - c.at) / 1000) * c.speed) % c.loop;
+              // just passed its moment (not when joining long after)
+              if (last >= 0 && last < music.at && a >= music.at && a - music.at < 1) {
+                stop?.();
+                stop = null;
+                if (!snd.replaced?.(music.slot)) stop = snd.playUrl?.(music.url, 0, music.gain) ?? null;
+              }
+              last = a;
+            }, 80);
+            return () => {
+              window.clearInterval(timer);
+              stop?.();
+            };
+          },
+        }
+      : {}),
     create: (ctx) => {
       const holes = makeHoles();
       const layer = new FigureLayer();
@@ -1587,7 +1634,7 @@ function showScene(def: ShowDef): SceneModule {
           !!def.motion && rigs.every((r, i) => r.ready && (def.clips?.[i] ?? []).every((c) => r.has(c)));
         const round = Math.floor((f.time * speed) / loop);
         if (recorded && (!motion || motionKey !== round)) {
-          motion = def.motion!(F, rigs, (s.seed ?? 0) + round * 7.31);
+          motion = def.motion!(F, rigs, (s.seed ?? 0) + round * 7.31, s.params);
           motionKey = round;
         }
         if (visible && recorded && motion) {
