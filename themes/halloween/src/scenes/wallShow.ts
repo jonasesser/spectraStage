@@ -1186,7 +1186,7 @@ const COUPLE: ShowDef = {
           ? { body: stand(x, z, yaw), layers: [{ clip: 'ZombieIdle', t: t0, w: 1 }], look }
           : { body: stand(x, z, yaw), layers: [{ clip: 'Walk', t: 0.25, w: 1 }], look };
       return [
-        [0, (a) => walkMove(a, BURST + 1.2, A1, [hole, -1.0], [hole, 0.35], zw, zpace, F, zfix)],
+        [0, (a) => walkMove(a, BURST + 1.2, A1, [hole, -0.7], [hole, 0.35], zw, zpace, F, zfix)],
         [
           A1,
           (a) =>
@@ -1240,7 +1240,7 @@ const COUPLE: ShowDef = {
           },
         ],
         [A7, (a) => ({ ...idle(hole, 0.35, Math.PI, a - A7) })],
-        [A8, (a) => walkMove(a, A8, A9, [hole, 0.35], [hole, -1.1], zw, zpace, F, zfix)],
+        [A8, (a) => walkMove(a, A8, A9, [hole, 0.35], [hole, -0.8], zw, zpace, F, zfix)],
       ];
     };
     const plans = [plan(0), plan(1)];

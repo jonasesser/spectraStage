@@ -1059,7 +1059,7 @@ void main() {
   if (uDebrisT >= 0.0) {
     float dt = uDebrisT;
     float r = far;
-    float dust = fbm3(vec3(hw.xy * 3.0 - vec2(0.0, -dt * 0.3), dt * 0.4)) * exp(-r * r * 1.2) * exp(-dt * 0.9) * smoothstep(0.0, 0.15, dt);
+    float dust = fbm3(vec3(hw.xy * 3.0 - vec2(0.0, -dt * 0.3), dt * 0.4)) * exp(-r * r * 2.6) * exp(-dt * 1.2) * smoothstep(0.0, 0.25, dt) * 0.7;
     col += (uCute > 0.5 ? vec3(0.5, 0.47, 0.44) : vec3(0.55, 0.48, 0.36)) * dust * (0.12 + 0.3 * uGlow * (uCute > 0.5 ? 0.6 : 1.0));
   }
   if (uGlow > 0.02) {
