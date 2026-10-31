@@ -617,6 +617,25 @@ describe('complete room', () => {
       polygon: rectPolygon(x, y, w, h),
       playback: { mode: 'off' },
     }) as unknown as Surface;
+  it('added sides join a scene played in where it is made for them, else they go dark', () => {
+    const main = s('g', 'wall', 0, 0, 4, 2.25);
+    main.insert = {
+      id: 'w1',
+      scene: { themeId: 'halloween', sceneId: 'wallWitch', params: {} },
+      seed: 5,
+      startedAt: 1000,
+      endAt: 61000,
+      sides: ['main', 'right'],
+    };
+    const all = completeRoom([main]);
+    const by = (id: string) => all.find((x) => x.id === id)!.insert!;
+    expect(by('virtual:wall2').scene.sceneId).toBe('wallWitch'); // right of the main wall
+    for (const id of ['virtual:wall3', 'virtual:wall4', 'virtual:floor'])
+      expect(by(id).scene).toMatchObject({ sceneId: 'solidColor', params: { color: '#000000' } });
+    expect(by('virtual:wall4').endAt).toBe(61000);
+    // nothing played in: the added sides just mirror the main wall's programme
+    expect(completeRoom([s('g', 'wall', 0, 0, 4, 2.25)]).every((x) => !x.insert)).toBe(true);
+  });
   it('adds the missing walls, floor and ceiling at the size of the main wall', () => {
     const all = completeRoom([s('g', 'wall', 0, 0, 4, 2.25), s('f', 'floor', 0, 2.25, 4, 2.25)]);
     const v = all.filter((x) => x.id.startsWith('virtual:'));

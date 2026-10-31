@@ -115,7 +115,22 @@ export function completeRoom(surfaces: readonly Surface[]): Surface[] {
   const mainS = surfaces.find((s) => s.id === mainW.id)!;
   const m = mainW.rect;
   const out: Surface[] = [...surfaces];
-  const add = (id: string, kind: SurfaceKind, role: Surface['role'], r: BBox) =>
+  // a scene played in on the main wall: the added sides join in where it is made for them (the
+  // witch on the right wall), otherwise they go dark with it – never the old picture
+  const ins = mainS.insert;
+  const insertFor = (side: string, i: number): Surface['insert'] => {
+    if (!ins) return undefined;
+    if (!ins.id.startsWith('dark-') && ins.sides?.includes(side)) return { ...ins, id: `${ins.id}v${i}` };
+    return {
+      id: `dark-v${i}-${ins.id}`.slice(0, 40),
+      scene: { themeId: 'basic', sceneId: 'solidColor', params: { color: '#000000' } },
+      seed: ins.seed + 50 + i,
+      startedAt: ins.startedAt,
+      endAt: ins.endAt,
+    };
+  };
+  const add = (id: string, kind: SurfaceKind, role: Surface['role'], r: BBox, side = '') => {
+    const insert = insertFor(side, out.length);
     out.push({
       id: `virtual:${id}`,
       name: id,
@@ -124,15 +139,20 @@ export function completeRoom(surfaces: readonly Surface[]): Surface[] {
       intensity: 1,
       polygon: rectPolygon(r.x, r.y, r.w, r.h),
       playback: structuredClone(mainS.playback),
+      ...(insert ? { insert } : {}),
     } as Surface);
+  };
   const walls = lay.filter((x) => x.role === 'main' || x.role === 'side');
   // room depth = width of the walls next to the main wall (measured depth for added walls)
   const depth = walls.find((w) => w.role === 'side')?.rect.w ?? mainS.roomDepth ?? m.w;
   let right = Math.max(...walls.map((w) => w.rect.x + w.rect.w));
+  const mi = [...walls].sort((a, b) => a.rect.x - b.rect.x).findIndex((w) => w.role === 'main');
   for (let i = walls.length; i < 4; i++) {
     // right and left walls are as wide as the room is deep, the back wall like the main wall
     const w = i % 2 === 1 ? depth : m.w;
-    add(`wall${i + 1}`, 'wall', 'side', { x: right, y: m.y, w, h: m.h });
+    // (the walls go round the room to the right: next to the main wall right, the last one left)
+    const side = i === mi + 1 ? 'right' : (i + 1) % 4 === mi ? 'left' : 'back';
+    add(`wall${i + 1}`, 'wall', 'side', { x: right, y: m.y, w, h: m.h }, side);
     right += w;
   }
   const bottom = m.y + m.h;
@@ -143,7 +163,7 @@ export function completeRoom(surfaces: readonly Surface[]): Surface[] {
       x.rect.x + x.rect.w > m.x &&
       Math.abs(x.rect.y - bottom) < 0.6,
   );
-  if (!hasFloor) add('floor', 'floor', 'ground', { x: m.x, y: bottom, w: m.w, h: depth });
+  if (!hasFloor) add('floor', 'floor', 'ground', { x: m.x, y: bottom, w: m.w, h: depth }, 'floorFront');
   else {
     // the projected floor is shallower than the room: fill the rest of the floor virtually
     const reach = Math.max(
@@ -152,7 +172,13 @@ export function completeRoom(surfaces: readonly Surface[]): Surface[] {
         .map((x) => x.rect.y + x.rect.h),
     );
     if (reach < bottom + depth - 0.05)
-      add('floorRest', 'floor', 'ground', { x: m.x, y: reach, w: m.w, h: bottom + depth - reach });
+      add(
+        'floorRest',
+        'floor',
+        'ground',
+        { x: m.x, y: reach, w: m.w, h: bottom + depth - reach },
+        'floorFront',
+      );
   }
   const hasCeiling = lay.some((x) => x.role === 'ceiling');
   if (!hasCeiling) add('ceiling', 'other', 'ceiling', { x: m.x, y: m.y - depth, w: m.w, h: depth });

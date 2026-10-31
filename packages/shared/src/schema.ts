@@ -314,6 +314,8 @@ export const SurfaceSchema = z.object({
       seed: z.number().int(),
       startedAt: z.number(),
       endAt: z.number(),
+      /** The room sides it is made for (the added sides of the room join in there). */
+      sides: z.array(z.string().max(20)).max(8).optional(),
     })
     .optional(),
 });
