@@ -211,7 +211,10 @@ test('test area: a scene and a projector picture render on this PC only', async 
   await ooh.selectOption('lib:ghost-ghost-wav');
   await expect(ooh).toHaveValue('lib:ghost-ghost-wav');
   const pop = phone.getByLabel('Klang für Plopp', { exact: true });
-  await phone.locator('.row', { has: pop }).getByRole('button', { name: /eigene Datei/ }).click();
+  await phone
+    .locator('.row', { has: pop })
+    .getByRole('button', { name: /eigene Datei/ })
+    .click();
   await phone.locator('input[type=file][accept="audio/*"]').setInputFiles({
     name: 'mein-plopp.mp3',
     mimeType: 'audio/mpeg',
@@ -220,4 +223,49 @@ test('test area: a scene and a projector picture render on this PC only', async 
   await expect(pop).toHaveValue(/^up:/);
   await expect(phone.locator('span', { hasText: 'mein-plopp' })).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test('a scene played in on the main wall: the other sides go dark meanwhile', async ({ browser }) => {
+  test.setTimeout(120_000);
+  const { phone, code } = await createShow(browser);
+  const _garage = await openDisplay(browser, code, 'Garage');
+  const wall = await openDisplay(browser, code, 'Hauswand');
+  await approve(phone, 'Garage');
+  await approve(phone, 'Hauswand', 'Wand');
+  await expect(wall.getByText(/Warte auf Freigabe/)).toBeHidden({ timeout: 10_000 });
+  const off = phone.getByRole('button', { name: /Testbild aus/ });
+  await expect(off).toHaveCount(1);
+  await off.first().click();
+  await wall.waitForTimeout(3000);
+  await wall.screenshot({ path: 'test-results/dark-before.png' });
+  await phone
+    .getByRole('button', { name: /Szenen/ })
+    .first()
+    .click();
+  await phone
+    .locator('input[type=file][accept*="video"]')
+    .setInputFiles('tests/e2e/fixtures/kling-test.webm');
+  const tile = phone.locator('.tile', { hasText: /kling-test/ });
+  await expect(tile).toBeVisible({ timeout: 20_000 });
+  await tile.click();
+  await phone.getByRole('button', { name: /Jetzt einspielen/ }).click();
+  await wall.waitForTimeout(4500);
+  const after = await wall.screenshot({ path: 'test-results/dark-after.png' });
+  // the other wall: its world scene faded to black while the video plays
+  const mean = async (p: Page, png: Buffer) =>
+    p.evaluate(async (b64) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${b64}`;
+      await img.decode();
+      const c = document.createElement('canvas');
+      c.width = 64;
+      c.height = 36;
+      const g = c.getContext('2d')!;
+      g.drawImage(img, 0, 0, 64, 36);
+      const d = g.getImageData(0, 0, 64, 36).data;
+      let s = 0;
+      for (let i = 0; i < d.length; i += 4) s += d[i]! + d[i + 1]! + d[i + 2]!;
+      return s / (d.length / 4) / 3;
+    }, png.toString('base64'));
+  expect(await mean(wall, after)).toBeLessThan(6);
 });

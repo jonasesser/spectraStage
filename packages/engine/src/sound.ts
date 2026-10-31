@@ -39,7 +39,7 @@ export interface SoundApi {
    */
   replaced?(slot: string, delay?: number): boolean;
   /** Plays a recording (e.g. a show's music) once; returns a stop function. */
-  playUrl?(url: string, delay?: number, gain?: number): () => void;
+  playUrl?(url: string, delay?: number, gain?: number, offset?: number): () => void;
   /** Loads a recording ahead. */
   preload?(url: string): void;
 }
@@ -90,7 +90,7 @@ export class SoundEngine implements SoundApi {
   }
 
   /** Plays a recording once (loads it first if needed); returns a stop function. */
-  playUrl(url: string, delay = 0, gain = 0.8): () => void {
+  playUrl(url: string, delay = 0, gain = 0.8, offset = 0): () => void {
     const ctx = this.ready();
     if (!ctx || !this.master) return () => {};
     const b = this.buffers.get(url);
@@ -104,7 +104,10 @@ export class SoundEngine implements SoundApi {
         if (stop) return;
         const bb = this.buffers.get(url);
         if (bb instanceof AudioBuffer) {
-          if (performance.now() - t < 1500) inner = this.playUrl(url, delay, gain);
+          // (late by the loading time: a long piece goes on from where it would be now)
+          const late = (performance.now() - t) / 1000;
+          if (offset > 0 || bb.duration > 8) inner = this.playUrl(url, delay, gain, offset + late);
+          else if (late < 1.5) inner = this.playUrl(url, delay, gain);
         } else if (bb !== 'failed' && performance.now() - t < 5000) setTimeout(wait, 100);
       };
       setTimeout(wait, 100);
@@ -118,7 +121,8 @@ export class SoundEngine implements SoundApi {
     const g = ctx.createGain();
     g.gain.value = gain;
     src.connect(g).connect(this.master);
-    src.start(ctx.currentTime + delay);
+    if (offset >= b.duration) return () => {};
+    src.start(ctx.currentTime + delay, Math.max(0, offset));
     return () => {
       try {
         src.stop();

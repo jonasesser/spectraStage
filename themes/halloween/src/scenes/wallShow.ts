@@ -142,6 +142,20 @@ export function standLift(F: Frame, z: number): number {
   return (eyeH * z) / Math.max(0.5, F.ro[2]) + Math.min(1, z / 0.15) * (0.05 / F.k);
 }
 
+/**
+ * How much smaller the figures must be so that, standing up to `zMax` in front of the wall (on
+ * the risen floor), their heads are still seen on it – a low wall can't show a tall figure close
+ * to the viewer (it would lose its head at the top edge).
+ */
+export function fitScale(F: Frame, heightM: number, zMax = 0.75): number {
+  const eyeY = F.ro[1];
+  const eyeZ = Math.max(0.5, F.ro[2]);
+  const top = F.p0[1] - 0.08 / F.k;
+  const z = Math.min(zMax, eyeZ * 0.8);
+  const hmax = ((top - eyeY) * (eyeZ - z)) / eyeZ + eyeY - (F.floorY + standLift(F, z));
+  return Math.max(0.55, Math.min(1, hmax / (heightM / F.k)));
+}
+
 /** Turning about the vertical of a rotation (where +z ends up). */
 function yawOfQ(q: THREE.Quaternion): number {
   const f = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
@@ -301,6 +315,8 @@ export class Rig {
   private faceId: string | null = null;
   /** Feet in front of the wall stay visible (see standLift); off where the scene lifts its own floor. */
   liftFloor = true;
+  /** Smaller than life where the wall is too low for the whole figure (see fitScale). */
+  fit = 1;
   /** Recorded motions (motion capture, from the model file). */
   private clips = new Map<string, THREE.AnimationClip>();
   private mixer: THREE.AnimationMixer | null = null;
@@ -461,7 +477,7 @@ export class Rig {
     if (!this.ready) return;
     for (const [o, q] of this.bind) o.quaternion.copy(q);
     this.b.Hips!.position.copy(this.hips0);
-    this.size = this.heightM / F.k / this.height;
+    this.size = (this.heightM * this.fit) / F.k / this.height;
     this.yaw = body.yaw;
     const yq = new THREE.Quaternion().setFromAxisAngle(UP, body.yaw);
     this.root.scale.setScalar(this.size);
@@ -513,7 +529,7 @@ export class Rig {
 
   /** The figure's scale in this frame (local units per model unit). */
   scaleFor(F: Frame): number {
-    return this.heightM / F.k / this.height;
+    return (this.heightM * this.fit) / F.k / this.height;
   }
 
   /** Has this recorded motion. */
@@ -533,7 +549,7 @@ export class Rig {
    */
   play(body: Body, F: Frame, layers: { clip: string; t: number; w: number }[], ownYaw: boolean) {
     if (!this.ready || !this.mixer) return;
-    this.size = this.heightM / F.k / this.height;
+    this.size = (this.heightM * this.fit) / F.k / this.height;
     this.yaw = body.yaw;
     this.root.scale.setScalar(this.size);
     this.root.quaternion.setFromAxisAngle(UP, body.yaw);
@@ -960,7 +976,7 @@ interface ShowDef {
    */
   motion?: (F: Frame, rigs: Rig[], seed: number, params: Record<string, unknown>) => (a: number) => Move[];
   /** A piece of music from show time `at` (once per round), replaceable in the sound list (slot). */
-  music?: { url: string; at: number; slot: string; gain: number };
+  music?: { url: string; at: number; sec: number; slot: string; gain: number };
   clips?: string[][];
 }
 
@@ -1162,7 +1178,10 @@ function coupleHold(rigs: Rig[], eye: THREE.Vector3, hold: number, twirl: number
     },
     {
       at: blend(restG(-1), twirl > 0.5 ? restG(-1).add(gLeft.clone().multiplyScalar(-0.15)) : back),
-      fingers: gLeft.clone().multiplyScalar(-1).add(toB.clone().multiplyScalar(0.3)),
+      // the hand lies flat on her back, the fingers across it towards his left (inwards)
+      fingers: down
+        .clone()
+        .lerp(gLeft.clone().add(toB.clone().multiplyScalar(0.3)).normalize(), twirl > 0.5 ? 0 : hold),
       palm: toB.clone(),
       poles: [down.clone().add(gLeft.clone().multiplyScalar(-0.8))],
     },
@@ -1296,7 +1315,7 @@ const COUPLE: ShowDef = {
     ['ZombieWalk', 'ZombieIdle', 'Walk', 'Waltz', 'Gesture'],
     ['StumbleWalk', 'Scream', 'Walk', 'Waltz', 'DanceShake', 'DanceJazz'],
   ],
-  music: { url: '/sounds/couple-waltz.mp3', at: 18.5, slot: 'm:halloween/wallCouple', gain: 0.9 },
+  music: { url: '/sounds/couple-waltz.mp3', at: 18.5, sec: 20, slot: 'm:halloween/wallCouple', gain: 0.9 },
   motion: (F, rigs, seed, params) => {
     const [groom, bride] = rigs as [Rig, Rig];
     const hx = coupleHoleX(F);
@@ -1693,30 +1712,36 @@ function showScene(def: ShowDef): SceneModule {
       let visible = false;
       let motion: ((a: number) => Move[]) | null = null;
       let motionKey = -1;
-      let musicLast = -1;
+      let musicRound = -1;
       let musicStop: (() => void) | null = null;
       const uniforms = (s: DrawState, f: { time: number }) => {
         const F = (s.cache.wsFrame as Frame | undefined) ?? (s.cache.wsFrame = frameOf(s));
         const speed = speedOf(s);
         const loop = SHOW + pauseOf(s);
+        // all figures of the show the same (smaller only if the wall is too low for the tallest)
+        const fit = fitScale(F, Math.max(...def.actors.map((x) => x.height)));
+        for (const r of rigs) r.fit = fit;
         clocks[def.id] = { time: f.time, at: performance.now(), speed, loop };
         const a = (f.time * speed) % loop;
-        // the music: just passed its moment (not when joining long after); on / off and volume
+        // the music: once per round from its moment – also when a frame came late or the picture
+        // joined in the middle (then from where the piece is now); on / off and volume
         if (music) {
           const snd = musicOut.get(ctx.seed);
           const on = s.params.music !== false;
-          if (snd && on && musicLast >= 0 && musicLast < music.at && a >= music.at && a - music.at < 1) {
+          const roundNo = Math.floor((f.time * speed) / loop);
+          if (snd && on && musicRound !== roundNo && a >= music.at && a < music.at + music.sec - 1) {
+            musicRound = roundNo;
             musicStop?.();
             const vol = typeof s.params.musicVolume === 'number' ? s.params.musicVolume : 0.8;
+            const off = a - music.at < 0.5 ? 0 : a - music.at;
             musicStop = snd.replaced?.(music.slot)
               ? null
-              : (snd.playUrl?.(music.url, 0, music.gain * vol) ?? null);
+              : (snd.playUrl?.(music.url, 0, music.gain * vol, off) ?? null);
           }
           if (!on && musicStop) {
             musicStop();
             musicStop = null;
           }
-          musicLast = a;
         }
         const rebuild = s.params.ending !== 'fade';
         const W = wallAt(a, rebuild);

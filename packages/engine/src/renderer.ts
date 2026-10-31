@@ -678,7 +678,13 @@ export class StageRenderer {
     this.state = state;
     this.outputId = outputId;
     if (state) {
-      for (const s of state.surfaces) this.ensureRuntime(this.themeOf(s, state));
+      for (const s of state.surfaces) {
+        this.ensureRuntime(this.themeOf(s, state));
+        // a scene played in may come from another theme (e.g. the dark one for the other sides)
+        if (s.insert) this.ensureRuntime(s.insert.scene.themeId);
+      }
+      // (the dark scene for sides that sit out a played-in scene: ready before it is needed)
+      if (this.opts.catalog.get('basic')) this.ensureRuntime('basic');
       for (const c of state.cues) this.ensureRuntime(c.themeId);
       for (const a of state.ambient.actors) this.ensureRuntime(a.themeId);
     }
