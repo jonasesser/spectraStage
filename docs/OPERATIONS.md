@@ -310,3 +310,5 @@ Hinweis: Läuft der Server hinter einem Proxy (Easypanel), muss dessen Upload-Gr
 - Die Wand allein kann den Boden davor nicht zeigen: Figuren, die vor der Wand stehen, stehen deshalb auf einem leicht zum Betrachter ansteigenden Boden – die Füße bleiben auf der Wand sichtbar.
 - Was hinter der Wand ist, wird entlang der Blicklinie verdeckt (nicht senkrecht) – Figuren in seitlichen Löchern werden nicht mehr vom Lochrand angeschnitten.
 - Gäste-Gesichter: das Gesicht wird im Original-Foto per Gesichtserkennung gefunden, aufrecht gedreht und deckt das Gesicht der Figur voll (nicht durchscheinend). Ohne erkanntes Gesicht wird es aus dem Umriss geschätzt.
+- Brautpaar mit echten Bewegungsaufnahmen (Meshy-Animationen in `bride.glb` / `groom.glb`): Zombie-Gang aus dem Loch, Schrei, Gang zur Mitte, Solo-Tanz der Braut (zufällig Shake oder Jazz, er schaut zu oder gestikuliert), gemeinsamer Tanz, zum Publikum, zurück ins Loch. Jeder Durchlauf wählt neu.
+- Wand: wölbt und reißt über Sekunden, bricht erst an und wächst dann in ~3 s auf; am Ende schließt sie sich über ~5 s, die Risse heilen langsam. Einmal-Shows dauern 50 s.

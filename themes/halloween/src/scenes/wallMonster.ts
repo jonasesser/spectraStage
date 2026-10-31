@@ -1279,15 +1279,21 @@ void main() {
 }
 `;
 
-const loaders: Record<string, Promise<THREE.Group | null>> = {};
-export function loadModel(url: string): Promise<THREE.Group | null> {
+const loaders: Record<string, Promise<{ scene: THREE.Group; animations: THREE.AnimationClip[] } | null>> = {};
+/** A model with its recorded motions (clips by name). */
+export function loadGltf(
+  url: string,
+): Promise<{ scene: THREE.Group; animations: THREE.AnimationClip[] } | null> {
   return (loaders[url] ??= import('three/examples/jsm/loaders/GLTFLoader.js')
     .then(({ GLTFLoader }) => new GLTFLoader().loadAsync(url))
-    .then((g) => g.scene)
+    .then((g) => ({ scene: g.scene, animations: g.animations }))
     .catch((e: unknown) => {
       console.warn('[wallMonster] model failed', url, e);
       return null;
     }));
+}
+export function loadModel(url: string): Promise<THREE.Group | null> {
+  return loadGltf(url).then((g) => g?.scene ?? null);
 }
 
 const qv = (v: V3) => new THREE.Vector3(v[0], v[1], v[2]);

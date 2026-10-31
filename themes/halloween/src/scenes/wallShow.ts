@@ -18,7 +18,7 @@ import {
   elbowIK,
   frameOf,
   KEY_POS,
-  loadModel,
+  loadGltf,
   makeHoles,
   NO_TEX,
   occludeMaterial,
@@ -134,6 +134,12 @@ export function standLift(F: Frame, z: number): number {
   if (z <= 0) return 0;
   const eyeH = F.ro[1] - F.floorY;
   return (eyeH * z) / Math.max(0.5, F.ro[2]) + Math.min(1, z / 0.15) * (0.05 / F.k);
+}
+
+/** Turning about the vertical of a rotation (where +z ends up). */
+function yawOfQ(q: THREE.Quaternion): number {
+  const f = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+  return Math.atan2(f.x, f.z);
 }
 
 // ---------------------------------------------------------------------------
@@ -286,15 +292,24 @@ export class Rig {
   private faceId: string | null = null;
   /** Feet in front of the wall stay visible (see standLift); off where the scene lifts its own floor. */
   liftFloor = true;
+  /** Recorded motions (motion capture, from the model file). */
+  private clips = new Map<string, THREE.AnimationClip>();
+  private mixer: THREE.AnimationMixer | null = null;
+  private actions = new Map<string, THREE.AnimationAction>();
+  private hips0 = new THREE.Vector3();
+  private hipsScale = 1;
 
   constructor(
     url: string,
     private readonly heightM: number,
     holes: HoleUniforms,
   ) {
-    void loadModel(url).then((g) => {
+    void loadGltf(url).then((g) => {
       if (!g || this.disposed) return;
-      this.setup(g.clone(true), holes);
+      const model = g.scene.clone(true);
+      for (const c of g.animations) this.clips.set(c.name, c);
+      if (this.clips.size) this.mixer = new THREE.AnimationMixer(model);
+      this.setup(model, holes);
     });
   }
 
@@ -407,6 +422,9 @@ export class Rig {
       by.HeadTop_End ? wp('HeadTop_End') : wp('Head').add(new THREE.Vector3(0, 0.2, 0)),
     );
     this.b = by;
+    this.hips0.copy(by.Hips!.position);
+    // hips units → the figure's units (the model's own scale, e.g. centimetres)
+    this.hipsScale = by.Hips!.parent ? by.Hips!.parent.getWorldScale(new THREE.Vector3()).x : 1;
     this.root.add(g);
     this.ready = true;
   }
@@ -445,6 +463,82 @@ export class Rig {
     this.limb(this.legs.L, vec(lifted[0]!), [fw.clone().add(left.clone().multiplyScalar(0.15))]);
     this.limb(this.legs.R, vec(lifted[1]!), [fw.clone().add(left.clone().multiplyScalar(-0.15))]);
     for (const leg of [this.legs.L, this.legs.R]) this.setWorldQ(leg.end, yq.clone().multiply(leg.q0[2]));
+  }
+
+  /** The figure's scale in this frame (local units per model unit). */
+  scaleFor(F: Frame): number {
+    return this.heightM / F.k / this.height;
+  }
+
+  /** Has this recorded motion. */
+  has(clip: string): boolean {
+    return this.clips.has(clip);
+  }
+
+  /** Length of a recorded motion (s). */
+  dur(clip: string): number {
+    return this.clips.get(clip)?.duration ?? 1;
+  }
+
+  /**
+   * Places the figure and plays recorded motion: clips blended by weight, each at its own time
+   * (looped). The clips' own travel is always taken out – the body moves the figure (see
+   * travel()); with `ownYaw` off also their turning (the body's yaw is the facing).
+   */
+  play(body: Body, F: Frame, layers: { clip: string; t: number; w: number }[], ownYaw: boolean) {
+    if (!this.ready || !this.mixer) return;
+    this.size = this.heightM / F.k / this.height;
+    this.yaw = body.yaw;
+    this.root.scale.setScalar(this.size);
+    this.root.quaternion.setFromAxisAngle(UP, body.yaw);
+    const up = this.liftFloor ? standLift(F, body.z) : 0;
+    this.root.position.set(body.x, F.floorY + up + body.hop - body.drop, body.z);
+    let sum = 0;
+    for (const l of layers) sum += Math.max(0, l.w);
+    const used = new Set<string>();
+    for (const l of layers) {
+      const clip = this.clips.get(l.clip);
+      if (!clip || l.w <= 0 || used.has(l.clip)) continue;
+      let act = this.actions.get(l.clip);
+      if (!act) {
+        act = this.mixer.clipAction(clip);
+        this.actions.set(l.clip, act);
+      }
+      act.enabled = true;
+      act.setEffectiveWeight(l.w / Math.max(1e-6, sum));
+      act.play();
+      act.time = ((l.t % clip.duration) + clip.duration) % clip.duration;
+      used.add(l.clip);
+    }
+    for (const [n, act] of this.actions) if (!used.has(n)) act.enabled = false;
+    this.mixer.update(0);
+    const h = this.b.Hips!;
+    h.position.x = this.hips0.x;
+    h.position.z = this.hips0.z;
+    if (!ownYaw) h.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(UP, -yawOfQ(h.quaternion)));
+    this.root.updateMatrixWorld(true);
+  }
+
+  /**
+   * Where a clip carries the figure (its recorded travel and turning) at time t, relative to the
+   * start of the clip – in the figure's local units (×size = scene units).
+   */
+  travel(clip: string, t: number): { x: number; z: number; yaw: number } {
+    const c = this.clips.get(clip);
+    if (!c) return { x: 0, z: 0, yaw: 0 };
+    const pos = c.tracks.find((k) => k.name.endsWith('Hips.position'));
+    const rot = c.tracks.find((k) => k.name.endsWith('Hips.quaternion'));
+    const tt = Math.max(0, Math.min(c.duration, t));
+    const v = (tr: THREE.KeyframeTrack | undefined, n: number, at: number) =>
+      tr ? Array.from(tr.createInterpolant(new Float32Array(n)).evaluate(at)) : new Array<number>(n).fill(0);
+    const p0 = v(pos, 3, 0);
+    const p1 = v(pos, 3, tt);
+    const q = v(rot, 4, tt);
+    return {
+      x: (p1[0]! - p0[0]!) * this.hipsScale,
+      z: (p1[2]! - p0[2]!) * this.hipsScale,
+      yaw: rot ? yawOfQ(new THREE.Quaternion(q[0], q[1], q[2], q[3])) : 0,
+    };
   }
 
   /** Arms: a reach per hand (null = hanging relaxed at the side). L = the figure's left hand. */
@@ -750,7 +844,7 @@ export class FigureLayer {
 // ---------------------------------------------------------------------------
 // The wall over time (shared by all shows)
 // ---------------------------------------------------------------------------
-const SHOW = 48;
+const SHOW = 50;
 const BURST = 10;
 const REBUILD = 41;
 
@@ -764,20 +858,22 @@ interface WallState {
 }
 
 function wallAt(a: number, rebuild: boolean): WallState {
-  const bulge = ease(a, 4.5, 8) * (1 - ease(a, 9.7, 10));
-  const close = rebuild ? ease(a, 43.2, 44.6) : 0;
-  const open = ease(a, BURST, BURST + 0.45) * (1 - close);
-  const crack = ease(a, 7, 9.9) * (rebuild ? 1 - ease(a, 44.4, 46.2) : 1);
+  // it takes its time: bulging and cracking for seconds, then a first break, the hole grows piece
+  // by piece; at the end the pieces fly back one by one and the cracks heal slowly
+  const bulge = ease(a, 3.5, 8.5) * (1 - ease(a, 9.8, 10.4));
+  const close = rebuild ? ease(a, 41.2, 46.6) : 0;
+  const open = (0.5 * ease(a, BURST, BURST + 0.7) + 0.5 * ease(a, BURST + 0.5, BURST + 3)) * (1 - close);
+  const crack = ease(a, 5.5, 9.9) * (rebuild ? 1 - ease(a, 45.5, 48.5) : 1);
   // debris flies out at the burst – and (building up again) back into the wall
   let debrisT = -1;
   if (a >= BURST && a < BURST + 3.2) debrisT = a - BURST;
-  if (rebuild && a >= REBUILD + 0.5 && a < 44.3) debrisT = Math.max(0, 44.3 - a);
+  if (rebuild && a >= REBUILD + 0.8 && a < 46.6) debrisT = Math.max(0, (46.6 - a) * 0.66);
   const flash = a >= BURST ? Math.exp(-(a - BURST) * 2.5) : 0;
   const glow =
     (0.18 * crack + 0.82 * open + 0.8 * flash) *
-    (1 - ease(a, 41.5, 44)) *
+    (1 - ease(a, 42, 46.5)) *
     (0.9 + 0.1 * Math.sin(a * 13.1) * Math.sin(a * 7.3));
-  const fade = ease(a, 0, 1.2) * (1 - ease(a, rebuild ? 46.5 : 41.5, rebuild ? 48 : 44));
+  const fade = ease(a, 0, 1.2) * (1 - ease(a, rebuild ? 48.5 : 41.5, rebuild ? 50 : 44));
   return { bulge, crack, open, debrisT, glow, fade };
 }
 
@@ -811,6 +907,85 @@ interface ShowDef {
   faces?: string[];
   /** Hands and looks once the bodies stand (other actors' bones available). */
   arms: (a: number, rigs: Rig[], F: Frame, eye: THREE.Vector3) => void;
+  /**
+   * Recorded motion (motion capture clips in the model files) instead of the computed one: what
+   * each actor does at show time a. Used when all figures have their clips (`clips`).
+   */
+  motion?: (F: Frame, rigs: Rig[], seed: number) => (a: number) => Move[];
+  clips?: string[][];
+}
+
+interface Layer {
+  clip: string;
+  t: number;
+  w: number;
+}
+/** What a figure does now: where it is, which recorded motions play, where it looks. */
+interface Move {
+  body: Body;
+  layers: Layer[];
+  /** The clips turn the figure themselves (spins in a dance). */
+  ownYaw?: boolean;
+  /** Look at the audience (0…1) or at the other figure (lookAt). */
+  look?: number;
+  lookAt?: number;
+}
+
+/** A row of steps over time; each blends into the next over `fade` seconds. */
+type Step = [a0: number, act: (a: number) => Move];
+function steps(list: Step[], a: number, fade = 0.5): Move {
+  let i = 0;
+  while (i + 1 < list.length && a >= list[i + 1]![0]) i++;
+  const cur = list[i]![1](a);
+  const k = i > 0 ? ease(a, list[i]![0], list[i]![0] + fade) : 1;
+  if (k >= 1) return cur;
+  const prev = list[i - 1]![1](a);
+  const yaw = prev.body.yaw + wrapAng(cur.body.yaw - prev.body.yaw) * k;
+  return {
+    body: {
+      ...cur.body,
+      x: mix(prev.body.x, cur.body.x, k),
+      z: mix(prev.body.z, cur.body.z, k),
+      yaw,
+      drop: mix(prev.body.drop, cur.body.drop, k),
+    },
+    layers: [
+      ...prev.layers.map((l) => ({ ...l, w: l.w * (1 - k) })),
+      ...cur.layers.map((l) => ({ ...l, w: l.w * k })),
+    ],
+    ownYaw: k < 0.5 ? prev.ownYaw : cur.ownYaw,
+    look: mix(prev.look ?? 0, cur.look ?? 0, k),
+    lookAt: k < 0.5 ? prev.lookAt : cur.lookAt,
+  };
+}
+const wrapAng = (d: number) => Math.atan2(Math.sin(d), Math.cos(d));
+const stand = (x: number, z: number, yaw: number): Body => ({ ...still(x, z, yaw), drop: 0 });
+
+/** Walking from p0 to p1 between a0 and a1 with a clip played in place at the matching pace. */
+function walkMove(
+  a: number,
+  a0: number,
+  a1: number,
+  p0: [number, number],
+  p1: [number, number],
+  clip: string,
+  /** The clip's natural pace: metres per second of clip. */
+  pace: number,
+  F: Frame,
+  yawFix = 0,
+  look = 0,
+): Move {
+  const u = clamp01((a - a0) / Math.max(0.01, a1 - a0));
+  const dx = p1[0] - p0[0];
+  const dz = p1[1] - p0[1];
+  const dist = Math.hypot(dx, dz) * F.k; // metres
+  const speed = dist / Math.max(0.01, a1 - a0);
+  const heading = Math.atan2(dx, dz);
+  return {
+    body: stand(mix(p0[0], p1[0], u), mix(p0[1], p1[1], u), heading + yawFix),
+    layers: [{ clip, t: ((a - a0) * speed) / pace, w: 1 }],
+    look,
+  };
 }
 
 const still = (x: number, z: number, yaw: number, beat = 0.55): Body => ({
@@ -957,6 +1132,120 @@ const COUPLE: ShowDef = {
     return [make(0), make(1)];
   },
   faces: ['groomPhoto', 'bridePhoto'],
+  clips: [
+    ['ZombieWalk', 'ZombieIdle', 'Walk', 'Waltz', 'Gesture'],
+    ['StumbleWalk', 'Scream', 'Walk', 'Waltz', 'DanceShake', 'DanceJazz'],
+  ],
+  motion: (F, rigs, seed) => {
+    const [groom, bride] = rigs as [Rig, Rig];
+    const hx = coupleHoleX(F);
+    const rnd = (n: number) => {
+      const v = Math.sin(seed * 127.1 + n * 311.7) * 43758.5453;
+      return v - Math.floor(v);
+    };
+    // this time: which solo dance she does, whether he joins in or claps, whether she screams at the end
+    const solo = rnd(1) < 0.5 ? 'DanceShake' : 'DanceJazz';
+    const heClaps = rnd(2) < 0.5;
+    const screamEnd = rnd(3) < 0.6;
+    // the waltz: a recorded couple dance (both clips share one origin) – turned so they stand side
+    // by side for the audience (she on the left facing right, he on the right facing her)
+    // (far enough from the wall that no arm reaches into it)
+    const C: [number, number] = [0, 0.55];
+    const R = Math.PI / 2;
+    const WT0 = 2.5; // (before, both start on the same spot)
+    const waltzBody = (rig: Rig, t: number): Body => {
+      const tr = rig.travel('Waltz', t);
+      const k = rig.scaleFor(F);
+      const x = (tr.x * Math.cos(R) + tr.z * Math.sin(R)) * k;
+      const z = (-tr.x * Math.sin(R) + tr.z * Math.cos(R)) * k;
+      // depth squeezed: far in front of the wall they would tower over the audience (and their
+      // feet would need the floor to rise a lot)
+      return stand(C[0] + x, C[1] + z * 0.3, R + tr.yaw);
+    };
+    const g0 = waltzBody(groom, WT0);
+    const b0 = waltzBody(bride, WT0);
+    const A1 = BURST + 3.8; // out of the hole
+    const A2 = A1 + 2.6; // after the scream: to the middle
+    const A3 = A2 + 2.8; // solo
+    const A4 = A3 + 6; // waltz
+    const A5 = A4 + (10 - WT0); // to the audience
+    const A6 = A5 + 1.8; // back to the holes
+    const A7 = A6 + 3; // turn
+    const A8 = A7 + 0.6; // into the hole
+    const A9 = A8 + 2.6;
+    const plan = (who: 0 | 1): Step[] => {
+      const rig = who === 0 ? groom : bride;
+      const hole = who === 0 ? hx : -hx;
+      const zw = who === 0 ? 'ZombieWalk' : 'StumbleWalk';
+      const zpace = who === 0 ? 1.03 : 1.12;
+      // the groom's zombie walk drifts to the side: turned back so he walks straight
+      const zfix = who === 0 ? -0.43 : 0;
+      const at = who === 0 ? g0 : b0;
+      const idle = (x: number, z: number, yaw: number, t0: number, look = 0): Move =>
+        who === 0
+          ? { body: stand(x, z, yaw), layers: [{ clip: 'ZombieIdle', t: t0, w: 1 }], look }
+          : { body: stand(x, z, yaw), layers: [{ clip: 'Walk', t: 0.25, w: 1 }], look };
+      return [
+        [0, (a) => walkMove(a, BURST + 1.2, A1, [hole, -1.0], [hole, 0.35], zw, zpace, F, zfix)],
+        [
+          A1,
+          (a) =>
+            who === 1
+              ? { body: stand(hole, 0.35, 0), layers: [{ clip: 'Scream', t: a - A1, w: 1 }], look: 0.8 }
+              : idle(hole, 0.35, 0, a - A1, 0.8),
+        ],
+        [A2, (a) => walkMove(a, A2, A3, [hole, 0.35], [at.x, at.z], 'Walk', 1.25, F)],
+        [
+          A3,
+          (a) =>
+            who === 1
+              ? {
+                  body: stand(at.x, at.z, 0),
+                  layers: [{ clip: solo, t: a - A3, w: 1 }],
+                  ownYaw: true,
+                  look: 0.3,
+                }
+              : heClaps
+                ? {
+                    body: stand(at.x, at.z, at.yaw),
+                    layers: [{ clip: 'Gesture', t: a - A3, w: 1 }],
+                    lookAt: 1,
+                  }
+                : { ...idle(at.x, at.z, at.yaw, a - A3), lookAt: 1 },
+        ],
+        [
+          A4,
+          (a) => ({
+            body: waltzBody(rig, WT0 + (a - A4)),
+            layers: [{ clip: 'Waltz', t: WT0 + (a - A4), w: 1 }],
+            lookAt: 1 - who,
+          }),
+        ],
+        [
+          A5,
+          (a) => {
+            const e = waltzBody(rig, 10);
+            return who === 1 && screamEnd
+              ? { body: stand(e.x, e.z, 0), layers: [{ clip: 'Scream', t: a - A5, w: 1 }], look: 0.8 }
+              : who === 0
+                ? { body: stand(e.x, e.z, 0), layers: [{ clip: 'Gesture', t: 6 + a - A5, w: 1 }], look: 0.8 }
+                : idle(e.x, e.z, 0, a - A5, 0.8);
+          },
+        ],
+        [
+          A6,
+          (a) => {
+            const e = waltzBody(rig, 10);
+            return walkMove(a, A6, A7, [e.x, e.z], [hole, 0.35], 'Walk', 1.25, F);
+          },
+        ],
+        [A7, (a) => ({ ...idle(hole, 0.35, Math.PI, a - A7) })],
+        [A8, (a) => walkMove(a, A8, A9, [hole, 0.35], [hole, -1.1], zw, zpace, F, zfix)],
+      ];
+    };
+    const plans = [plan(0), plan(1)];
+    return (a) => plans.map((p) => steps(p, a, 0.55));
+  },
   arms: (a, rigs, F, eye) => {
     const [groom, bride] = rigs as [Rig, Rig];
     const hold = ease(a, 16.8, 17.6) * (1 - ease(a, 33, 33.8));
@@ -1254,6 +1543,8 @@ function showScene(def: ShowDef): SceneModule {
       for (const r of rigs) layer.scene.add(r.root);
       let actors: Actor[] | null = null;
       let visible = false;
+      let motion: ((a: number) => Move[]) | null = null;
+      let motionKey = -1;
       const uniforms = (s: DrawState, f: { time: number }) => {
         const F = (s.cache.wsFrame as Frame | undefined) ?? (s.cache.wsFrame = frameOf(s));
         const speed = speedOf(s);
@@ -1272,7 +1563,7 @@ function showScene(def: ShowDef): SceneModule {
         holes.uEye.value.set(F.ro[0], F.ro[1], F.ro[2]);
         // the figures
         actors ??= def.bodies(F).map((body, i) => ({ rig: rigs[i]!, body, width: 0.075 }));
-        visible = a >= BURST && a < (rebuild ? 44 : 43) && W.fade > 0;
+        visible = a >= BURST && a < (rebuild ? 46 : 43) && W.fade > 0;
         layer.view(F);
         layer.fade = W.fade;
         for (let i = 0; i < 2; i++) {
@@ -1284,7 +1575,28 @@ function showScene(def: ShowDef): SceneModule {
           g.intensity = W.glow * 1.4;
         }
         const eye = new THREE.Vector3(F.ro[0], F.ro[1], F.ro[2]);
-        if (visible) {
+        // recorded motion when every figure brings its clips
+        const recorded =
+          !!def.motion && rigs.every((r, i) => r.ready && (def.clips?.[i] ?? []).every((c) => r.has(c)));
+        const round = Math.floor((f.time * speed) / loop);
+        if (recorded && (!motion || motionKey !== round)) {
+          motion = def.motion!(F, rigs, (s.seed ?? 0) + round * 7.31);
+          motionKey = round;
+        }
+        if (visible && recorded && motion) {
+          const moves = motion(a);
+          moves.forEach((m, i) => {
+            const r = rigs[i]!;
+            r.root.visible = true;
+            r.play(m.body, F, m.layers, !!m.ownYaw);
+          });
+          moves.forEach((m, i) => {
+            const r = rigs[i]!;
+            if (m.lookAt !== undefined && rigs[m.lookAt]) r.look(rigs[m.lookAt]!.pos('Head'), 0.6);
+            else if ((m.look ?? 0) > 0.01) r.look(eye, m.look);
+            r.finish();
+          });
+        } else if (visible) {
           // how much each one is walking right now (0 standing … 1 walking)
           const walkOf = (act: Actor) => {
             const b0 = act.body(a - 0.15);

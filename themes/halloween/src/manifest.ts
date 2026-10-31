@@ -109,10 +109,10 @@ function breakoutScene(
   };
 }
 
-/** A scene played in between by hand, once (48 s): no pause setting. */
+/** A scene played in between by hand, once (50 s): no pause setting. */
 function oneShot(...args: Parameters<typeof breakoutScene>): SceneManifest {
   const sc = breakoutScene(...args);
-  return { ...sc, params: sc.params.filter((p) => p.key !== 'pause'), oneShotSec: 48 };
+  return { ...sc, params: sc.params.filter((p) => p.key !== 'pause'), oneShotSec: 50 };
 }
 
 const EVENT_OPTIONS = [
