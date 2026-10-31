@@ -1278,7 +1278,9 @@ export class StageRenderer {
     r.setRenderTarget(null);
     r.setClearColor(0x000000, 1);
     r.clear();
-    const showOverlay = !this.opts.preview && output && (output.showMasks || testMode !== 'off');
+    // the tinted masks belong to the setup picture: they go away with it (no stale overlay after F5)
+    const showOverlay =
+      !this.opts.preview && output && ((output.showMasks && aligning) || testMode !== 'off');
     const finalGain = this.opts.preview
       ? 1
       : Math.max(this.gain, testMode !== 'off' || identify || aligning ? 1 : 0) * limiter;

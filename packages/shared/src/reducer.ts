@@ -38,6 +38,12 @@ import {
   type RoomWall,
 } from './room.ts';
 
+/**
+ * Setup pictures on the projector (measuring, object / facade outlines) expire unless the open
+ * phone screen renews them (every 15 s) – a closed or reloaded page can't leave them stuck.
+ */
+const EDIT_TTL = 45_000;
+
 export class CommandError extends Error {
   constructor(
     public readonly code: string,
@@ -595,7 +601,7 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       return res(`frame ${Math.round(cmd.level * 100)}% for ${cmd.scene}`);
     }
     case 'facade.edit':
-      state.facadeEdit = cmd.on ? ctx.now + 30 * 60_000 : null;
+      state.facadeEdit = cmd.on ? ctx.now + EDIT_TTL : null;
       return res(cmd.on ? 'setting up the front' : 'front set');
     case 'room.setViewer': {
       if (cmd.viewer) state.viewer = cmd.viewer;
@@ -701,7 +707,7 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       return res('object removed');
     }
     case 'object.edit':
-      state.objectEdit = cmd.id ? { id: cmd.id, until: ctx.now + 30 * 60_000 } : null;
+      state.objectEdit = cmd.id ? { id: cmd.id, until: ctx.now + EDIT_TTL } : null;
       return res(cmd.id ? 'placing object' : 'object placed');
     case 'session.setBoost':
       state.boost = cmd.boost;
@@ -1040,7 +1046,7 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
     }
     case 'output.align': {
       const o = requireOutput(state, cmd.outputId);
-      o.align = cmd.on ? { until: ctx.now + 30 * 60_000, sel: cmd.sel, mark: cmd.mark ?? null } : undefined;
+      o.align = cmd.on ? { until: ctx.now + EDIT_TTL, sel: cmd.sel, mark: cmd.mark ?? null } : undefined;
       return res(`${o.name} ${cmd.on ? 'measuring corners' : 'measuring done'}`);
     }
     case 'output.create': {

@@ -20,6 +20,7 @@ import { useStore } from './store.ts';
 import { WallPicker } from './WallPicker.tsx';
 import { ProportionSliders } from './ProportionSliders.tsx';
 import { PlacePanel } from './PlacePanel.tsx';
+import { useKeepAlive } from './keepAlive.ts';
 
 interface Target {
   id: string;
@@ -379,6 +380,11 @@ export function MeasureWizard({
       mark: null,
     });
   }, [output.id, target?.id, store, tab]);
+  useKeepAlive(
+    () =>
+      void store.send({ t: 'output.align', outputId: output.id, on: true, sel: target?.id ?? null, mark: null }),
+    tab === 'measure',
+  );
   useEffect(
     () => () => void store.send({ t: 'output.align', outputId: output.id, on: false, sel: null }),
     [output.id, store],

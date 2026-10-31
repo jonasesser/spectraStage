@@ -16,6 +16,7 @@ import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
 import { ObjectPanel } from './ObjectPanel.tsx';
 import { FacadePanel } from './FacadePanel.tsx';
+import { useKeepAlive } from './keepAlive.ts';
 
 type Tab = 'door' | 'lamps' | 'objects' | 'masks';
 type UV = { u: number; v: number };
@@ -63,6 +64,8 @@ export function PlacePanel({ output, state, L }: { output: Output; state: Sessio
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [output.id]);
+  // renew while this screen is open (expires on the projector if the page is closed / reloaded)
+  useKeepAlive(() => show(last.current, true), true);
   const moveTo = (c: UV, now = false) => {
     const k = (x: number) => Math.min(1.1, Math.max(-0.1, x));
     const n = { u: k(c.u), v: k(c.v) };
@@ -170,6 +173,8 @@ export function PlacePanel({ output, state, L }: { output: Output; state: Sessio
     void store.send({ t: 'object.edit', id: objSel });
     return () => void store.send({ t: 'object.edit', id: null });
   }, [tab, objSel, store]);
+  useKeepAlive(() => void store.send({ t: 'object.edit', id: objSel }), tab === 'objects' && !!objSel);
+  useKeepAlive(() => void store.send({ t: 'facade.edit', on: true }), tab === 'door' || tab === 'lamps');
   const patchObject = (id: string, patch: Partial<RoomObject>, final: boolean) => {
     void final;
     void store.send({ t: 'object.update', id, patch });

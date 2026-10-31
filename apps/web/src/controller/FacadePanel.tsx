@@ -3,6 +3,7 @@ import { polygonBBox, type Facade, type SessionState } from '@spectrastage/share
 import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
 import { Slider } from './ui.tsx';
+import { useKeepAlive } from './keepAlive.ts';
 
 type Lamp = NonNullable<Facade['lamps']>[number];
 type Door = NonNullable<Facade['door']>;
@@ -35,6 +36,7 @@ export function FacadePanel({ state, L }: { state: SessionState; L: Tr }) {
   const timer = useRef(0);
   const pending = useRef<Facade | null>(null);
   const [outline, setOutline] = useState(false);
+  useKeepAlive(() => void store.send({ t: 'facade.edit', on: true }), outline);
   useEffect(
     () => () => {
       if (outline) void store.send({ t: 'facade.edit', on: false });
