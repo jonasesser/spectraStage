@@ -175,6 +175,9 @@ function scenePlayback(
   };
 }
 
+/** How long a ghost needs to fly off and fade out (matches the renderer's exit). */
+export const GHOST_EXIT_MS = 2500;
+
 function playlistPlayback(playlistId: string, ctx: ReducerContext, startIndex = 0): Playback {
   return {
     mode: 'playlist',
@@ -652,11 +655,15 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       state.ghosts = [];
       state.ghostFlights = [];
       return res('all ghosts deleted');
-    case 'ghost.stopFlights':
-      state.ghostFlights = cmd.ghostIds
-        ? (state.ghostFlights ?? []).filter((f) => !cmd.ghostIds!.includes(f.ghostId))
-        : [];
+    case 'ghost.stopFlights': {
+      // they do not vanish: each one flies off upwards and fades out (the normal 2.5 s exit)
+      const endAt = ctx.now + lead + GHOST_EXIT_MS;
+      const hit = (f: { ghostId: string }) => !cmd.ghostIds || cmd.ghostIds.includes(f.ghostId);
+      state.ghostFlights = (state.ghostFlights ?? [])
+        .filter((f) => !hit(f) || f.startAt < ctx.now + lead)
+        .map((f) => (hit(f) && f.endAt > endAt ? { ...f, endAt } : f));
       return res('ghosts back');
+    }
     case 'object.create': {
       const list = (state.objects ??= []);
       if (list.length >= 24) fail('limit', 'Too many objects');

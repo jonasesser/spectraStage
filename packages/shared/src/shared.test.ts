@@ -883,3 +883,24 @@ describe('scenes played in between', () => {
     expect(after.key).not.toBe(activeSceneFor({ playback: pb }, [], 60_000)!.key);
   });
 });
+
+describe('ghost flights', () => {
+  it('calling ghosts back lets them fly off and fade out instead of vanishing', () => {
+    const s = createInitialState('s1', 'Show', 0, 't', 7);
+    s.ghostFlights = [
+      { id: 'f1', ghostId: 'g1', startAt: 0, endAt: 60_000, seed: 1 },
+      { id: 'f2', ghostId: 'g2', startAt: 0, endAt: 60_000, seed: 2 },
+      { id: 'f3', ghostId: 'g3', startAt: 0, endAt: 1_500, seed: 3 },
+      { id: 'f4', ghostId: 'g4', startAt: 50_000, endAt: 90_000, seed: 4 },
+    ];
+    const one = applyCommand(s, { t: 'ghost.stopFlights', ghostIds: ['g1'] }, ctx(1000)).state;
+    expect(one.ghostFlights!.find((f) => f.ghostId === 'g1')!.endAt).toBeLessThan(5_000);
+    expect(one.ghostFlights!.find((f) => f.ghostId === 'g2')!.endAt).toBe(60_000);
+    const all = applyCommand(s, { t: 'ghost.stopFlights' }, ctx(1000)).state;
+    const end = (id: string) => all.ghostFlights!.find((f) => f.ghostId === id)?.endAt;
+    expect(end('g1')).toBeGreaterThan(1000);
+    expect(end('g1')).toBeLessThan(5_000);
+    expect(end('g3')).toBe(1_500); // already leaving: unchanged
+    expect(end('g4')).toBeUndefined(); // not started yet: gone right away
+  });
+});
