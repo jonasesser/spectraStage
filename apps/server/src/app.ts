@@ -68,7 +68,20 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
     }
   };
   // video uploads arrive as a raw stream (written straight to disk, not held in memory)
-  for (const type of ['video/mp4', 'video/webm', 'video/quicktime'])
+  const AUDIO_TYPES = [
+    'audio/mpeg',
+    'audio/mp3',
+    'audio/ogg',
+    'audio/wav',
+    'audio/x-wav',
+    'audio/wave',
+    'audio/mp4',
+    'audio/x-m4a',
+    'audio/aac',
+    'audio/webm',
+    'audio/flac',
+  ];
+  for (const type of ['video/mp4', 'video/webm', 'video/quicktime', ...AUDIO_TYPES])
     app.addContentTypeParser(type, (_req, payload, done) => done(null, payload));
 
   await app.register(websocket, { options: { maxPayload: 256 * 1024 } });
@@ -310,6 +323,59 @@ export async function buildApp(config: Config, catalog: ThemeCatalog): Promise<A
     const file = videoFile(row.session_id, id);
     if (!existsSync(file)) return reply.code(404).send({ error: 'not_found', message: 'Video not found' });
     let type = 'video/mp4';
+    try {
+      type =
+        (await import('node:fs/promises').then((f) => f.readFile(`${file}.type`, 'utf8'))).trim() || type;
+    } catch {
+      /* default */
+    }
+    return reply
+      .header('Content-Type', type)
+      .header('Content-Length', statSync(file).size)
+      .header('Cache-Control', 'private, max-age=86400')
+      .send(createReadStream(file));
+  });
+
+  // Own sound recordings (to replace built-in sounds): upload (raw body), fetch.
+  const SOUND_MAX = 8 * 1024 * 1024;
+  app.post('/api/sounds', { bodyLimit: SOUND_MAX }, async (req, reply) => {
+    const row = auth(req, ['owner', 'controller']);
+    if (!limiter.take('rest', clientIp(req, config))) return tooMany(reply);
+    const q = z.object({ name: z.string().max(80).default('Klang') }).parse(req.query);
+    const mime = String(req.headers['content-type'] ?? '')
+      .split(';')[0]!
+      .trim();
+    if (!AUDIO_TYPES.includes(mime)) throw new HubError(415, 'unsupported', 'Only audio files');
+    const id = randomBytes(9).toString('base64url');
+    mkdirSync(videoDir(row.session_id), { recursive: true });
+    const file = videoFile(row.session_id, `s-${id}`);
+    let n = 0;
+    const count = new Transform({
+      transform(chunk: Buffer, _enc, cb) {
+        n += chunk.length;
+        cb(n > SOUND_MAX ? new Error('too large') : null, chunk);
+      },
+    });
+    try {
+      await pipeline(req.body as NodeJS.ReadableStream, count, createWriteStream(file));
+    } catch {
+      rmSync(file, { force: true });
+      throw new HubError(413, 'too_large', 'Sound too large');
+    }
+    createWriteStream(`${file}.type`).end(mime);
+    if (!hub.addSound(row.session_id, id, q.name)) {
+      rmSync(file, { force: true });
+      throw new HubError(404, 'not_found', 'Show not found');
+    }
+    return reply.code(201).send({ id });
+  });
+
+  app.get('/api/sounds/:id', async (req, reply) => {
+    const row = auth(req, ['owner', 'controller', 'device']);
+    const { id } = z.object({ id: z.string().max(40) }).parse(req.params);
+    const file = videoFile(row.session_id, `s-${id}`);
+    if (!existsSync(file)) return reply.code(404).send({ error: 'not_found', message: 'Sound not found' });
+    let type = 'audio/mpeg';
     try {
       type =
         (await import('node:fs/promises').then((f) => f.readFile(`${file}.type`, 'utf8'))).trim() || type;

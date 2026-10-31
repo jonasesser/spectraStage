@@ -10,7 +10,7 @@
  * the wall), so in the room they look as if they stood in front of the wall.
  */
 import * as THREE from 'three';
-import { shaderScene, type DrawState, type SceneModule, type SoundApi } from '@spectrastage/engine';
+import { shaderScene, type DrawState, type SceneModule } from '@spectrastage/engine';
 import {
   basisQ,
   clocks,
@@ -23,10 +23,8 @@ import {
   NO_TEX,
   occludeMaterial,
   pauseOf,
-  soundFor,
   speedOf,
   WALL_FRAG_LEAN,
-  type Cue,
   type Frame,
   type HoleUniforms,
 } from './wallMonster.ts';
@@ -755,7 +753,6 @@ interface ShowDef {
   id: string;
   cute: boolean;
   glow: V3;
-  cues: Cue[];
   actors: { url: string; height: number }[];
   /** Hole centres x (one per actor or shared), and how tall the holes are (local units). */
   holes: (F: Frame) => number[];
@@ -996,7 +993,6 @@ const COUPLE: ShowDef = {
     groom.look(bride.pos('Head').lerp(eye, atYou), 0.8);
     bride.look(groom.pos('Head').lerp(eye, atYou), 0.8);
   },
-  cues: [],
 };
 
 // ---- the mummy: comes out, staggers at you with its arms out, screams, back in
@@ -1080,7 +1076,6 @@ const MUMMY: ShowDef = {
     // looks at you; screaming: head back
     m.look(eye.clone().add(new THREE.Vector3(0, 1.5 * scream, 0)), facing ? 0.9 : 0);
   },
-  cues: [],
 };
 
 // ---- the cute monster: comes out, waves, dances, jumps, waves goodbye, back in
@@ -1196,97 +1191,7 @@ const BUDDY: ShowDef = {
     m.hands(hands[0]!, hands[1]!);
     m.look(eye, facing ? 0.9 : 0);
   },
-  cues: [],
 };
-
-// ---- sounds
-const knocks = (gain: number): Cue[] => [
-  { at: 1.0, play: (s) => s.knock({ count: 3, gain, spacing: 0.45 }) },
-  { at: 3.7, play: (s) => s.knock({ count: 2, gain, spacing: 0.4 }) },
-  { at: 7.4, play: (s) => s.knock({ count: 4, gain: gain * 0.5, spacing: 0.06 }) },
-  { at: 8.6, play: (s) => s.pop({ freq: 180, gain: gain * 0.5 }) },
-  { at: 9.4, play: (s) => s.knock({ count: 5, gain: gain * 0.55, spacing: 0.05 }) },
-  {
-    at: BURST,
-    play: (s) => {
-      s.rumble({ duration: 2.2, gain: 0.55 });
-      s.whoosh({ duration: 1.2, from: 500, to: 90, gain: 0.5 });
-      s.knock({ count: 7, gain: 0.45, spacing: 0.05 });
-    },
-  },
-  { at: BURST + 0.9, play: (s) => s.knock({ count: 6, gain: 0.2, spacing: 0.09 }) },
-  // the wall builds itself up again
-  { at: REBUILD + 0.5, play: (s) => s.whoosh({ duration: 2.5, from: 90, to: 600, gain: 0.35 }) },
-  { at: 44.2, play: (s) => s.knock({ count: 6, gain: 0.35, spacing: 0.05 }) },
-];
-const steps = (from: number, to: number, beat: number, gain: number): Cue[] => {
-  const out: Cue[] = [];
-  for (let t = from; t < to; t += beat) out.push({ at: t, play: (s) => s.knock({ count: 1, gain }) });
-  return out;
-};
-// a slow, eerie waltz in three: one low note, then two chords
-const waltzMusic = (): Cue[] => {
-  const out: Cue[] = [];
-  const bars = [
-    [110, 220, 261.6, 329.6],
-    [98, 196, 246.9, 293.7],
-    [87.3, 174.6, 220, 261.6],
-    [82.4, 164.8, 207.7, 246.9],
-  ];
-  let i = 0;
-  for (let t = 16.4; t < 33; t += 1.65, i++) {
-    const b = bars[i % bars.length]!;
-    out.push({ at: t, play: (s) => s.arpeggio({ notes: [b[0]!], gain: 0.22, step: 0.1, wave: 'sine' }) });
-    out.push({
-      at: t + 0.55,
-      play: (s) => s.arpeggio({ notes: b.slice(1), gain: 0.1, step: 0.02, wave: 'triangle' }),
-    });
-    out.push({
-      at: t + 1.1,
-      play: (s) => s.arpeggio({ notes: b.slice(1), gain: 0.1, step: 0.02, wave: 'triangle' }),
-    });
-  }
-  return out;
-};
-COUPLE.cues = [
-  ...knocks(0.5),
-  ...steps(11, 16.5, 0.5, 0.12),
-  ...waltzMusic(),
-  ...steps(36.6, 40.6, 0.5, 0.12),
-];
-MUMMY.cues = [
-  ...knocks(0.55),
-  ...steps(11, 23, 0.85, 0.18),
-  { at: 15, play: (s) => s.ooh({ duration: 2.6, base: 100, gain: 0.3 }) },
-  {
-    at: 23.6,
-    play: (s) => {
-      s.ooh({ duration: 3.2, base: 92, gain: 0.6 });
-      s.ooh({ duration: 3.0, base: 128, gain: 0.3 });
-      s.rumble({ duration: 3, gain: 0.35 });
-      s.whoosh({ duration: 3, from: 1100, to: 400, gain: 0.15 });
-    },
-  },
-  ...steps(27, 33.5, 0.85, 0.18),
-  { at: 36, play: (s) => s.ooh({ duration: 2.4, base: 98, gain: 0.3 }) },
-];
-BUDDY.cues = [
-  ...knocks(0.35),
-  { at: 14, play: (s) => s.chime({ notes: [784, 988, 1175], gain: 0.25 }) },
-  ...[18, 19.68, 21.36, 23.04, 24.72, 26.4, 28.08].map((at) => ({
-    at,
-    play: (s: SoundApi) =>
-      s.arpeggio({
-        notes: [523, 659, 784, 659, 523, 659, 784, 1047],
-        gain: 0.15,
-        step: 0.21,
-        wave: 'triangle',
-      }),
-  })),
-  { at: 30.4, play: (s) => s.pop({ freq: 420, gain: 0.35 }) },
-  { at: 31.4, play: (s) => s.pop({ freq: 520, gain: 0.35 }) },
-  { at: 33, play: (s) => s.chime({ notes: [1175, 988, 784], gain: 0.22 }) },
-];
 
 // ---------------------------------------------------------------------------
 // Scene modules
@@ -1294,7 +1199,6 @@ BUDDY.cues = [
 function showScene(def: ShowDef): SceneModule {
   return {
     id: def.id,
-    ambientSound: (snd) => soundFor(def.id, def.cues)(snd),
     create: (ctx) => {
       const holes = makeHoles();
       const layer = new FigureLayer();

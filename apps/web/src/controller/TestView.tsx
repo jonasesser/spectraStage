@@ -13,11 +13,14 @@ import {
   type ParamValues,
   type SceneManifest,
   type SessionState,
+  SOUND_LIBRARY,
+  SOUNDS_OFF_BY_DEFAULT,
+  soundChoicesOf,
+  soundUrl,
 } from '@spectrastage/shared';
 import { useT, type Tr } from '../lib/i18n.tsx';
-import { storage } from '../lib/storage.ts';
 import { ghostImagesFor } from '../lib/ghostImages.ts';
-import { showVideosFor } from '../lib/videos.ts';
+import { showVideosFor, soundFetcher } from '../lib/videos.ts';
 import { useShow, useStore } from './store.ts';
 import { ParamControl } from './ScenesView.tsx';
 
@@ -32,7 +35,14 @@ type Res = 'window' | '1080' | '4k';
 export function TestView() {
   const L = useT();
   const { state } = useShow();
+  const store = useStore();
   const [mode, setMode] = useState<'scene' | 'projector' | 'sounds'>('scene');
+  // the show's sound choices also apply here (scenes and the sound list)
+  const choices = state?.soundChoices;
+  useEffect(() => {
+    testSound ??= new SoundEngine();
+    testSound.setChoices(soundChoicesOf(choices ?? {}), soundFetcher(store.conn));
+  }, [choices, store.conn]);
   return (
     <div className="stack">
       <section className="panel stack">
@@ -61,7 +71,7 @@ export function TestView() {
         ) : mode === 'projector' ? (
           <ProjectorTest state={state} L={L} />
         ) : (
-          <SoundBoard L={L} />
+          <SoundBoard state={state} L={L} />
         ))}
     </div>
   );
@@ -503,17 +513,15 @@ const BASICS = (L: Tr): SoundItem[] => [
   },
 ];
 
-function SoundBoard({ L }: { L: Tr }) {
+function SoundBoard({ state, L }: { state: SessionState; L: Tr }) {
+  const store = useStore();
   const [items, setItems] = useState<SoundItem[]>(() => BASICS(L));
-  const [bad, setBad] = useState<Set<string>>(() => {
-    try {
-      return new Set(JSON.parse(storage.get('ss.test.badSounds') ?? '[]') as string[]);
-    } catch {
-      return new Set();
-    }
-  });
   const [playing, setPlaying] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const stopRef = useRef<(() => void) | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const uploadFor = useRef<string | null>(null);
   useEffect(() => {
     let alive = true;
     // effects and creatures of every theme bring their own sounds
@@ -551,42 +559,89 @@ function SoundBoard({ L }: { L: Tr }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const play = (it: SoundItem) => {
+  const stop = () => {
     stopRef.current?.();
     stopRef.current = null;
-    const s = sound();
-    const stop = it.play(s);
-    if (typeof stop === 'function') {
-      stopRef.current = stop;
-      setPlaying(it.id);
-    } else setPlaying(null);
+    setPlaying(null);
   };
-  const toggleBad = (id: string) => {
-    const n = new Set(bad);
-    if (n.has(id)) n.delete(id);
-    else n.add(id);
-    setBad(n);
-    storage.set('ss.test.badSounds', JSON.stringify([...n]));
+  /** Plays what the show plays for this sound now (the chosen recording, the original or nothing). */
+  const play = (it: SoundItem) => {
+    stop();
+    const s = sound();
+    if (!it.id.startsWith('b:') && s.replaced(it.id)) return;
+    const st = it.play(s);
+    if (typeof st === 'function') {
+      stopRef.current = st;
+      setPlaying(it.id);
+    }
+  };
+  const uploads = state.sounds ?? [];
+  const choiceOf = (slot: string) =>
+    state.soundChoices?.[slot] ?? (SOUNDS_OFF_BY_DEFAULT.includes(slot) ? 'off' : 'orig');
+  const choose = (it: SoundItem, choice: string) => {
+    void store.send({ t: 'sound.choose', slot: it.id, choice });
+    stop();
+    // listen to the new choice right away
+    if (choice === 'orig') {
+      const st = it.play(sound());
+      if (typeof st === 'function') {
+        stopRef.current = st;
+        setPlaying(it.id);
+      }
+    } else if (choice !== 'off') sound().playUrl(soundUrl(choice), 0, 0.8);
+  };
+  const upload = async (f: File) => {
+    const slot = uploadFor.current;
+    const it = items.find((i) => i.id === slot);
+    if (!slot || !it) return;
+    setErr(null);
+    setBusy(slot);
+    try {
+      const name = f.name.replace(/\.[^.]+$/, '').slice(0, 80) || 'Klang';
+      const res = await fetch(`/api/sounds?name=${encodeURIComponent(name)}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${store.conn.authToken}`,
+          'content-type': f.type || 'audio/mpeg',
+        },
+        body: f,
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const { id } = (await res.json()) as { id: string };
+      choose(it, `up:${id}`);
+    } catch {
+      setErr(L('Upload failed (audio file up to 8 MB).', 'Hochladen fehlgeschlagen (Audiodatei bis 8 MB).'));
+    } finally {
+      setBusy(null);
+    }
   };
   const groups = [...new Set(items.map((i) => i.group))];
-  const list = items.filter((i) => bad.has(i.id)).map((i) => `${i.group} – ${i.name} (${i.id})`);
   return (
     <section className="panel stack">
       <p className="muted small" style={{ margin: 0 }}>
         {L(
-          'Every sound on its own. Mark the annoying ones with 👎 and send the list – the scene sounds play in “Try a scene” with the scene.',
-          'Jeder Klang einzeln. Nervige mit 👎 markieren und die Liste schicken – die Klänge der Szenen hörst du unter „Szene ausprobieren“ mit der Szene.',
+          'Every sound on its own. ▶ plays what the show plays. Pick a real recording, switch it off or upload your own – it applies to the whole show at once.',
+          'Jeder Klang einzeln. ▶ spielt, was die Show spielt. Echte Aufnahme wählen, ausschalten oder eigene hochladen – gilt sofort für die ganze Show.',
         )}
       </p>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="audio/*"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (f) void upload(f);
+        }}
+      />
+      {err && (
+        <p className="small" style={{ margin: 0, color: 'var(--danger, #e66)' }}>
+          {err}
+        </p>
+      )}
       {playing && (
-        <button
-          className="btn small"
-          onClick={() => {
-            stopRef.current?.();
-            stopRef.current = null;
-            setPlaying(null);
-          }}
-        >
+        <button className="btn small" onClick={stop}>
           ⏹ {L('Stop the background sound', 'Hintergrund-Klang stoppen')}
         </button>
       )}
@@ -595,37 +650,74 @@ function SoundBoard({ L }: { L: Tr }) {
           <strong className="small">{g}</strong>
           {items
             .filter((i) => i.group === g)
-            .map((i) => (
-              <div key={i.id} className="row" style={{ alignItems: 'center' }}>
-                <button className="btn small" onClick={() => play(i)}>
-                  ▶
-                </button>
-                <span className="small" style={{ flex: 1 }}>
-                  {i.name}
-                </span>
-                <button
-                  className={`chip${bad.has(i.id) ? ' on' : ''}`}
-                  onClick={() => toggleBad(i.id)}
-                  aria-pressed={bad.has(i.id)}
-                >
-                  👎 {L('annoying', 'nervt')}
-                </button>
-              </div>
-            ))}
+            .map((i) => {
+              const c = choiceOf(i.id);
+              const lib = SOUND_LIBRARY.filter((x) => x.slot === i.id);
+              return (
+                <div key={i.id} className="row" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button className="btn small" onClick={() => play(i)} disabled={c === 'off'}>
+                    ▶
+                  </button>
+                  <span className="small" style={{ flex: '1 1 8rem' }}>
+                    {i.name}
+                  </span>
+                  <select
+                    value={c}
+                    onChange={(e) => choose(i, e.target.value)}
+                    aria-label={L('Sound for', 'Klang für') + ' ' + i.name}
+                  >
+                    <option value="orig">{L('Original', 'Original')}</option>
+                    <option value="off">{L('Off', 'Aus')}</option>
+                    {lib.length > 0 && (
+                      <optgroup label={L('Recordings', 'Aufnahmen')}>
+                        {lib.map((x) => (
+                          <option key={x.id} value={`lib:${x.id}`}>
+                            {x.name} ({x.sec.toFixed(1)} s)
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {uploads.length > 0 && (
+                      <optgroup label={L('Own files', 'Eigene Dateien')}>
+                        {uploads.map((x) => (
+                          <option key={x.id} value={`up:${x.id}`}>
+                            ⬆ {x.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                  <button
+                    className="btn small"
+                    disabled={busy !== null}
+                    onClick={() => {
+                      uploadFor.current = i.id;
+                      fileRef.current?.click();
+                    }}
+                  >
+                    {busy === i.id ? '…' : `⬆ ${L('own file', 'eigene Datei')}`}
+                  </button>
+                </div>
+              );
+            })}
         </div>
       ))}
-      {list.length > 0 && (
+      {uploads.length > 0 && (
         <div className="stack" style={{ gap: '0.3rem' }}>
-          <strong className="small">{L('Marked as annoying', 'Als nervig markiert')}</strong>
-          <pre className="small" style={{ whiteSpace: 'pre-wrap', margin: 0 }}>
-            {list.join('\n')}
-          </pre>
-          <button
-            className="btn small"
-            onClick={() => void navigator.clipboard?.writeText(list.join('\n')).catch(() => undefined)}
-          >
-            {L('Copy the list', 'Liste kopieren')}
-          </button>
+          <strong className="small">{L('Own files', 'Eigene Dateien')}</strong>
+          {uploads.map((x) => (
+            <div key={x.id} className="row" style={{ alignItems: 'center' }}>
+              <button className="btn small" onClick={() => sound().playUrl(soundUrl(`up:${x.id}`), 0, 0.8)}>
+                ▶
+              </button>
+              <span className="small" style={{ flex: 1 }}>
+                {x.name}
+              </span>
+              <button className="btn small" onClick={() => void store.send({ t: 'sound.delete', id: x.id })}>
+                🗑 {L('Delete', 'Löschen')}
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </section>

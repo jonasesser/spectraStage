@@ -629,6 +629,22 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       state.ghosts = (state.ghosts ?? []).filter((g) => g.id !== cmd.ghostId);
       state.ghostFlights = (state.ghostFlights ?? []).filter((f) => f.ghostId !== cmd.ghostId);
       return res('ghost deleted');
+    case 'sound.choose': {
+      const next = { ...(state.soundChoices ?? {}) };
+      if (cmd.choice === null) delete next[cmd.slot];
+      else next[cmd.slot] = cmd.choice;
+      if (Object.keys(next).length > 200) fail('limit', 'Too many sound choices');
+      state.soundChoices = next;
+      return res(`sound ${cmd.slot} → ${cmd.choice ?? 'default'}`);
+    }
+    case 'sound.delete': {
+      state.sounds = (state.sounds ?? []).filter((x) => x.id !== cmd.id);
+      // where it was chosen: back to the default
+      const next = { ...(state.soundChoices ?? {}) };
+      for (const [k, v] of Object.entries(next)) if (v === `up:${cmd.id}`) delete next[k];
+      state.soundChoices = next;
+      return res('sound deleted');
+    }
     case 'video.delete':
       state.videos = (state.videos ?? []).filter((v) => v.id !== cmd.id);
       return res('video deleted');

@@ -2,11 +2,11 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { StageRenderer, SoundEngine } from '@spectrastage/engine';
 import { catalog } from '@spectrastage/catalog/manifests';
 import { loadThemeRuntime } from '@spectrastage/catalog/runtime';
-import { formatCode, normalizeCode, type SessionState } from '@spectrastage/shared';
+import { formatCode, normalizeCode, soundChoicesOf, type SessionState } from '@spectrastage/shared';
 import { Connection, type ConnStatus } from '../lib/connection.ts';
 import { ZombieReceiver } from './zombie.ts';
 import { ghostImagesFor } from '../lib/ghostImages.ts';
-import { showVideosFor } from '../lib/videos.ts';
+import { showVideosFor, soundFetcher } from '../lib/videos.ts';
 import type { ApiError } from '../lib/api.ts';
 import { api } from '../lib/api.ts';
 import { KEYS, storage } from '../lib/storage.ts';
@@ -291,6 +291,12 @@ function Projection({
     if (c && state) showVideosFor(c).sync((state.videos ?? []).map((v) => v.id));
     if (state) soundRef.current.setVolume(state.masterVolume * (output?.volume ?? 0.8), state.muted);
   }, [state, outputId, output?.volume, phase]);
+
+  // replaced / switched-off sounds of the show
+  const soundChoices = state?.soundChoices;
+  useEffect(() => {
+    soundRef.current.setChoices(soundChoicesOf(soundChoices ?? {}), soundFetcher(connRef.current));
+  }, [soundChoices]);
 
   useEffect(() => {
     rendererRef.current?.setConnection(status === 'online');

@@ -298,3 +298,9 @@ Hinweis: Läuft der Server hinter einem Proxy (Easypanel), muss dessen Upload-Gr
 - Ein Druck auf den Auslöser macht genau ein Bild. Jede erkannte Person bekommt daraus ihr Original (unverändert, für Gesichter auf Figuren), ihr Filter-Bild und, falls ausgewählt, das KI-Bild. Alle drei stammen aus demselben Moment, aus dem die Personen-Erkennung stammt.
 - **Licht:** „Beamer leuchten beim Foto hell auf“ lässt Hauptwand und Boden davor kurz warmweiß aufleuchten (Effekt „Fotolicht“). „Handy-Lampe“ schaltet die Taschenlampe ein; das geht nur auf Android, auf dem iPhone kann der Browser die Lampe nicht schalten. Ausgelöst wird etwa 1 Sekunde später im Licht.
 - **🖼 Foto aufnehmen oder wählen:** nimmt mit der normalen Handy-Kamera auf (mit Blitz, auch auf dem iPhone) oder wählt ein Bild aus der Galerie. Darin werden die Personen gesucht und genauso gespeichert wie bei der Live-Kamera.
+
+## Klänge austauschen (Test → Alle Klänge)
+
+- Jeder Klang hat eine Auswahl: **Original**, **Aus**, echte Aufnahmen (CC0, OpenGameArt) oder **⬆ eigene Datei** (Audio bis 8 MB). Die Wahl gilt sofort für die ganze Show, auf allen Beamern; ▶ spielt, was die Show gerade spielt.
+- Die als nervig gemeldeten 12 Klänge (Uuuh, Glöckchen, Plopp, Melodie, Buh!, Kürbis-Explosion, Geisterwelle, Funkeln, Skelett-Tanzpause, Magischer Kreis, Puls, Sternschnuppen) sind **aus**, bis eine Aufnahme gewählt ist.
+- Die 3D-Shows (Brautpaar, Mumie, Kumpel, Hexe, Ausbrüche aus der Wand) spielen keinen eigenen Ton mehr.

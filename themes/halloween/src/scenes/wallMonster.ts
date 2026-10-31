@@ -12,7 +12,6 @@
  */
 import * as THREE from 'three';
 import { shaderScene, type DrawState, type SceneModule, type ScenePhotos } from '@spectrastage/engine';
-import type { SoundApi } from '@spectrastage/engine';
 
 type V3 = [number, number, number];
 
@@ -1187,116 +1186,6 @@ export function uniformsFor(id: string, cute: boolean, guest?: GuestPhoto, figur
   };
 }
 
-export interface Cue {
-  at: number;
-  play: (snd: SoundApi) => void;
-}
-
-const MUMMY_SOUND: Cue[] = [
-  { at: 1.0, play: (s) => s.knock({ count: 3, gain: 0.55, spacing: 0.5 }) },
-  { at: 3.7, play: (s) => s.knock({ count: 2, gain: 0.6, spacing: 0.45 }) },
-  { at: 5.0, play: (s) => s.rumble({ duration: 3.5, gain: 0.3 }) },
-  { at: 8.4, play: (s) => s.whoosh({ duration: 2.0, from: 200, to: 90, gain: 0.25 }) },
-  ...PUSHES.map((at) => ({ at, play: (s: SoundApi) => s.knock({ count: 1, gain: 0.45 }) })),
-  { at: 10.6, play: (s) => s.knock({ count: 4, gain: 0.25, spacing: 0.06 }) },
-  { at: 11.5, play: (s) => s.scuttle({ duration: 0.8, gain: 0.25 }) },
-  { at: 12.4, play: (s) => s.knock({ count: 5, gain: 0.3, spacing: 0.05 }) },
-  {
-    at: 13.5,
-    play: (s) => {
-      s.rumble({ duration: 2.2, gain: 0.55 });
-      s.whoosh({ duration: 1.6, from: 500, to: 90, gain: 0.5 });
-      s.knock({ count: 7, gain: 0.45, spacing: 0.05 });
-      s.pop({ freq: 110, gain: 0.45 });
-    },
-  },
-  { at: 14.4, play: (s) => s.knock({ count: 6, gain: 0.22, spacing: 0.09 }) },
-  { at: 15.0, play: (s) => s.whoosh({ duration: 3.0, from: 1200, to: 600, gain: 0.12 }) },
-  { at: 16.2, play: (s) => s.ooh({ duration: 2.4, base: 105, gain: 0.3 }) },
-  { at: 21.2, play: (s) => s.scuttle({ duration: 0.7, gain: 0.25 }) },
-  { at: 23.2, play: (s) => s.scuttle({ duration: 0.7, gain: 0.25 }) },
-  {
-    at: 28.2,
-    play: (s) => {
-      s.ooh({ duration: 4.0, base: 92, gain: 0.55 });
-      s.ooh({ duration: 3.6, base: 124, gain: 0.25 });
-      s.rumble({ duration: 3.5, gain: 0.3 });
-      s.whoosh({ duration: 3.5, from: 900, to: 400, gain: 0.15 });
-    },
-  },
-  { at: 35.5, play: (s) => s.ooh({ duration: 2.4, base: 98, gain: 0.3 }) },
-  { at: 36.0, play: (s) => s.whoosh({ duration: 2.2, from: 300, to: 60, gain: 0.25 }) },
-];
-
-const CUTE_SOUND: Cue[] = [
-  { at: 1.0, play: (s) => s.knock({ count: 3, gain: 0.35, spacing: 0.35 }) },
-  { at: 3.7, play: (s) => s.knock({ count: 2, gain: 0.35, spacing: 0.3 }) },
-  ...PUSHES.map((at) => ({ at, play: (s: SoundApi) => s.pop({ freq: 260, gain: 0.25 }) })),
-  { at: 11.0, play: (s) => s.pop({ freq: 520, gain: 0.25 }) },
-  { at: 12.6, play: (s) => s.pop({ freq: 620, gain: 0.25 }) },
-  {
-    at: 13.5,
-    play: (s) => {
-      s.pop({ freq: 300, gain: 0.5 });
-      s.whoosh({ duration: 0.8, from: 600, to: 200, gain: 0.3 });
-      s.chime({ gain: 0.3 });
-      s.knock({ count: 5, gain: 0.2, spacing: 0.06 });
-    },
-  },
-  { at: 16.0, play: (s) => s.ooh({ duration: 1.6, base: 330, gain: 0.25 }) },
-  { at: 26.2, play: (s) => s.chime({ notes: [784, 988, 1175], gain: 0.25 }) },
-  {
-    at: 27.0,
-    play: (s) =>
-      s.arpeggio({ notes: [784, 880, 988, 1175, 988, 1175], gain: 0.22, step: 0.09, wave: 'triangle' }),
-  },
-  {
-    at: 35.5,
-    play: (s) => s.arpeggio({ notes: [1175, 988, 784, 587], gain: 0.2, step: 0.12, wave: 'sine' }),
-  },
-];
-
-const GUEST_SOUND: Cue[] = [
-  { at: 1.0, play: (s) => s.knock({ count: 3, gain: 0.45, spacing: 0.4 }) },
-  { at: 3.7, play: (s) => s.knock({ count: 2, gain: 0.45, spacing: 0.35 }) },
-  ...PUSHES.map((at) => ({ at, play: (s: SoundApi) => s.knock({ count: 1, gain: 0.35 }) })),
-  { at: 11.0, play: (s) => s.pop({ freq: 300, gain: 0.25 }) },
-  { at: 12.4, play: (s) => s.knock({ count: 4, gain: 0.25, spacing: 0.06 }) },
-  {
-    at: 13.5,
-    play: (s) => {
-      s.rumble({ duration: 1.8, gain: 0.45 });
-      s.whoosh({ duration: 1.0, from: 500, to: 120, gain: 0.4 });
-      s.knock({ count: 6, gain: 0.35, spacing: 0.05 });
-      s.chime({ gain: 0.25 });
-    },
-  },
-  { at: 16.0, play: (s) => s.ooh({ duration: 2.4, base: 220, gain: 0.3 }) },
-  { at: 26.0, play: (s) => s.ooh({ duration: 2.0, base: 180, gain: 0.25 }) },
-  { at: 35.5, play: (s) => s.whoosh({ duration: 2.0, from: 400, to: 80, gain: 0.3 }) },
-];
-
-export function soundFor(id: string, cues: Cue[]) {
-  return (snd: SoundApi) => {
-    let last = -1;
-    const timer = window.setInterval(() => {
-      const c = clocks[id];
-      if (!c || performance.now() - c.at > 1500) return;
-      const now = c.time + (performance.now() - c.at) / 1000;
-      const a = (now * c.speed) % c.loop;
-      if (last >= 0) {
-        const wrapped = a < last;
-        for (const cue of cues) {
-          if ((!wrapped && cue.at > last && cue.at <= a) || (wrapped && (cue.at > last || cue.at <= a)))
-            cue.play(snd);
-        }
-      }
-      last = a;
-    }, 80);
-    return () => window.clearInterval(timer);
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Real 3D figures (rigged GLB, Mixamo skeleton)
 // ---------------------------------------------------------------------------
@@ -1855,10 +1744,8 @@ export class GuestPhoto {
 
 /** A guest's photo breaks out of the wall (no photos yet: the cute monster). */
 function guestBreakout(id: string): SceneModule {
-  const sound = soundFor(id, GUEST_SOUND);
   return {
     id,
-    ambientSound: sound,
     create: (ctx) => {
       const guest = new GuestPhoto(ctx.photos);
       const base = uniformsFor(id, true, guest);
@@ -1877,17 +1764,14 @@ function guestBreakout(id: string): SceneModule {
 }
 
 function breakout(id: string, cute: boolean, model?: string, glow?: V3): SceneModule {
-  const sound = soundFor(id, cute ? CUTE_SOUND : MUMMY_SOUND);
   if (!model)
     return shaderScene(id, WALL_FRAG_LEAN, uniformsFor(id, cute), {
       shaderScale: 0.6,
       shaderMaxPx: 1280,
-      ambientSound: sound,
     });
   const glowCol: V3 = glow ?? (cute ? [0.55, 0.35, 1.0] : [0.3, 0.95, 0.45]);
   return {
     id,
-    ambientSound: sound,
     create: (ctx) => {
       const figure = new GlbFigure(model, cute, glowCol);
       const wall = shaderScene(id, WALL_FRAG_LEAN, uniformsFor(id, cute, undefined, figure, glowCol), {

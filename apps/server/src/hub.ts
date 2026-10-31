@@ -443,6 +443,7 @@ export class Hub {
         const next = r.state;
         this.commit(ls, next, controller.name, r.summary);
         if (cmd.t === 'video.delete') this.onVideoGone?.(ls.state.id, cmd.id);
+        if (cmd.t === 'sound.delete') this.onVideoGone?.(ls.state.id, `s-${cmd.id}`);
         if (cmd.t === 'ghost.delete' || cmd.t === 'ghost.deleteAll')
           this.store.pruneGhosts(
             ls.state.id,
@@ -510,6 +511,19 @@ export class Hub {
 
   /** Called when a video was removed from a show (the file can go). */
   onVideoGone: ((sessionId: string, id: string) => void) | null = null;
+
+  /** An uploaded sound recording: listed in the show (the file is stored by the caller). */
+  addSound(sessionId: string, id: string, name: string): boolean {
+    const ls = this.live.get(sessionId) ?? this.load(sessionId);
+    if (!ls) return false;
+    const next = structuredClone(ls.state);
+    const list = [...(next.sounds ?? []), { id, name, at: this.now() }];
+    const dropped = list.slice(0, Math.max(0, list.length - 60));
+    next.sounds = list.slice(-60);
+    this.commit(ls, next, 'system', 'sound');
+    for (const d of dropped) this.onVideoGone?.(sessionId, `s-${d.id}`);
+    return true;
+  }
 
   /** An uploaded video: listed in the show (the file is stored by the caller). */
   addVideo(sessionId: string, id: string, name: string, sec: number): boolean {

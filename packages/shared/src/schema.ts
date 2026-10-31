@@ -549,6 +549,13 @@ export const SessionStateSchema = z.object({
     )
     .max(40)
     .optional(),
+  /** Own sound recordings (uploaded), to replace built-in sounds. */
+  sounds: z
+    .array(z.object({ id: z.string().max(40), name: z.string().max(80), at: z.number() }))
+    .max(60)
+    .optional(),
+  /** Which sound plays for a built-in one: 'orig' | 'off' | 'lib:<id>' | 'up:<id>'. */
+  soundChoices: z.record(z.string().max(80), z.string().max(80)).optional(),
   /** Saved ghost photos (zombie camera); the pictures themselves live on the server. */
   ghosts: z
     .array(
@@ -621,6 +628,16 @@ export const CommandSchema = z.discriminatedUnion('t', [
   }),
   z.object({ t: z.literal('object.delete'), id: z.string().max(40) }),
   z.object({ t: z.literal('video.delete'), id: z.string().max(40) }),
+  /** Replace a built-in sound (null = back to the default). */
+  z.object({
+    t: z.literal('sound.choose'),
+    slot: z.string().max(80),
+    choice: z
+      .string()
+      .regex(/^(orig|off|lib:[A-Za-z0-9_-]{1,70}|up:[A-Za-z0-9_-]{1,40})$/)
+      .nullable(),
+  }),
+  z.object({ t: z.literal('sound.delete'), id: z.string().max(40) }),
   /** Let saved ghost photos fly around again (several at once, staggered). */
   z.object({
     t: z.literal('ghost.release'),

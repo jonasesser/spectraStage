@@ -48,3 +48,15 @@ export function showVideosFor(conn: { authToken: string }): ShowVideos {
   }
   return v;
 }
+
+/** Fetches a sound recording (own uploads need the show's token; library files are public). */
+export function soundFetcher(conn: { authToken: string } | null): (url: string) => Promise<ArrayBuffer> {
+  return (url) =>
+    fetch(
+      url,
+      conn && url.startsWith('/api/') ? { headers: { authorization: `Bearer ${conn.authToken}` } } : {},
+    ).then((r) => {
+      if (!r.ok) throw new Error(String(r.status));
+      return r.arrayBuffer();
+    });
+}

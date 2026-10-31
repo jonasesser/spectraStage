@@ -33,7 +33,15 @@ export interface SoundApi {
   }): void;
   /** Starts a looping ambience; returns a stop function. */
   ambience(kind: 'wind' | 'drone' | 'crickets', gain?: number): () => void;
+  /**
+   * A chosen replacement for a sound (a real recording, or silence): true = handled (played or
+   * muted), false = play the built-in one. Slots: 'b:ooh' … (building blocks), 'e:theme/effect'.
+   */
+  replaced?(slot: string, delay?: number): boolean;
 }
+
+/** What replaces a sound: a recording (URL) or nothing. */
+export type SoundChoice = { url: string } | 'off';
 
 export class SoundEngine implements SoundApi {
   ctx: AudioContext | null = null;
@@ -43,6 +51,69 @@ export class SoundEngine implements SoundApi {
   private volume = 0.8;
   private muted = false;
   private seed = 1;
+  private choices = new Map<string, SoundChoice>();
+  private buffers = new Map<string, AudioBuffer | 'loading' | 'failed'>();
+  private fetchUrl: (url: string) => Promise<ArrayBuffer> = (url) => fetch(url).then((r) => r.arrayBuffer());
+
+  /** The replacements of the show (slot → recording / off); recordings load ahead. */
+  setChoices(choices: Record<string, SoundChoice>, fetchUrl?: (url: string) => Promise<ArrayBuffer>): void {
+    if (fetchUrl) this.fetchUrl = fetchUrl;
+    this.choices = new Map(Object.entries(choices));
+    for (const c of this.choices.values()) if (c !== 'off') this.load(c.url);
+  }
+
+  private load(url: string): void {
+    if (this.buffers.has(url) || !this.ctx) return;
+    const ctx = this.ctx;
+    this.buffers.set(url, 'loading');
+    void this.fetchUrl(url)
+      .then((data) => ctx.decodeAudioData(data))
+      .then((b) => this.buffers.set(url, b))
+      .catch(() => this.buffers.set(url, 'failed'));
+  }
+
+  replaced(slot: string, delay = 0): boolean {
+    const c = this.choices.get(slot);
+    if (!c) return false;
+    if (c === 'off') return true;
+    this.playUrl(c.url, delay);
+    return true;
+  }
+
+  /** Plays a recording once (loads it first if needed); returns a stop function. */
+  playUrl(url: string, delay = 0, gain = 0.8): () => void {
+    const ctx = this.ready();
+    if (!ctx || !this.master) return () => {};
+    const b = this.buffers.get(url);
+    if (!b) this.load(url);
+    if (!(b instanceof AudioBuffer)) {
+      // not loaded yet: play as soon as it is (if still within a second)
+      const t = performance.now();
+      let stop = false;
+      const wait = () => {
+        if (stop) return;
+        const bb = this.buffers.get(url);
+        if (bb instanceof AudioBuffer) {
+          if (performance.now() - t < 1500) this.playUrl(url, delay, gain);
+        } else if (bb !== 'failed' && performance.now() - t < 5000) setTimeout(wait, 100);
+      };
+      setTimeout(wait, 100);
+      return () => (stop = true);
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = b;
+    const g = ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g).connect(this.master);
+    src.start(ctx.currentTime + delay);
+    return () => {
+      try {
+        src.stop();
+      } catch {
+        /* already done */
+      }
+    };
+  }
 
   get out(): AudioNode | null {
     return this.master;
@@ -111,6 +182,7 @@ export class SoundEngine implements SoundApi {
   }
 
   whoosh({ duration = 1.2, from = 300, to = 1800, gain = 0.25, delay = 0 } = {}): void {
+    if (this.replaced('b:whoosh', delay)) return;
     const ctx = this.ready();
     if (!ctx || !this.master) return;
     const t0 = ctx.currentTime + delay;
@@ -129,6 +201,7 @@ export class SoundEngine implements SoundApi {
   }
 
   ooh({ duration = 1.8, base = 220, gain = 0.12, delay = 0 } = {}): void {
+    if (this.replaced('b:ooh', delay)) return;
     const ctx = this.ready();
     if (!ctx || !this.master) return;
     const t0 = ctx.currentTime + delay;
@@ -159,6 +232,7 @@ export class SoundEngine implements SoundApi {
   }
 
   chime({ notes = [784, 988, 1175, 1568], gain = 0.08, spacing = 0.09, delay = 0 } = {}): void {
+    if (this.replaced('b:chime', delay)) return;
     const ctx = this.ready();
     if (!ctx || !this.master) return;
     notes.forEach((f, i) => {
@@ -183,6 +257,7 @@ export class SoundEngine implements SoundApi {
   }
 
   knock({ count = 3, gain = 0.35, spacing = 0.22, delay = 0 } = {}): void {
+    if (this.replaced('b:knock', delay)) return;
     const ctx = this.ready();
     if (!ctx || !this.master) return;
     for (let i = 0; i < count; i++) {
@@ -209,6 +284,7 @@ export class SoundEngine implements SoundApi {
   }
 
   rumble({ duration = 2.8, gain = 0.22, delay = 0 } = {}): void {
+    if (this.replaced('b:rumble', delay)) return;
     const ctx = this.ready();
     if (!ctx || !this.master) return;
     const t0 = ctx.currentTime + delay;
@@ -228,6 +304,7 @@ export class SoundEngine implements SoundApi {
   }
 
   pop({ freq = 600, gain = 0.15, delay = 0 } = {}): void {
+    if (this.replaced('b:pop', delay)) return;
     const ctx = this.ready();
     if (!ctx || !this.master) return;
     const t0 = ctx.currentTime + delay;
@@ -243,6 +320,7 @@ export class SoundEngine implements SoundApi {
   }
 
   flutter({ duration = 1.5, gain = 0.12, rate = 18, delay = 0 } = {}): void {
+    if (this.replaced('b:flutter', delay)) return;
     const ctx = this.ready();
     if (!ctx || !this.master) return;
     const t0 = ctx.currentTime + delay;
@@ -269,6 +347,7 @@ export class SoundEngine implements SoundApi {
   }
 
   scuttle({ duration = 0.8, gain = 0.06, delay = 0 } = {}): void {
+    if (this.replaced('b:scuttle', delay)) return;
     const ctx = this.ready();
     if (!ctx || !this.master) return;
     const rng = createRng(this.seed++);
@@ -294,6 +373,7 @@ export class SoundEngine implements SoundApi {
     wave = 'triangle',
     delay = 0,
   }: { notes?: number[]; gain?: number; step?: number; wave?: OscillatorType; delay?: number } = {}): void {
+    if (this.replaced('b:arpeggio', delay)) return;
     const ctx = this.ready();
     if (!ctx || !this.master) return;
     notes.forEach((f, i) => {

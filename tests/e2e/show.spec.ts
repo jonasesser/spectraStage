@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect, test, type Browser, type Page } from '@playwright/test';
 
 async function createShow(browser: Browser) {
@@ -204,7 +205,19 @@ test('test area: a scene and a projector picture render on this PC only', async 
   await expect(phone.getByText('Grollen')).toBeVisible();
   await expect(phone.getByText(/Buh!/)).toBeVisible({ timeout: 10_000 });
   await phone.locator('.row', { hasText: 'Grollen' }).getByRole('button', { name: '▶' }).click();
-  await phone.locator('.row', { hasText: 'Grollen' }).getByRole('button', { name: /nervt/ }).click();
-  await expect(phone.getByText(/Als nervig markiert/)).toBeVisible();
+  // marked sounds are off until chosen; a real recording is picked, an own file uploaded
+  const ooh = phone.getByLabel('Klang für Geister-Uuuh', { exact: true });
+  await expect(ooh).toHaveValue('off');
+  await ooh.selectOption('lib:ghost-ghost-wav');
+  await expect(ooh).toHaveValue('lib:ghost-ghost-wav');
+  const pop = phone.getByLabel('Klang für Plopp', { exact: true });
+  await phone.locator('.row', { has: pop }).getByRole('button', { name: /eigene Datei/ }).click();
+  await phone.locator('input[type=file][accept="audio/*"]').setInputFiles({
+    name: 'mein-plopp.mp3',
+    mimeType: 'audio/mpeg',
+    buffer: readFileSync('apps/web/public/sounds/lib/pop-pop-ogg.mp3'),
+  });
+  await expect(pop).toHaveValue(/^up:/);
+  await expect(phone.locator('span', { hasText: 'mein-plopp' })).toBeVisible();
   expect(errors).toEqual([]);
 });

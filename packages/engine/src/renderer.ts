@@ -2111,7 +2111,8 @@ export class StageRenderer {
       if (primary && mod.sound && !layer.startedEffects.has(it.key) && now - it.startAt < 600) {
         layer.startedEffects.add(it.key);
         try {
-          mod.sound(this.opts.sound!, it.seed);
+          if (!this.opts.sound!.replaced?.(`e:${it.themeId}/${it.effectId}`))
+            mod.sound(this.opts.sound!, it.seed);
         } catch {
           /* ignore audio errors */
         }
@@ -2269,7 +2270,8 @@ export class StageRenderer {
           if (now - last > 2500) {
             this.actorSoundAt.set(k, now);
             try {
-              mod.sound(this.opts.sound!, cue.seed + i);
+              if (!this.opts.sound!.replaced?.(`a:${cue.themeId}/${cue.actorId}`))
+                mod.sound(this.opts.sound!, cue.seed + i);
             } catch {
               /* ignore */
             }

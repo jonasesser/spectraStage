@@ -18,9 +18,8 @@ import {
   PUMPKIN_VERT,
   type DrawState,
   type SceneModule,
-  type SoundApi,
 } from '@spectrastage/engine';
-import { clocks, frameOf, makeHoles, soundFor, speedOf, type Cue, type Frame } from './wallMonster.ts';
+import { clocks, frameOf, makeHoles, speedOf, type Frame } from './wallMonster.ts';
 import { feetAt, FigureLayer, Rig, type Body, type Reach } from './wallShow.ts';
 
 type V3 = [number, number, number];
@@ -79,9 +78,6 @@ function variantOf(seed: number): Variant {
   if (f >= 0 && f !== 1) [tricks[f], tricks[1]] = [tricks[1]!, tricks[f]!];
   return { entry, exit: entry === 'broom' ? 'poof' : 'fly', tricks };
 }
-
-/** Shared by the sound (which runs where the main wall is drawn). */
-let soundVariant: Variant = variantOf(1);
 
 // ---------------------------------------------------------------------------
 // The show space: the main wall's frame (x right, y up, z out of the wall, units m/k)
@@ -565,7 +561,6 @@ function witchScene(): SceneModule {
   const id = 'wallWitch';
   return {
     id,
-    ambientSound: (snd) => soundFor(id, witchCues())(snd),
     create: (ctx) => {
       const r = ctx.renderer;
       const clip = [new THREE.Plane(V(0, 1, 0), 1e6)];
@@ -700,7 +695,6 @@ void main(){ vUv = uv; vec4 mvPosition = modelViewMatrix * vec4(position,1.0); g
           lastSeed = seed;
           Vr = variantOf(seed);
         }
-        soundVariant = Vr;
         // background: dark wall
         r.setRenderTarget(target);
         r.setClearColor(0x000000, 1);
@@ -1919,182 +1913,6 @@ function rideOn(fl: Flight, t: number, t0: number, t1: number) {
 function bankOf(ps: { heading?: THREE.Vector3 }, a: number): number {
   void ps;
   return 0.1 * Math.sin(a * 1.7);
-}
-
-// ---------------------------------------------------------------------------
-// Sound
-// ---------------------------------------------------------------------------
-function witchCues(): Cue[] {
-  const v = () => soundVariant;
-  const out: Cue[] = [];
-  const when = (at: number, cond: () => boolean, play: (s: SoundApi) => void) =>
-    out.push({ at, play: (s) => cond() && play(s) });
-  const sparkle = (s: SoundApi, g = 0.18) =>
-    s.chime({ notes: [1568, 1976, 2349, 2637], gain: g, spacing: 0.05 });
-  const poofS = (s: SoundApi) => {
-    s.whoosh({ duration: 0.5, from: 1200, to: 200, gain: 0.3 });
-    s.pop({ freq: 160, gain: 0.4 });
-  };
-  // entrances
-  when(
-    1.2,
-    () => v().entry === 'broom',
-    (s) => s.whoosh({ duration: 4.8, from: 200, to: 900, gain: 0.25 }),
-  );
-  when(
-    6.4,
-    () => v().entry === 'broom',
-    (s) => s.knock({ count: 2, gain: 0.25, spacing: 0.12 }),
-  );
-  when(7.2, () => v().entry === 'broom', poofS);
-  when(
-    1.5,
-    () => v().entry === 'poof',
-    (s) => sparkle(s, 0.2),
-  );
-  when(
-    2.4,
-    () => v().entry === 'poof',
-    (s) => sparkle(s, 0.2),
-  );
-  when(3.0, () => v().entry === 'poof', poofS);
-  when(
-    1.3,
-    () => v().entry === 'plop',
-    (s) => s.whoosh({ duration: 2.4, from: 300, to: 1100, gain: 0.3 }),
-  );
-  when(
-    3.4,
-    () => v().entry === 'plop',
-    (s) => s.whoosh({ duration: 0.55, from: 900, to: 150, gain: 0.3 }),
-  );
-  when(
-    3.95,
-    () => v().entry === 'plop',
-    (s) => {
-      s.knock({ count: 1, gain: 0.6 });
-      s.rumble({ duration: 0.4, gain: 0.3 });
-    },
-  );
-  when(
-    4.2,
-    () => v().entry === 'plop',
-    (s) => s.chime({ notes: [2093, 1760, 2093, 1760, 2093], gain: 0.12, spacing: 0.18 }),
-  );
-  // hello
-  when(
-    8.5,
-    () => true,
-    (s) => s.chime({ notes: [784, 988, 1175], gain: 0.22 }),
-  );
-  when(
-    10.85,
-    () => true,
-    (s) => sparkle(s, 0.25),
-  );
-  // the tricks
-  for (let k = 0; k < 3; k++) {
-    const t0 = SLOT0 + k * SLOT;
-    const is = (t: Trick) => () => v().tricks[k] === t;
-    // the spell (all but the failed one)
-    when(
-      t0 + 1.3,
-      () => v().tricks[k] !== 'frog',
-      (s) => {
-        s.whoosh({ duration: 0.8, from: 400, to: 2400, gain: 0.2 });
-        sparkle(s, 0.2);
-      },
-    );
-    when(
-      t0 + 2.2,
-      () => v().tricks[k] !== 'frog',
-      (s) => s.chime({ notes: [1047, 1319, 1568, 2093], gain: 0.22 }),
-    );
-    // pumpkin: grows, laughs
-    when(t0 + 2.3, is('pumpkin'), (s) => s.whoosh({ duration: 0.9, from: 120, to: 500, gain: 0.3 }));
-    when(t0 + 4.5, is('pumpkin'), (s) => s.ooh({ duration: 0.5, base: 150, gain: 0.35 }));
-    when(t0 + 5.1, is('pumpkin'), (s) => s.ooh({ duration: 0.5, base: 140, gain: 0.35 }));
-    when(t0 + 5.7, is('pumpkin'), (s) => s.ooh({ duration: 0.7, base: 128, gain: 0.35 }));
-    when(t0 + 8.75, is('pumpkin'), poofS);
-    // bats
-    when(t0 + 2.2, is('bats'), (s) => s.ooh({ duration: 2.2, base: 260, gain: 0.12 }));
-    for (const dt of [3.0, 3.6, 4.2, 4.9, 5.6])
-      when(t0 + dt, is('bats'), (s) => {
-        s.whoosh({ duration: 0.7, from: 600, to: 1600, gain: 0.18 });
-        s.chime({ notes: [3520, 3951], gain: 0.05, spacing: 0.04 });
-      });
-    // cauldron
-    when(t0 + 2.25, is('cauldron'), poofS);
-    for (let i = 0; i < 14; i++)
-      when(t0 + 3 + i * 0.36, is('cauldron'), (s) => s.pop({ freq: 300 + ((i * 137) % 500), gain: 0.18 }));
-    when(t0 + 8.6, is('cauldron'), (s) => {
-      s.pop({ freq: 200, gain: 0.5 });
-      sparkle(s, 0.25);
-    });
-    when(t0 + 9.3, is('cauldron'), poofS);
-    // fireworks
-    for (let i = 0; i < 6; i++) {
-      when(t0 + 2.3 + i * 0.95, is('fireworks'), (s) =>
-        s.whoosh({ duration: 0.85, from: 500, to: 2600, gain: 0.18 }),
-      );
-      when(t0 + 3.2 + i * 0.95, is('fireworks'), (s) => {
-        s.pop({ freq: 110, gain: 0.55 });
-        s.knock({ count: 6, gain: 0.12, spacing: 0.05, delay: 0.25 });
-      });
-    }
-    // the spell that goes wrong: fizzle, puff, a frog
-    when(t0 + 1.3, is('frog'), (s) => s.whoosh({ duration: 0.6, from: 900, to: 300, gain: 0.15 }));
-    when(t0 + 2.8, is('frog'), (s) => {
-      s.rumble({ duration: 0.6, gain: 0.35 });
-      s.pop({ freq: 120, gain: 0.5 });
-    });
-    for (const dt of [4.5, 5.5])
-      when(t0 + dt, is('frog'), (s) =>
-        s.arpeggio({ notes: [98, 87, 98], gain: 0.4, step: 0.08, wave: 'square' }),
-      );
-    for (const dt of [6.4, 7.1, 7.8]) when(t0 + dt, is('frog'), (s) => s.pop({ freq: 520, gain: 0.25 }));
-    when(t0 + 8.6, is('frog'), poofS);
-    // applause / ta-da
-    when(
-      t0 + 9.3,
-      () => v().tricks[k] !== 'frog',
-      (s) => s.arpeggio({ notes: [523, 659, 784, 1047], gain: 0.2, step: 0.09, wave: 'triangle' }),
-    );
-    when(t0 + 9.4, is('frog'), (s) =>
-      s.arpeggio({ notes: [392, 370, 349, 330], gain: 0.18, step: 0.18, wave: 'triangle' }),
-    );
-  }
-  // exits
-  when(
-    48.0,
-    () => v().exit === 'poof',
-    (s) => s.chime({ notes: [1175, 988, 784], gain: 0.22 }),
-  );
-  when(
-    49.3,
-    () => v().exit === 'poof',
-    (s) => s.whoosh({ duration: 2, from: 300, to: 2600, gain: 0.25 }),
-  );
-  when(
-    51.2,
-    () => v().exit === 'poof',
-    (s) => {
-      poofS(s);
-      sparkle(s, 0.3);
-    },
-  );
-  when(
-    48.0,
-    () => v().exit === 'fly',
-    (s) => s.chime({ notes: [1175, 988, 784], gain: 0.22 }),
-  );
-  when(49.2, () => v().exit === 'fly', poofS);
-  when(
-    50.3,
-    () => v().exit === 'fly',
-    (s) => s.whoosh({ duration: 5.5, from: 900, to: 200, gain: 0.28 }),
-  );
-  return out;
 }
 
 export const wallWitchScene: SceneModule = witchScene();
