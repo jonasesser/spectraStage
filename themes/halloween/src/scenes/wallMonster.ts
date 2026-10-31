@@ -1377,6 +1377,8 @@ export class GlbFigure {
           m.skeleton.boneInverses,
         );
         m.bind(m.skeleton, m.bindMatrix);
+        // own materials (the shader keeps the hole uniforms of whoever compiled it first)
+        m.material = Array.isArray(m.material) ? m.material.map((x) => x.clone()) : m.material.clone();
         const mats = Array.isArray(m.material) ? m.material : [m.material];
         for (const mat of mats) occludeMaterial(mat as THREE.MeshStandardMaterial, this.holes);
       }

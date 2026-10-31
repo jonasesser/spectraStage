@@ -298,6 +298,7 @@ export class Rig {
   private actions = new Map<string, THREE.AnimationAction>();
   private hips0 = new THREE.Vector3();
   private hipsScale = 1;
+  private mats: THREE.Material[] = [];
 
   constructor(
     url: string,
@@ -335,7 +336,12 @@ export class Rig {
         m.skeleton.boneInverses,
       );
       m.bind(m.skeleton, m.bindMatrix);
+      // own materials: the loaded model is shared by every play of the show, and a material's
+      // shader keeps the uniforms (holes, face) of whoever compiled it first – a second play would
+      // show the first one's long-closed holes and no face
+      m.material = Array.isArray(m.material) ? m.material.map((x) => x.clone()) : m.material.clone();
       const mats = Array.isArray(m.material) ? m.material : [m.material];
+      for (const mat of mats) this.mats.push(mat);
       for (const mat of mats)
         occludeMaterial(mat as THREE.MeshStandardMaterial, holes, (sh) => {
           Object.assign(sh.uniforms, this.face);
@@ -710,6 +716,7 @@ export class Rig {
   dispose() {
     this.disposed = true;
     if (this.face.uFaceTex.value !== NO_TEX) this.face.uFaceTex.value.dispose();
+    for (const m of this.mats) m.dispose();
   }
 }
 
