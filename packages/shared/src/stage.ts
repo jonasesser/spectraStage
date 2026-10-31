@@ -483,11 +483,25 @@ export function surfacesForSides(surfaces: readonly Surface[], sides: readonly s
   if (!main) return [];
   const m = main.rect;
   const ids = new Set<string>();
+  // the side wall right (left) of the main wall: the nearest one on that side (laid out next to it,
+  // gaps in the layout don't matter)
+  const nearest = (right: boolean) =>
+    lay
+      .filter(
+        (w) => w.role === 'side' && (right ? w.rect.x >= m.x + m.w - 0.3 : w.rect.x + w.rect.w <= m.x + 0.3),
+      )
+      .sort((a, b) => (right ? a.rect.x - b.rect.x : b.rect.x + b.rect.w - (a.rect.x + a.rect.w)))[0];
   for (const side of sides) {
     if (side === 'main') ids.add(main.id);
+    if (side === 'right') {
+      const w = nearest(true);
+      if (w) ids.add(w.id);
+    }
+    if (side === 'left') {
+      const w = nearest(false);
+      if (w) ids.add(w.id);
+    }
     for (const w of lay) {
-      if (w.role === 'side' && side === 'right' && Math.abs(w.rect.x - (m.x + m.w)) < 0.3) ids.add(w.id);
-      if (w.role === 'side' && side === 'left' && Math.abs(w.rect.x + w.rect.w - m.x) < 0.3) ids.add(w.id);
       if (
         w.role === 'ground' &&
         side === 'floorFront' &&

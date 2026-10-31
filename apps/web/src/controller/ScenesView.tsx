@@ -11,10 +11,22 @@ import {
   type Surface,
 } from '@spectrastage/shared';
 import { useT, type Tr } from '../lib/i18n.tsx';
-import { groupGuestPhotos } from '../lib/guestPhotos.ts';
-import { GuestPhotoGroups, useGhostUrls } from './GhostGallery.tsx';
+import { ghostImagesFor } from '../lib/ghostImages.ts';
 import { useShow, useStore } from './store.ts';
 import { kindColor, Slider } from './ui.tsx';
+import { storage } from '../lib/storage.ts';
+
+/** The settings last chosen for a scene played in (e.g. the guests' faces) – kept for the next time. */
+function lastParams(sceneId: string): ParamValues {
+  try {
+    return (JSON.parse(storage.get(`ss.insert.${sceneId}`) ?? '{}') as ParamValues) ?? {};
+  } catch {
+    return {};
+  }
+}
+function keepParams(sceneId: string, p: ParamValues) {
+  storage.set(`ss.insert.${sceneId}`, JSON.stringify(p));
+}
 
 export function ScenesView() {
   const L = useT();
@@ -318,7 +330,7 @@ function InsertPanel({
               style={{ background: `linear-gradient(135deg, ${x.colors[0]}, ${x.colors[1]})` }}
               onClick={() => {
                 setPick(pick === x.id ? null : x.id);
-                setParams(sanitizeParams(x.params, {}));
+                setParams(sanitizeParams(x.params, lastParams(x.id)));
               }}
               title={L.text(x.description)}
             >
@@ -403,7 +415,13 @@ function InsertPanel({
                 key={p.key}
                 def={p}
                 value={params[p.key]}
-                onChange={(v) => setParams((o) => ({ ...o, [p.key]: v }))}
+                onChange={(v) =>
+                  setParams((o) => {
+                    const n = { ...o, [p.key]: v };
+                    if (sc) keepParams(sc.id, n);
+                    return n;
+                  })
+                }
                 L={L}
               />
             ))}
@@ -611,8 +629,7 @@ export function ParamControl({
   }
 }
 
-/** Pick one of the guests' photos – the same guests as in the ghost gallery, each with all its
- *  versions (without mask, mask, AI) – or none. */
+/** Pick one of the guests' photos (ghost photos) – or none. */
 function PhotoPicker({
   label,
   value,
@@ -624,15 +641,34 @@ function PhotoPicker({
   onChange: (v: string) => void;
   L: Tr;
 }) {
+  const store = useStore();
   const { state } = useShow();
-  const photos = groupGuestPhotos(state.ghosts ?? []);
-  const urls = useGhostUrls(photos.flatMap((p) => p.ids));
+  // the plain photos (unchanged guests – they wear their costumes anyway); older shows without
+  // them: all pictures
+  const all = state.ghosts ?? [];
+  const plain = all.filter((g) => g.kind === 'original');
+  const ghosts = plain.length ? plain : all;
+  const [urls, setUrls] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let alive = true;
+    const cache = ghostImagesFor(store.conn);
+    for (const g of ghosts) {
+      if (urls[g.id]) continue;
+      void cache.url(g.id).then((u) => {
+        if (alive && u) setUrls((m) => ({ ...m, [g.id]: u }));
+      });
+    }
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ghosts.map((g) => g.id).join(',')]);
   return (
     <div>
       <div className="muted small" style={{ fontWeight: 600, marginBottom: 4 }}>
         {label}
       </div>
-      {!photos.length ? (
+      {!ghosts.length ? (
         <p className="muted small" style={{ margin: 0 }}>
           {L(
             'No guest photos yet (take some with the ghost photo camera).',
@@ -640,20 +676,24 @@ function PhotoPicker({
           )}
         </p>
       ) : (
-        <div className="stack" style={{ gap: '0.4rem' }}>
-          <div className="row">
+        <div className="ghost-grid">
+          <button
+            className={`ghost-thumb${!value ? ' on' : ''}`}
+            onClick={() => onChange('')}
+            aria-pressed={!value}
+          >
+            <span>✖</span>
+          </button>
+          {[...ghosts].reverse().map((g) => (
             <button
-              className={`chip${!value ? ' on' : ''}`}
-              onClick={() => onChange('')}
-              aria-pressed={!value}
+              key={g.id}
+              className={`ghost-thumb${value === g.id ? ' on' : ''}`}
+              onClick={() => onChange(g.id)}
+              aria-pressed={value === g.id}
             >
-              ✖ {L('No photo', 'Kein Foto')}
+              {urls[g.id] ? <img src={urls[g.id]} alt="" /> : <span>👻</span>}
             </button>
-            <span className="muted small">
-              {L('Best for faces: “Without mask”', 'Für Gesichter am besten: „Ohne Maske“')}
-            </span>
-          </div>
-          <GuestPhotoGroups photos={photos} urls={urls} isOn={(id) => value === id} onPick={onChange} L={L} />
+          ))}
         </div>
       )}
     </div>

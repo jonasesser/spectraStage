@@ -171,7 +171,8 @@ function spaceOf(s: DrawState): Space {
     // the right wall: the side wall that goes on right where the main wall ends (and is projected)
     const r = room.faces
       .filter((f) => f.role === 'side' && w.surfaces.some((x) => x.id === f.id))
-      .filter((f) => Math.abs(f.rect.x - (main.rect.x + main.rect.w)) < 0.3)[0];
+      .filter((f) => f.rect.x >= main.rect.x + main.rect.w - 0.3)
+      .sort((p, q) => p.rect.x - q.rect.x)[0];
     if (r)
       right = {
         T0: toP([r.o[0], 0, r.o[2]]),

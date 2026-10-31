@@ -884,23 +884,39 @@ describe('scenes played in between', () => {
   });
 });
 
-describe('ghost flights', () => {
-  it('calling ghosts back lets them fly off and fade out instead of vanishing', () => {
-    const s = createInitialState('s1', 'Show', 0, 't', 7);
-    s.ghostFlights = [
-      { id: 'f1', ghostId: 'g1', startAt: 0, endAt: 60_000, seed: 1 },
-      { id: 'f2', ghostId: 'g2', startAt: 0, endAt: 60_000, seed: 2 },
-      { id: 'f3', ghostId: 'g3', startAt: 0, endAt: 1_500, seed: 3 },
-      { id: 'f4', ghostId: 'g4', startAt: 50_000, endAt: 90_000, seed: 4 },
-    ];
-    const one = applyCommand(s, { t: 'ghost.stopFlights', ghostIds: ['g1'] }, ctx(1000)).state;
-    expect(one.ghostFlights!.find((f) => f.ghostId === 'g1')!.endAt).toBeLessThan(5_000);
-    expect(one.ghostFlights!.find((f) => f.ghostId === 'g2')!.endAt).toBe(60_000);
-    const all = applyCommand(s, { t: 'ghost.stopFlights' }, ctx(1000)).state;
-    const end = (id: string) => all.ghostFlights!.find((f) => f.ghostId === id)?.endAt;
-    expect(end('g1')).toBeGreaterThan(1000);
-    expect(end('g1')).toBeLessThan(5_000);
-    expect(end('g3')).toBe(1_500); // already leaving: unchanged
-    expect(end('g4')).toBeUndefined(); // not started yet: gone right away
+describe('played in once: the other sides go dark', () => {
+  it('puts the others on black for the same time and brings them back with the programme', () => {
+    const basic: ThemeManifest = {
+      ...theme,
+      id: 'basic',
+      scenes: [
+        {
+          ...theme.scenes[0]!,
+          id: 'solidColor',
+          params: [{ key: 'color', label: { en: 'C', de: 'C' }, type: 'color', default: '#202040' }],
+        },
+      ],
+    };
+    const c = { ...ctx(), catalog: createCatalog([theme, basic]) };
+    let s = createInitialState('s', 'S', 0, 't', 7);
+    s = applyCommand(s, { t: 'surface.create', name: 'W1', kind: 'wall' }, c).state;
+    s = applyCommand(s, { t: 'surface.create', name: 'W2', kind: 'wall' }, c).state;
+    const [w1, w2] = s.surfaces;
+    s = applyCommand(
+      s,
+      { t: 'surface.insert', surfaceIds: [w1!.id], themeId: 't', sceneId: 'b', params: {}, sec: 20 },
+      c,
+    ).state;
+    const on = s.surfaces.find((x) => x.id === w1!.id)!.insert!;
+    const dark = s.surfaces.find((x) => x.id === w2!.id)!.insert!;
+    expect(on.scene.sceneId).toBe('b');
+    expect(dark.scene).toMatchObject({
+      themeId: 'basic',
+      sceneId: 'solidColor',
+      params: { color: '#000000' },
+    });
+    expect([dark.startedAt, dark.endAt]).toEqual([on.startedAt, on.endAt]);
+    s = applyCommand(s, { t: 'surface.resetProgram', surfaceIds: [w1!.id] }, c).state;
+    expect(s.surfaces.every((x) => !x.insert)).toBe(true);
   });
 });

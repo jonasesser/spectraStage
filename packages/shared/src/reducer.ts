@@ -175,9 +175,6 @@ function scenePlayback(
   };
 }
 
-/** How long a ghost needs to fly off and fade out (matches the renderer's exit). */
-export const GHOST_EXIT_MS = 2500;
-
 function playlistPlayback(playlistId: string, ctx: ReducerContext, startIndex = 0): Playback {
   return {
     mode: 'playlist',
@@ -655,15 +652,11 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       state.ghosts = [];
       state.ghostFlights = [];
       return res('all ghosts deleted');
-    case 'ghost.stopFlights': {
-      // they do not vanish: each one flies off upwards and fades out (the normal 2.5 s exit)
-      const endAt = ctx.now + lead + GHOST_EXIT_MS;
-      const hit = (f: { ghostId: string }) => !cmd.ghostIds || cmd.ghostIds.includes(f.ghostId);
-      state.ghostFlights = (state.ghostFlights ?? [])
-        .filter((f) => !hit(f) || f.startAt < ctx.now + lead)
-        .map((f) => (hit(f) && f.endAt > endAt ? { ...f, endAt } : f));
+    case 'ghost.stopFlights':
+      state.ghostFlights = cmd.ghostIds
+        ? (state.ghostFlights ?? []).filter((f) => !cmd.ghostIds!.includes(f.ghostId))
+        : [];
       return res('ghosts back');
-    }
     case 'object.create': {
       const list = (state.objects ??= []);
       if (list.length >= 24) fail('limit', 'Too many objects');
@@ -781,6 +774,23 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
           startedAt,
           endAt,
         };
+      // all other sides fade to dark while it plays (and come back after) – the show belongs to it
+      const basic = ctx.catalog.get('basic');
+      const dark = basic?.scenes.find((x) => x.id === 'solidColor');
+      if (basic && dark)
+        for (const s of state.surfaces)
+          if (!cmd.surfaceIds.includes(s.id))
+            s.insert = {
+              id: `dark-${seed.toString(36)}${state.surfaces.indexOf(s)}`,
+              scene: {
+                themeId: basic.id,
+                sceneId: dark.id,
+                params: sanitizeParams(dark.params, { color: '#000000' }),
+              },
+              seed: seed + state.surfaces.indexOf(s),
+              startedAt,
+              endAt,
+            };
       return res(`${scene.name.en} played in → ${names(state.surfaces, cmd.surfaceIds)}`);
     }
     case 'surface.setScene': {
@@ -822,6 +832,8 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
         s.playback = running ? structuredClone(running.playback) : defaultPlayback(state, s.kind, ctx);
         delete s.insert;
       }
+      // the other sides were only dark for it: back too
+      for (const s of state.surfaces) if (s.insert?.id.startsWith('dark-')) delete s.insert;
       return res(`back to the programme → ${names(state.surfaces, cmd.surfaceIds)}`);
     }
     case 'surface.setParams': {
