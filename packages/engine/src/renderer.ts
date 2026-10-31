@@ -32,7 +32,6 @@ import {
   boxFrame,
   faceWall,
   wallQuads,
-  floorFix,
   stageBounds,
   mainAzimuth,
   type RoomFold,
@@ -101,6 +100,26 @@ export interface RendererOptions {
 }
 
 /** A ghost photo prepared for drawing (ghostly look + glow). */
+/**
+ * 1 normally; while a scene is played in somewhere it fades to 0 (2.5 s) and back after it –
+ * the surroundings (creatures, floodlights, lit objects) step back for it.
+ */
+export function envGain(
+  state: { surfaces: readonly { insert?: { id: string; startedAt: number; endAt: number } }[] },
+  now: number,
+): number {
+  let g = 1;
+  for (const s of state.surfaces) {
+    const i = s.insert;
+    if (!i || i.id.startsWith('dark-')) continue;
+    if (now < i.startedAt || now > i.endAt + 2500) continue;
+    const v =
+      now < i.endAt ? 1 - Math.min(1, (now - i.startedAt) / 2500) : Math.min(1, (now - i.endAt) / 2500);
+    g = Math.min(g, v);
+  }
+  return g;
+}
+
 export interface GhostPicture {
   img: CanvasImageSource & { width: number; height: number };
   glow: CanvasImageSource & { width: number; height: number };
@@ -142,24 +161,6 @@ const VERT = /* glsl */ `
 varying vec2 vUv;
 void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
 `;
-/**
- * Objects on the floor: after the projector-position projection, an affine correction moves them
- * onto the pinned floor (see floorFix) – so they stand where the cross was set.
- */
-function fixVert(src: string): string {
-  const line = 'gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);';
-  if (!src.includes(line)) return src;
-  return (
-    'uniform vec4 uFixA;\nuniform vec2 uFixT;\n' +
-    src.replace(
-      line,
-      'vec4 cp = projectionMatrix * modelViewMatrix * vec4(position, 1.0);\n' +
-        '  vec2 nd = cp.xy / cp.w;\n' +
-        '  nd = vec2(uFixA.x * nd.x + uFixA.y * nd.y, uFixA.z * nd.x + uFixA.w * nd.y) + uFixT;\n' +
-        '  gl_Position = vec4(nd * cp.w, cp.z, cp.w);',
-    )
-  );
-}
 const CLIP_VERT = /* glsl */ `
 varying vec2 vUv;
 void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
@@ -1278,9 +1279,7 @@ export class StageRenderer {
     r.setRenderTarget(null);
     r.setClearColor(0x000000, 1);
     r.clear();
-    // the tinted masks belong to the setup picture: they go away with it (no stale overlay after F5)
-    const showOverlay =
-      !this.opts.preview && output && ((output.showMasks && aligning) || testMode !== 'off');
+    const showOverlay = !this.opts.preview && output && (output.showMasks || testMode !== 'off');
     const finalGain = this.opts.preview
       ? 1
       : Math.max(this.gain, testMode !== 'off' || identify || aligning ? 1 : 0) * limiter;
@@ -1507,11 +1506,7 @@ export class StageRenderer {
   }
 
   /** Real objects in the room as 3D bodies in the projector view, with their own light. */
-  private syncPoseObjects(
-    objects: readonly RoomObject[],
-    now: number,
-    fix: (o: RoomObject) => [number, number, number, number, number, number] | null,
-  ): void {
+  private syncPoseObjects(objects: readonly RoomObject[], now: number, env = 1): void {
     const key = JSON.stringify(objects.map((o) => [o.id, o.shape, o.pos, o.size, o.yaw]));
     const t = (now / 1000) % 10000;
     if (key !== this.poseObjectsKey) {
@@ -1535,10 +1530,8 @@ export class StageRenderer {
               uLook: { value: 0 },
               uSeed: { value: (hashString(o.id) % 1000) / 1000 },
               uSize: { value: new THREE.Vector3(o.size[0], o.size[1], o.size[2]) },
-              uFixA: { value: new THREE.Vector4(1, 0, 0, 1) },
-              uFixT: { value: new THREE.Vector2(0, 0) },
             },
-            vertexShader: fixVert(PUMPKIN_VERT),
+            vertexShader: PUMPKIN_VERT,
             fragmentShader: PUMPKIN_FRAG,
             side: THREE.FrontSide,
           });
@@ -1549,14 +1542,8 @@ export class StageRenderer {
               : new THREE.CylinderGeometry(0.5, 0.5, 1, 48).scale(o.size[0], o.size[1], o.size[2]);
           g.translate(0, o.size[1] / 2, 0);
           mat = new THREE.ShaderMaterial({
-            uniforms: {
-              uColor: { value: new THREE.Color() },
-              uTime: { value: 0 },
-              uMode: { value: 1 },
-              uFixA: { value: new THREE.Vector4(1, 0, 0, 1) },
-              uFixT: { value: new THREE.Vector2(0, 0) },
-            },
-            vertexShader: fixVert(VERT),
+            uniforms: { uColor: { value: new THREE.Color() }, uTime: { value: 0 }, uMode: { value: 1 } },
+            vertexShader: VERT,
             fragmentShader: OBJECT_FRAG,
             side: THREE.FrontSide,
           });
@@ -1574,11 +1561,9 @@ export class StageRenderer {
       const o = objects.find((x) => x.id === c.userData.id);
       if (!o) continue;
       const u = ((c as THREE.Mesh).material as THREE.ShaderMaterial).uniforms;
-      (u.uColor!.value as THREE.Color).set(o.color);
+      (u.uColor!.value as THREE.Color).set(o.color).multiplyScalar(env);
+      c.visible = env > 0.01;
       u.uTime!.value = t;
-      const fx = fix(o) ?? [1, 0, 0, 1, 0, 0];
-      (u.uFixA!.value as THREE.Vector4).set(fx[0], fx[1], fx[2], fx[3]);
-      (u.uFixT!.value as THREE.Vector2).set(fx[4], fx[5]);
       if (o.shape === 'pumpkin') u.uLook!.value = pumpkinLook(o);
       // (pumpkin looks on other things: glow)
       else u.uMode!.value = looks.includes(o.look) ? looks.indexOf(o.look) : 1;
@@ -1725,9 +1710,7 @@ export class StageRenderer {
         this.poseRoom.add(m);
       }
     }
-    this.syncPoseObjects(state.objects ?? [], now, (o) =>
-      floorFix(fold, pose, ow / oh, profile.anchors ?? [], profile.walls ?? [], o.pos),
-    );
+    this.syncPoseObjects(state.objects ?? [], now, envGain(state, now));
     this.poseMaterial.uniforms.map!.value = this.viewRT.texture;
     this.flatMaterial.uniforms.map!.value = this.viewRT.texture;
     const cam = this.poseCamera;
@@ -1783,16 +1766,7 @@ export class StageRenderer {
           align.mark ?? null,
         );
       else if (markers) drawCornerMarkers(this.viewOverlay.g, ow, oh, this.previewFocus, now);
-      if (editObj)
-        drawObjectOutline(
-          this.viewOverlay.g,
-          ow,
-          oh,
-          pose,
-          editObj,
-          Date.now(),
-          floorFix(fold, pose, ow / oh, profile.anchors ?? [], profile.walls ?? [], editObj.pos),
-        );
+      if (editObj) drawObjectOutline(this.viewOverlay.g, ow, oh, pose, editObj, Date.now());
       this.viewOverlay.upload();
       const prev = r.autoClear;
       r.autoClear = false;
@@ -2190,13 +2164,15 @@ export class StageRenderer {
       const a = this.opts.catalog.get(c.themeId)?.actors.find((x) => x.id === c.actorId);
       return a && (!state.kidsSafe || a.childSafe) && now >= c.startAt && now < c.endAt;
     });
-    const all = [...cues, ...ambient];
+    // while a scene is played in, the surroundings (creatures, floodlights) fade away – it owns the show
+    const env = envGain(state, now);
+    const all = env > 0.01 ? [...cues, ...ambient] : [];
     const o = this.actorOverlay;
     const live = this.liveSprite?.() ?? [];
     const flights = (state.ghostFlights ?? []).filter((f) => now >= f.startAt && now < f.endAt);
     const facade = state.facade;
     const facadeEdit = !!state.facadeEdit && state.facadeEdit > now;
-    const lampsOn = !!facade?.lamps?.length && (facade.lampFx ?? 'auto') !== 'off';
+    const lampsOn = !!facade?.lamps?.length && (facade.lampFx ?? 'auto') !== 'off' && env > 0.01;
     if (
       all.length === 0 &&
       !live.length &&
@@ -2297,7 +2273,7 @@ export class StageRenderer {
           g.beginPath();
           g.rect(fr.x, fr.y, fr.w, fr.h);
           g.clip();
-          g.globalAlpha = Math.max(0, fade);
+          g.globalAlpha = Math.max(0, fade) * env;
           g.translate(pose.x, pose.y);
           if (!mod.upright) g.rotate(pose.angle);
           const sizePx = manifest.sizeM * ppm;
@@ -2332,7 +2308,12 @@ export class StageRenderer {
     // the floodlights on the house front (and, while setting it up, the outlines)
     const mainF = this.worldFor(state).surfaces.find((w) => w.role === 'main');
     if (facade && mainF) {
-      if (lampsOn && drawLamps(g, facade, mainF.rect, now)) drew = true;
+      if (lampsOn) {
+        g.save();
+        g.globalAlpha = env;
+        if (drawLamps(g, facade, mainF.rect, now)) drew = true;
+        g.restore();
+      }
       if (facadeEdit) {
         drawFacadeOutline(g, facade, mainF.rect, now);
         drew = true;
