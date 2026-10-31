@@ -10,6 +10,7 @@ import {
 import type { Tr } from '../lib/i18n.tsx';
 import { useStore } from './store.ts';
 import { GhostGallery } from './GhostGallery.tsx';
+import { fitForUpload, ghostTail } from '../lib/guestPhotos.ts';
 import { AI_MODELS, aiGhost, type AiProvider } from '../lib/aiGhost.ts';
 import { ZombieFx } from '../display/zombie.ts';
 
@@ -95,6 +96,8 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
     kind: 'original' | 'filter' | 'ai',
     group: string,
   ): Promise<string> => {
+    // the server takes up to ~1 MB – big pictures (PNG on iPhone) get smaller first
+    image = await fitForUpload(image);
     const res = await fetch('/api/ghosts', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${store.conn.authToken}` },
@@ -213,12 +216,16 @@ export function ZombieCam({ state, presence, L }: { state: SessionState; presenc
       try {
         filterIds = [];
         for (let i = 0; i < shots.length; i++)
-          filterIds.push(await upload(shots[i]!.image, 'filter', groups[i]!));
+          // a real ghost: below the shoulders the body turns into a fading tail
+          filterIds.push(
+            await upload(await ghostTail(shots[i]!.image).catch(() => shots[i]!.image), 'filter', groups[i]!),
+          );
         // the plain photos (never fly) – one that does not get through must not stop the ghosts
         for (let i = 0; i < shots.length; i++)
-          await upload(shots[i]!.original, 'original', groups[i]!).catch((e: Error) =>
-            console.warn('[SpectraStage] original photo', e.message),
-          );
+          // every guest gets both pictures (with and without mask) – one more try if it fails
+          await upload(shots[i]!.original, 'original', groups[i]!)
+            .catch(() => upload(shots[i]!.original, 'original', groups[i]!))
+            .catch((e: Error) => console.warn('[SpectraStage] original photo', e.message));
         // all of them at once, each from where the person stood
         await store.send({ t: 'ghost.release', ghostIds: filterIds, u: shots.map((s) => s.u) });
         patchJob(id, { state: 'flying', ai: ai ? 'painting' : undefined });

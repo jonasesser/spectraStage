@@ -11,10 +11,23 @@ import type { ApiError } from '../lib/api.ts';
 import { api } from '../lib/api.ts';
 import { KEYS, storage } from '../lib/storage.ts';
 import { useT } from '../lib/i18n.tsx';
+import {
+  activateConnection,
+  clearActive,
+  listConnections,
+  markActive,
+  migrateLegacy,
+  patchConnectionByToken,
+  removeConnection,
+  removeConnectionByToken,
+  shouldResume,
+  upsertConnection,
+  type SavedConnection,
+} from './savedConnections.ts';
 
 const VERSION = '1.0.0';
 
-type Phase = 'pair' | 'pending' | 'run';
+type Phase = 'choose' | 'pair' | 'pending' | 'run';
 
 function slotFromUrl(): string {
   const s = new URLSearchParams(location.search).get('slot') ?? '1';
@@ -23,31 +36,174 @@ function slotFromUrl(): string {
 
 export default function DisplayApp() {
   const slot = slotFromUrl();
-  const [phase, setPhase] = useState<Phase>(() =>
-    storage.get(KEYS.displayToken(slot))
-      ? 'run'
-      : storage.get(KEYS.displayPending(slot))
-        ? 'pending'
-        : 'pair',
-  );
+  const [phase, setPhase] = useState<Phase>(() => {
+    migrateLegacy(slot);
+    // Only a reload of a tab that was already projecting resumes on its own (F5, GPU recovery).
+    // Opening the projector view fresh always asks which connection to use.
+    if (shouldResume(slot)) {
+      if (storage.get(KEYS.displayToken(slot))) return 'run';
+      if (storage.get(KEYS.displayPending(slot))) return 'pending';
+    }
+    clearActive(slot);
+    storage.remove(KEYS.displayPending(slot));
+    return listConnections().length ? 'choose' : 'pair';
+  });
   const [notice, setNotice] = useState<string | null>(null);
 
   const reset = useCallback(
-    (msg: string | null) => {
+    (msg: string | null, forgetToken?: string) => {
+      if (forgetToken) removeConnectionByToken(forgetToken);
       storage.remove(KEYS.displayToken(slot));
       storage.remove(KEYS.displayPending(slot));
       storage.remove(KEYS.displaySnapshot(slot));
+      clearActive(slot);
       setNotice(msg);
-      setPhase('pair');
+      setPhase(listConnections().length ? 'choose' : 'pair');
     },
     [slot],
   );
 
-  if (phase === 'pair') return <PairForm slot={slot} notice={notice} onPaired={() => setPhase('pending')} />;
-  return <Projection slot={slot} phase={phase} onApproved={() => setPhase('run')} onReset={reset} />;
+  const toChooser = useCallback(() => {
+    clearActive(slot);
+    setNotice(null);
+    setPhase(listConnections().length ? 'choose' : 'pair');
+  }, [slot]);
+
+  if (phase === 'choose')
+    return (
+      <ChooseConnection
+        slot={slot}
+        notice={notice}
+        onUse={(c) => {
+          activateConnection(slot, c);
+          setNotice(null);
+          setPhase('run');
+        }}
+        onNew={() => {
+          setNotice(null);
+          setPhase('pair');
+        }}
+        onEmpty={() => setPhase('pair')}
+      />
+    );
+  if (phase === 'pair')
+    return (
+      <PairForm
+        slot={slot}
+        notice={notice}
+        onPaired={() => {
+          markActive(slot);
+          setPhase('pending');
+        }}
+        onBack={listConnections().length ? toChooser : undefined}
+      />
+    );
+  return (
+    <Projection
+      slot={slot}
+      phase={phase}
+      onApproved={() => setPhase('run')}
+      onReset={reset}
+      onSwitch={toChooser}
+    />
+  );
 }
 
-function PairForm({ slot, notice, onPaired }: { slot: string; notice: string | null; onPaired: () => void }) {
+function ChooseConnection({
+  slot,
+  notice,
+  onUse,
+  onNew,
+  onEmpty,
+}: {
+  slot: string;
+  notice: string | null;
+  onUse: (c: SavedConnection) => void;
+  onNew: () => void;
+  onEmpty: () => void;
+}) {
+  const L = useT();
+  const [list, setList] = useState(() => listConnections().sort((a, b) => b.lastUsed - a.lastUsed));
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const fmt = (t: number) =>
+    new Date(t).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+
+  const remove = (id: string) => {
+    removeConnection(id);
+    const next = list.filter((c) => c.id !== id);
+    setList(next);
+    setConfirmId(null);
+    if (!next.length) onEmpty();
+  };
+
+  return (
+    <main className="display-pair">
+      <div className="pair-card">
+        <h1>{L('Choose a connection', 'Verbindung wählen')}</h1>
+        <p className="muted">
+          {L(
+            'This projector was already connected to these shows. Pick one, or connect to a new show with a pairing code.',
+            'Dieser Beamer war schon mit diesen Shows verbunden. Wähle eine aus oder verbinde dich per Pairing-Code neu.',
+          )}
+        </p>
+        {notice && <p className="error">{notice}</p>}
+        <ul className="conn-list">
+          {list.map((c) => (
+            <li key={c.id} className="conn-item">
+              <div className="conn-item-text">
+                <strong>{c.showName || L('Show', 'Show')}</strong>
+                <span className="muted small">
+                  {L('Projector', 'Beamer')}: {c.name} · {L('last used', 'zuletzt')} {fmt(c.lastUsed)}
+                </span>
+              </div>
+              {confirmId === c.id ? (
+                <div className="conn-item-actions">
+                  <button type="button" className="btn danger" onClick={() => remove(c.id)}>
+                    {L('Delete', 'Löschen')}
+                  </button>
+                  <button type="button" className="btn" onClick={() => setConfirmId(null)}>
+                    {L('Cancel', 'Abbrechen')}
+                  </button>
+                </div>
+              ) : (
+                <div className="conn-item-actions">
+                  <button type="button" className="btn primary" onClick={() => onUse(c)}>
+                    {L('Connect', 'Verbinden')}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    aria-label={L('Delete connection', 'Verbindung löschen')}
+                    title={L('Delete connection', 'Verbindung löschen')}
+                    onClick={() => setConfirmId(c.id)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+        <button type="button" className="btn big" onClick={onNew}>
+          {L('Connect new with pairing code', 'Neu per Pairing-Code verbinden')}
+        </button>
+        {slot !== '1' && <p className="muted small">Slot {slot}</p>}
+      </div>
+    </main>
+  );
+}
+
+function PairForm({
+  slot,
+  notice,
+  onPaired,
+  onBack,
+}: {
+  slot: string;
+  notice: string | null;
+  onPaired: () => void;
+  onBack?: () => void;
+}) {
   const L = useT();
   const [code, setCode] = useState('');
   const [name, setName] = useState(() => storage.get(KEYS.displayName(slot)) ?? '');
@@ -127,6 +283,11 @@ function PairForm({ slot, notice, onPaired }: { slot: string; notice: string | n
         <button className="btn primary big" disabled={busy}>
           {busy ? L('Connecting…', 'Verbinde…') : L('Request connection', 'Verbindung anfragen')}
         </button>
+        {onBack && (
+          <button type="button" className="btn" onClick={onBack}>
+            {L('Back to saved connections', 'Zurück zu gespeicherten Verbindungen')}
+          </button>
+        )}
         {slot !== '1' && <p className="muted small">Slot {slot}</p>}
       </form>
     </main>
@@ -138,11 +299,13 @@ function Projection({
   phase,
   onApproved,
   onReset,
+  onSwitch,
 }: {
   slot: string;
   phase: Phase;
   onApproved: () => void;
-  onReset: (msg: string | null) => void;
+  onReset: (msg: string | null, forgetToken?: string) => void;
+  onSwitch: () => void;
 }) {
   const L = useT();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -161,6 +324,8 @@ function Projection({
   const [, force] = useState(0);
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
+  const onSwitchRef = useRef(onSwitch);
+  onSwitchRef.current = onSwitch;
 
   // Connection
   useEffect(() => {
@@ -175,6 +340,8 @@ function Projection({
       onWelcome: (m) => setDeviceId(m.subjectId),
       onSnapshot: (s) => {
         setState(s);
+        const active = storage.get(KEYS.displayToken(slot));
+        if (active) patchConnectionByToken(active, { showName: s.name });
         const now = Date.now();
         if (now - lastSave > 3000) {
           lastSave = now;
@@ -184,6 +351,12 @@ function Projection({
       onApproved: (deviceToken, id) => {
         storage.set(KEYS.displayToken(slot), deviceToken);
         storage.remove(KEYS.displayPending(slot));
+        upsertConnection({
+          token: deviceToken,
+          deviceId: id,
+          name: storage.get(KEYS.displayName(slot)) ?? 'Beamer',
+        });
+        markActive(slot);
         setDeviceId(id);
         onApproved();
       },
@@ -197,6 +370,7 @@ function Projection({
                 'This device was removed from the show. Pair it again.',
                 'Dieses Gerät wurde aus der Show entfernt. Bitte neu verbinden.',
               ),
+          storage.get(KEYS.displayToken(slot)) ?? token,
         ),
       onIdentify: (label, until) => rendererRef.current?.showIdentify(label, until),
       onPreview: (_outputId, profile, focus) => rendererRef.current?.setPreviewProfile(profile, focus),
@@ -386,6 +560,7 @@ function Projection({
         setLocalBlackout(on);
       } else if (k === 'f') activate();
       else if (k === 'i') setShowInfo((v) => !v);
+      else if (k === 'v') onSwitchRef.current();
       soundRef.current.unlock();
     };
     const onVis = () => document.visibilityState === 'visible' && requestWakeLock();
@@ -525,7 +700,8 @@ function Projection({
             {stats?.lastError ? ` · ${stats.lastError}` : ''}
           </div>
           <div className="muted">
-            B = {L('local blackout', 'lokaler Blackout')} · F = {L('fullscreen', 'Vollbild')} · I = Info
+            B = {L('local blackout', 'lokaler Blackout')} · F = {L('fullscreen', 'Vollbild')} · I = Info · V ={' '}
+            {L('switch connection', 'Verbindung wechseln')}
           </div>
         </div>
       )}

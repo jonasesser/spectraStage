@@ -887,6 +887,34 @@ label.check {
   border-radius: var(--r-lg);
   padding: 1.5rem;
 }
+.conn-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.conn-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+.conn-item-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-wrap: anywhere;
+}
+.conn-item-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex: none;
+}
 .code-input {
   font-size: 2rem !important;
   letter-spacing: 0.12em;
@@ -1128,6 +1156,35 @@ body,
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+.guest-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.5rem;
+}
+.guest-card {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.guest-card .ghost-thumb {
+  position: relative;
+  min-width: 0;
+}
+.guest-card .ghost-thumb small {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 2px;
+  font-size: 0.6rem;
+  line-height: 1.2;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 6px;
+  color: var(--ink);
 }
 .ghost-thumb.on {
   border-color: var(--lantern);

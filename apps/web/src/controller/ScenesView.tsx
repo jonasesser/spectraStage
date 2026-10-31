@@ -11,7 +11,8 @@ import {
   type Surface,
 } from '@spectrastage/shared';
 import { useT, type Tr } from '../lib/i18n.tsx';
-import { ghostImagesFor } from '../lib/ghostImages.ts';
+import { groupGuestPhotos } from '../lib/guestPhotos.ts';
+import { GuestPhotoGroups, useGhostUrls } from './GhostGallery.tsx';
 import { useShow, useStore } from './store.ts';
 import { kindColor, Slider } from './ui.tsx';
 
@@ -610,7 +611,8 @@ export function ParamControl({
   }
 }
 
-/** Pick one of the guests' photos (ghost photos) – or none. */
+/** Pick one of the guests' photos – the same guests as in the ghost gallery, each with all its
+ *  versions (without mask, mask, AI) – or none. */
 function PhotoPicker({
   label,
   value,
@@ -622,34 +624,15 @@ function PhotoPicker({
   onChange: (v: string) => void;
   L: Tr;
 }) {
-  const store = useStore();
   const { state } = useShow();
-  // the plain photos (unchanged guests – they wear their costumes anyway); older shows without
-  // them: all pictures
-  const all = state.ghosts ?? [];
-  const plain = all.filter((g) => g.kind === 'original');
-  const ghosts = plain.length ? plain : all;
-  const [urls, setUrls] = useState<Record<string, string>>({});
-  useEffect(() => {
-    let alive = true;
-    const cache = ghostImagesFor(store.conn);
-    for (const g of ghosts) {
-      if (urls[g.id]) continue;
-      void cache.url(g.id).then((u) => {
-        if (alive && u) setUrls((m) => ({ ...m, [g.id]: u }));
-      });
-    }
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ghosts.map((g) => g.id).join(',')]);
+  const photos = groupGuestPhotos(state.ghosts ?? []);
+  const urls = useGhostUrls(photos.flatMap((p) => p.ids));
   return (
     <div>
       <div className="muted small" style={{ fontWeight: 600, marginBottom: 4 }}>
         {label}
       </div>
-      {!ghosts.length ? (
+      {!photos.length ? (
         <p className="muted small" style={{ margin: 0 }}>
           {L(
             'No guest photos yet (take some with the ghost photo camera).',
@@ -657,24 +640,20 @@ function PhotoPicker({
           )}
         </p>
       ) : (
-        <div className="ghost-grid">
-          <button
-            className={`ghost-thumb${!value ? ' on' : ''}`}
-            onClick={() => onChange('')}
-            aria-pressed={!value}
-          >
-            <span>✖</span>
-          </button>
-          {[...ghosts].reverse().map((g) => (
+        <div className="stack" style={{ gap: '0.4rem' }}>
+          <div className="row">
             <button
-              key={g.id}
-              className={`ghost-thumb${value === g.id ? ' on' : ''}`}
-              onClick={() => onChange(g.id)}
-              aria-pressed={value === g.id}
+              className={`chip${!value ? ' on' : ''}`}
+              onClick={() => onChange('')}
+              aria-pressed={!value}
             >
-              {urls[g.id] ? <img src={urls[g.id]} alt="" /> : <span>👻</span>}
+              ✖ {L('No photo', 'Kein Foto')}
             </button>
-          ))}
+            <span className="muted small">
+              {L('Best for faces: “Without mask”', 'Für Gesichter am besten: „Ohne Maske“')}
+            </span>
+          </div>
+          <GuestPhotoGroups photos={photos} urls={urls} isOn={(id) => value === id} onPick={onChange} L={L} />
         </div>
       )}
     </div>

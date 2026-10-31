@@ -3,6 +3,7 @@ import { catalog } from '@spectrastage/catalog/manifests';
 import { loadThemeRuntime } from '@spectrastage/catalog/runtime';
 import { StageRenderer } from '@spectrastage/engine';
 import { ghostImagesFor } from '../lib/ghostImages.ts';
+import { downloadBlob, stamp } from '../lib/guestPhotos.ts';
 import { useStore } from './store.ts';
 import {
   activeProfile,
@@ -28,6 +29,7 @@ export function StagePreview({
   outputId,
   profile,
   side,
+  snapshot,
 }: {
   state: SessionState;
   now: () => number;
@@ -35,6 +37,8 @@ export function StagePreview({
   profile?: Profile | null;
   /** Show only this side of the room (also the ones the app adds itself, e.g. the floor). */
   side?: RoomWall | null;
+  /** Offer a button that saves the current picture (label of the button). */
+  snapshot?: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const r = useRef<StageRenderer | null>(null);
@@ -48,6 +52,8 @@ export function StagePreview({
       now,
       preview: !outputId,
       maxPixelRatio: 1,
+      // the picture can be saved (download as a souvenir)
+      readable: !!snapshot,
     });
     r.current = renderer;
     renderer.setGhostImages(ghostImagesFor(store.conn).get);
@@ -92,5 +98,23 @@ export function StagePreview({
     const b = stageBounds(completeRoom(state.surfaces));
     aspect = String(Math.min(2.4, Math.max(0.6, b.w / b.h)));
   }
-  return <canvas ref={ref} className="preview-canvas" style={{ aspectRatio: aspect }} />;
+  const canvas = <canvas ref={ref} className="preview-canvas" style={{ aspectRatio: aspect }} />;
+  if (!snapshot) return canvas;
+  return (
+    <div className="stack" style={{ gap: '0.4rem' }}>
+      {canvas}
+      <div className="row">
+        <button
+          className="btn small"
+          onClick={() =>
+            ref.current?.toBlob((b) => {
+              if (b) downloadBlob(b, `spectrastage-szene_${side ?? 'raum'}_${stamp(Date.now())}.png`);
+            }, 'image/png')
+          }
+        >
+          📷 {snapshot}
+        </button>
+      </div>
+    </div>
+  );
 }

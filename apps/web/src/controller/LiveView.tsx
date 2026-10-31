@@ -92,7 +92,12 @@ export function LiveView() {
                 </button>
               ))}
             </div>
-            <StagePreview state={state} now={now} side={previewSide} />
+            <StagePreview
+              state={state}
+              now={now}
+              side={previewSide}
+              snapshot={L('Save picture (souvenir)', 'Bild speichern (Erinnerung)')}
+            />
           </div>
         ) : (
           <p className="muted small">
