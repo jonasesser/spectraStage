@@ -20,7 +20,7 @@ import {
   type SceneModule,
 } from '@spectrastage/engine';
 import { clocks, frameOf, makeHoles, speedOf, type Frame } from './wallMonster.ts';
-import { feetAt, FigureLayer, Rig, type Body, type Reach } from './wallShow.ts';
+import { feetAt, FigureLayer, Rig, standLift, type Body, type Reach } from './wallShow.ts';
 
 type V3 = [number, number, number];
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -180,6 +180,8 @@ function spaceOf(s: DrawState): Space {
         len: r.rect.w / k,
       };
   }
+  // her floor (where she stands, props and all) rises so her feet are seen on the wall
+  F = { ...F, floorY: F.floorY + standLift(F, 0.3) };
   const m = 1 / F.k;
   const hw = Math.abs(F.pu[0]) / 2;
   const T = right ?? { T0: V(hw * 0.12, F.floorY, 0), Tx: V(1, 0, 0), Tn: V(0, 0, 1), len: hw * 0.88 };
@@ -569,6 +571,7 @@ function witchScene(): SceneModule {
       const layer = new FigureLayer();
       layer.fade = 1;
       const rig = new Rig('/models/witch.glb', HEIGHT, holes);
+      rig.liftFloor = false;
       layer.scene.add(rig.root);
       let rigClipped = false;
       let m = 1;
@@ -728,7 +731,7 @@ void main(){ vUv = uv; vec4 mvPosition = modelViewMatrix * vec4(position,1.0); g
         layer.fade = fade;
         // guest photo on her face
         const pid = String(params.witchPhoto ?? '') || null;
-        rig.setFace(pid, pid ? (ctx.photos?.get(pid)?.img ?? null) : null);
+        rig.setFace(pid, pid ? (ctx.photos?.get(pid) ?? null) : null);
         rig.root.visible = st.witch && rig.ready;
         const prevLocal = r.localClippingEnabled;
         r.localClippingEnabled = true;

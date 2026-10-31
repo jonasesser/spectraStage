@@ -52,7 +52,7 @@ import {
   type ThemeCatalog,
   type Viewport,
 } from '@spectrastage/shared';
-import type { SceneInstance, ScenePhotos, SceneVideos, ThemeRuntime } from './sdk.ts';
+import type { FaceBox, SceneInstance, ScenePhotos, SceneVideos, ThemeRuntime } from './sdk.ts';
 import { canvasTexture } from './sceneKit.ts';
 import { buildWarpMesh } from './warp.ts';
 import {
@@ -103,6 +103,8 @@ export interface RendererOptions {
 export interface GhostPicture {
   img: CanvasImageSource & { width: number; height: number };
   glow: CanvasImageSource & { width: number; height: number };
+  raw?: CanvasImageSource & { width: number; height: number };
+  readonly face?: FaceBox | null;
 }
 
 export interface LiveSprite {

@@ -304,3 +304,9 @@ Hinweis: Läuft der Server hinter einem Proxy (Easypanel), muss dessen Upload-Gr
 - Jeder Klang hat eine Auswahl: **Original**, **Aus**, echte Aufnahmen (CC0, OpenGameArt) oder **⬆ eigene Datei** (Audio bis 8 MB). Die Wahl gilt sofort für die ganze Show, auf allen Beamern; ▶ spielt, was die Show gerade spielt.
 - Die als nervig gemeldeten 12 Klänge (Uuuh, Glöckchen, Plopp, Melodie, Buh!, Kürbis-Explosion, Geisterwelle, Funkeln, Skelett-Tanzpause, Magischer Kreis, Puls, Sternschnuppen) sind **aus**, bis eine Aufnahme gewählt ist.
 - Die 3D-Shows (Brautpaar, Mumie, Kumpel, Hexe, Ausbrüche aus der Wand) spielen keinen eigenen Ton mehr.
+
+## 3D-Figuren: Füße, Löcher, Gäste-Gesichter
+
+- Die Wand allein kann den Boden davor nicht zeigen: Figuren, die vor der Wand stehen, stehen deshalb auf einem leicht zum Betrachter ansteigenden Boden – die Füße bleiben auf der Wand sichtbar.
+- Was hinter der Wand ist, wird entlang der Blicklinie verdeckt (nicht senkrecht) – Figuren in seitlichen Löchern werden nicht mehr vom Lochrand angeschnitten.
+- Gäste-Gesichter: das Gesicht wird im Original-Foto per Gesichtserkennung gefunden, aufrecht gedreht und deckt das Gesicht der Figur voll (nicht durchscheinend). Ohne erkanntes Gesicht wird es aus dem Umriss geschätzt.

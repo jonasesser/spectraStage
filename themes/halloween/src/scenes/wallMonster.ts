@@ -1190,6 +1190,7 @@ export function uniformsFor(id: string, cute: boolean, guest?: GuestPhoto, figur
 // Real 3D figures (rigged GLB, Mixamo skeleton)
 // ---------------------------------------------------------------------------
 const HOLE_GLSL = /* glsl */ `
+uniform vec3 uEye;
 uniform vec4 uH0, uH1;
 uniform vec2 uHO;
 uniform float uHN;
@@ -1198,6 +1199,8 @@ varying vec3 vWallPos;
 
 /** The holes in the wall, shared by the wall shader settings and the figures' materials. */
 export interface HoleUniforms {
+  /** The viewer's eye: a point behind the wall is seen where the line to the eye crosses it. */
+  uEye: { value: THREE.Vector3 };
   uH0: { value: THREE.Vector4 };
   uH1: { value: THREE.Vector4 };
   uHO: { value: THREE.Vector2 };
@@ -1205,6 +1208,7 @@ export interface HoleUniforms {
 }
 export function makeHoles(): HoleUniforms {
   return {
+    uEye: { value: new THREE.Vector3(0, 0, 3) },
     uH0: { value: new THREE.Vector4(HOLE_C[0], HOLE_C[1], 1, 1) },
     uH1: { value: new THREE.Vector4(0, 0, 1, 1) },
     uHO: { value: new THREE.Vector2(0, 0) },
@@ -1237,11 +1241,13 @@ export function occludeMaterial(
           '#include <clipping_planes_fragment>',
           `#include <clipping_planes_fragment>
   if (vWallPos.z < 0.0) {
+    // where the line of sight to this point crosses the wall – that has to be inside a hole
+    vec2 xyW = uEye.xy + (vWallPos.xy - uEye.xy) * (uEye.z / max(1e-3, uEye.z - vWallPos.z));
     float inside = -1.0;
     for (int i = 0; i < 2; i++) {
       if (float(i) >= uHN) break;
       vec4 h = i == 0 ? uH0 : uH1;
-      vec2 q = (vWallPos.xy - h.xy) / h.zw;
+      vec2 q = (xyW - h.xy) / h.zw;
       float th = atan(q.y, q.x);
       float R = (i == 0 ? uHO.x : uHO.y) * (0.62 + 0.06 * sin(th * 3.0 + 1.3) + 0.04 * sin(th * 7.0 + 0.4) + 0.025 * sin(th * 13.0 + 2.1));
       inside = max(inside, (R - length(q)) * min(h.z, h.w) - 0.015);
@@ -1432,6 +1438,7 @@ export class GlbFigure {
     this.visible = !!(this.model && this.arms && P.hole > 0.001 && a >= 13.5);
     this.fade = P.fade;
     this.holes.uHO.value.set(P.hole, 0);
+    this.holes.uEye.value.set(F.ro[0], F.ro[1], F.ro[2]);
     this.glowLight.color.setRGB(this.glow[0], this.glow[1], this.glow[2]);
     this.glowLight.intensity = P.glow * 1.2;
     // camera: from the eye point through the wall rectangle (off-axis)

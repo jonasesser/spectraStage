@@ -3,9 +3,16 @@
  * ghostly look (pale blue-white, translucent, details kept so people recognise themselves) plus
  * a soft glow, cached per id.
  */
+import type { FaceBox } from '@spectrastage/engine';
+import { findFace } from './faceFind.ts';
+
 export interface GhostImage {
   img: HTMLCanvasElement;
   glow: HTMLCanvasElement;
+  /** The photo in its own colours. */
+  raw: HTMLCanvasElement;
+  /** Where the face is (looked for on first reading; undefined meanwhile). */
+  readonly face: FaceBox | null | undefined;
 }
 
 export class GhostImages {
@@ -49,6 +56,10 @@ export class GhostImages {
       img.height = h;
       const g = img.getContext('2d', { willReadFrequently: true })!;
       g.drawImage(bmp, 0, 0);
+      const raw = document.createElement('canvas');
+      raw.width = w;
+      raw.height = h;
+      raw.getContext('2d')!.drawImage(bmp, 0, 0);
       // the photo keeps its colours – a bit lifted so it glows on the dark scene
       const data = g.getImageData(0, 0, w, h);
       const d = data.data;
@@ -66,7 +77,20 @@ export class GhostImages {
       gg.filter = `blur(${Math.max(3, Math.round(h / 30))}px) brightness(1.8)`;
       gg.drawImage(img, pad, pad);
       bmp.close();
-      this.cache.set(id, { img, glow });
+      let face: FaceBox | null | undefined;
+      let looking = false;
+      this.cache.set(id, {
+        img,
+        glow,
+        raw,
+        get face() {
+          if (!looking) {
+            looking = true;
+            void findFace(raw).then((f) => (face = f));
+          }
+          return face;
+        },
+      });
     } catch {
       this.cache.set(id, 'failed');
     }

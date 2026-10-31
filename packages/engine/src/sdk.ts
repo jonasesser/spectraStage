@@ -60,7 +60,27 @@ export interface SceneVideos {
 
 export interface ScenePhotos {
   list(): readonly { id: string; at: number; kind?: 'original' | 'filter' | 'ai' }[];
-  get(id: string): { img: CanvasImageSource & { width: number; height: number } } | null;
+  get(id: string): {
+    img: CanvasImageSource & { width: number; height: number };
+    /** The photo in its own colours (for faces on figures). */
+    raw?: CanvasImageSource & { width: number; height: number };
+    /**
+     * Where the face is in the photo (found by face landmarks, in 0..1 of the picture; roll in
+     * radians, positive = turned clockwise). Undefined while still looking, null when none found.
+     * Reading it starts the search.
+     */
+    readonly face?: FaceBox | null;
+  } | null;
+}
+
+export interface FaceBox {
+  /** Centre of the face (between the eyes and the mouth). */
+  cx: number;
+  cy: number;
+  /** Width (cheek to cheek) and height (forehead to chin), 0..1 of the picture's width / height. */
+  w: number;
+  h: number;
+  roll: number;
 }
 
 /**

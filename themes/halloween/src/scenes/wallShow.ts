@@ -10,7 +10,7 @@
  * the wall), so in the room they look as if they stood in front of the wall.
  */
 import * as THREE from 'three';
-import { shaderScene, type DrawState, type SceneModule } from '@spectrastage/engine';
+import { shaderScene, type DrawState, type FaceBox, type SceneModule } from '@spectrastage/engine';
 import {
   basisQ,
   clocks,
@@ -125,6 +125,17 @@ export function feetAt(bodyAt: (t: number) => Body, t: number, width: number, fl
   return [out[0]!, out[1]!];
 }
 
+/**
+ * The wall alone can't show the floor in front of it: feet standing out there would be seen below
+ * the wall's bottom edge – cut off. So the floor rises a little towards the viewer, just so much
+ * that every foot is seen on the wall (and a bit above its edge): at the wall it is the real floor.
+ */
+export function standLift(F: Frame, z: number): number {
+  if (z <= 0) return 0;
+  const eyeH = F.ro[1] - F.floorY;
+  return (eyeH * z) / Math.max(0.5, F.ro[2]) + Math.min(1, z / 0.15) * (0.05 / F.k);
+}
+
 // ---------------------------------------------------------------------------
 // The rig: a loaded figure and its limbs
 // ---------------------------------------------------------------------------
@@ -155,14 +166,52 @@ export interface Reach {
 // ---------------------------------------------------------------------------
 // A guest's face on a figure
 // ---------------------------------------------------------------------------
+/** A guest photo as it comes from the show (face box found by face landmarks, if any). */
+export interface FacePhoto {
+  img: CanvasImageSource & { width: number; height: number };
+  raw?: CanvasImageSource & { width: number; height: number };
+  readonly face?: FaceBox | null;
+}
+
 /**
- * Finds the face in a cut-out guest photo (transparent background): the head is the top of the
- * silhouette down to the neck (the narrowest row before the shoulders widen). Returns a square
- * crop of the face with soft edges.
+ * The face of a guest photo for a figure's face: square, upright, the face (forehead to chin,
+ * cheek to cheek) filling FACE_FILL of it, fully opaque, only the very edge soft. With a face box
+ * from face landmarks; without one (none found) guessed from the cut-out silhouette.
  */
+export const FACE_FILL = 0.84;
 export function faceCrop(
   img: CanvasImageSource & { width: number; height: number },
+  face?: FaceBox | null,
 ): HTMLCanvasElement | null {
+  const box = face ?? guessFace(img);
+  if (!box) return null;
+  const S = 256;
+  const out = document.createElement('canvas');
+  out.width = out.height = S;
+  const o = out.getContext('2d');
+  if (!o) return null;
+  // face box → texture: centre in the middle, upright, face width/height → FACE_FILL of the square
+  const fw = box.w * img.width;
+  const fh = box.h * img.height;
+  o.save();
+  o.translate(S / 2, S / 2);
+  o.scale((S * FACE_FILL) / fw, (S * FACE_FILL) / fh);
+  o.rotate(-box.roll);
+  o.translate(-box.cx * img.width, -box.cy * img.height);
+  o.drawImage(img, 0, 0);
+  o.restore();
+  // an oval just around the face: opaque inside, soft only at the edge
+  o.globalCompositeOperation = 'destination-in';
+  const gr = o.createRadialGradient(S / 2, S / 2, S * 0.4, S / 2, S / 2, S * 0.5);
+  gr.addColorStop(0, 'rgba(0,0,0,1)');
+  gr.addColorStop(1, 'rgba(0,0,0,0)');
+  o.fillStyle = gr;
+  o.fillRect(0, 0, S, S);
+  return out;
+}
+
+/** No landmarks: the head from the cut-out silhouette (widest row near the top, down to the neck). */
+function guessFace(img: CanvasImageSource & { width: number; height: number }): FaceBox | null {
   const w = Math.min(256, img.width);
   const h = Math.round((img.height * w) / img.width);
   const c = document.createElement('canvas');
@@ -186,51 +235,27 @@ export function faceCrop(
     if (top < 0 && x0 >= 0) top = y;
   }
   if (top < 0) return null;
-  // head: widest row in the upper part, then the neck: narrowest below it before it widens a lot
+  // the head grows from the top; it ends where the silhouette suddenly widens (shoulders)
   let headW = 0;
   let headRow = top;
-  for (let y = top; y < Math.min(h, top + h * 0.35); y++) {
+  for (let y = top; y < h; y++) {
     const [x0, x1] = rows[y]!;
-    if (x0 >= 0 && x1 - x0 > headW) {
-      headW = x1 - x0;
+    const ww = x0 >= 0 ? x1 - x0 : 0;
+    if (y > top + 4 && headW > 0 && ww > headW * 1.45) break;
+    if (ww > headW) {
+      headW = ww;
       headRow = y;
     }
   }
-  let neck = Math.min(h - 1, Math.round(top + headW * 1.35));
-  let minW = Infinity;
-  for (let y = headRow; y < Math.min(h, headRow + headW * 1.2); y++) {
-    const [x0, x1] = rows[y]!;
-    const ww = x0 >= 0 ? x1 - x0 : 0;
-    if (ww > 0 && ww < minW) {
-      minW = ww;
-      neck = y;
-    }
-    if (ww > headW * 1.5) break;
-  }
   const [hx0, hx1] = rows[headRow]!;
-  const cx = (hx0 + hx1) / 2;
-  // the face: from a bit below the hair line to the chin
-  const fh = Math.max(8, neck - top);
-  const fy0 = top + fh * 0.12;
-  const side = Math.max(fh * 0.95, headW * 1.0);
-  const out = document.createElement('canvas');
-  out.width = out.height = 256;
-  const o = out.getContext('2d');
-  if (!o) return null;
-  o.drawImage(c, cx - side / 2, fy0 - side * 0.04, side, side, 0, 0, 256, 256);
-  // soft oval edge
-  o.globalCompositeOperation = 'destination-in';
-  const gr = o.createRadialGradient(128, 128, 70, 128, 128, 128);
-  gr.addColorStop(0, 'rgba(0,0,0,1)');
-  gr.addColorStop(1, 'rgba(0,0,0,0)');
-  o.fillStyle = gr;
-  o.save();
-  o.translate(128, 128);
-  o.scale(0.82, 1);
-  o.translate(-128, -128);
-  o.fillRect(0, 0, 256, 256);
-  o.restore();
-  return out;
+  const fh = headW * 1.3;
+  return {
+    cx: (hx0 + hx1) / 2 / w,
+    cy: (top + fh * 0.58) / h,
+    w: (headW * 0.86) / w,
+    h: (fh * 0.82) / h,
+    roll: 0,
+  };
 }
 
 const FACE_GLSL = /* glsl */ `
@@ -259,6 +284,8 @@ export class Rig {
     uFaceM: { value: new THREE.Matrix4() },
   };
   private faceId: string | null = null;
+  /** Feet in front of the wall stay visible (see standLift); off where the scene lifts its own floor. */
+  liftFloor = true;
 
   constructor(
     url: string,
@@ -297,18 +324,30 @@ export class Rig {
       for (const mat of mats)
         occludeMaterial(mat as THREE.MeshStandardMaterial, holes, (sh) => {
           Object.assign(sh.uniforms, this.face);
-          sh.fragmentShader = sh.fragmentShader.replace('void main() {', FACE_GLSL + 'void main() {').replace(
-            '#include <map_fragment>',
-            `#include <map_fragment>
+          sh.fragmentShader = sh.fragmentShader
+            .replace('void main() {', FACE_GLSL + 'void main() {')
+            .replace(
+              '#include <map_fragment>',
+              `#include <map_fragment>
+  // the guest's face: projected from the front of the head, covering the figure's own face fully
+  float faceK = 0.0;
+  vec3 faceC = vec3(0.0);
   if (uFaceOn > 0.5) {
     vec3 fq = (uFaceM * vec4(vWallPos, 1.0)).xyz;
-    if (fq.z > -0.3 && abs(fq.x) < 1.0 && abs(fq.y) < 1.0) {
+    if (fq.z > -0.5 && fq.z < 1.0 && abs(fq.x) < 1.0 && abs(fq.y) < 1.0) {
       vec4 fc = texture2D(uFaceTex, fq.xy * 0.5 + 0.5);
-      float k = fc.a * smoothstep(-0.3, 0.25, fq.z);
-      diffuseColor.rgb = mix(diffuseColor.rgb, fc.rgb, k * 0.95);
+      faceK = fc.a * smoothstep(-0.5, -0.2, fq.z);
+      faceC = fc.rgb;
+      diffuseColor.rgb = mix(diffuseColor.rgb, faceC, faceK);
     }
   }`,
-          );
+            )
+            .replace(
+              '#include <opaque_fragment>',
+              // lit like the figure, but never darker than the photo itself (people must recognise it)
+              `outgoingLight = mix(outgoingLight, max(outgoingLight, faceC * 0.85), faceK);
+  #include <opaque_fragment>`,
+            );
         });
     });
     g.updateMatrixWorld(true);
@@ -390,7 +429,9 @@ export class Rig {
     const yq = new THREE.Quaternion().setFromAxisAngle(UP, body.yaw);
     this.root.scale.setScalar(this.size);
     this.root.quaternion.copy(yq);
-    this.root.position.set(body.x, F.floorY + body.hop - body.drop, body.z);
+    const up = (z: number) => (this.liftFloor ? standLift(F, z) : 0);
+    this.root.position.set(body.x, F.floorY + up(body.z) + body.hop - body.drop, body.z);
+    const lifted = feet.map((f) => [f[0], f[1] + up(f[2]), f[2]] as V3);
     this.root.updateMatrixWorld(true);
     // upper body: lean and sway, spread over the spine
     const left = leftOf(body.yaw);
@@ -401,8 +442,8 @@ export class Rig {
       .multiply(new THREE.Quaternion().setFromAxisAngle(UP, (body.twist ?? 0) / 3));
     for (const n of ['Spine', 'Spine1', 'Spine2']) this.turn(this.b[n]!, lean);
     // legs to the feet (knees point forwards)
-    this.limb(this.legs.L, vec(feet[0]), [fw.clone().add(left.clone().multiplyScalar(0.15))]);
-    this.limb(this.legs.R, vec(feet[1]), [fw.clone().add(left.clone().multiplyScalar(-0.15))]);
+    this.limb(this.legs.L, vec(lifted[0]!), [fw.clone().add(left.clone().multiplyScalar(0.15))]);
+    this.limb(this.legs.R, vec(lifted[1]!), [fw.clone().add(left.clone().multiplyScalar(-0.15))]);
     for (const leg of [this.legs.L, this.legs.R]) this.setWorldQ(leg.end, yq.clone().multiply(leg.q0[2]));
   }
 
@@ -438,15 +479,22 @@ export class Rig {
   }
 
   /** Puts a guest's face (cut-out photo) onto the figure – or none. */
-  setFace(id: string | null, img: (CanvasImageSource & { width: number; height: number }) | null) {
-    if (id === this.faceId && (img || !id)) return;
-    if (id && !img) return; // still loading – try again next frame
+  private faceWait = 0;
+  setFace(id: string | null, pic: FacePhoto | null) {
+    if (id === this.faceId && (pic || !id)) return;
+    if (id && !pic) return; // still loading – try again next frame
+    // the face search runs once per photo; wait for it (a few seconds at most)
+    if (id && pic && pic.face === undefined) {
+      if (this.faceWait === 0) this.faceWait = performance.now();
+      if (performance.now() - this.faceWait < 6000) return;
+    }
+    this.faceWait = 0;
     this.faceId = id;
     if (this.face.uFaceTex.value !== NO_TEX) this.face.uFaceTex.value.dispose();
     this.face.uFaceTex.value = NO_TEX;
     this.face.uFaceOn.value = 0;
-    if (!id || !img) return;
-    const crop = faceCrop(img);
+    if (!id || !pic) return;
+    const crop = faceCrop(pic.raw ?? pic.img, pic.face);
     if (!crop) return;
     const t = new THREE.CanvasTexture(crop);
     t.colorSpace = THREE.SRGBColorSpace;
@@ -1221,6 +1269,7 @@ function showScene(def: ShowDef): SceneModule {
         holes.uH1.value.copy(h1);
         holes.uHO.value.set(W.open, xs.length > 1 ? W.open : 0);
         holes.uHN.value = xs.length;
+        holes.uEye.value.set(F.ro[0], F.ro[1], F.ro[2]);
         // the figures
         actors ??= def.bodies(F).map((body, i) => ({ rig: rigs[i]!, body, width: 0.075 }));
         visible = a >= BURST && a < (rebuild ? 44 : 43) && W.fade > 0;
@@ -1272,7 +1321,7 @@ function showScene(def: ShowDef): SceneModule {
         // guests' faces on the figures (chosen photos)
         def.faces?.forEach((key, i) => {
           const id = String(s.params[key] ?? '') || null;
-          rigs[i]?.setFace(id, id ? (ctx.photos?.get(id)?.img ?? null) : null);
+          rigs[i]?.setFace(id, id ? (ctx.photos?.get(id) ?? null) : null);
         });
         for (const r of rigs) r.root.visible = visible && r.ready;
         // all figures loaded: shaders and textures ready before the first one shows up
