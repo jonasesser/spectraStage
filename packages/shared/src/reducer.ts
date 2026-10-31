@@ -766,6 +766,8 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
       const seed = ctx.newSeed();
       const startedAt = ctx.now + lead;
       const endAt = startedAt + ((cmd.sec ?? scene.oneShotSec ?? 60) * 1000) / speed;
+      // over the running scene (it goes on) – or the running scene fades away
+      const keep = !!scene.overlay && (cmd.keep ?? scene.overlay === 'keep');
       for (const s of surfaces(cmd.surfaceIds))
         s.insert = {
           id: `${seed.toString(36)}${state.surfaces.indexOf(s)}`,
@@ -774,11 +776,12 @@ export function applyCommand(input: SessionState, cmd: Command, ctx: ReducerCont
           startedAt,
           endAt,
           ...(scene.sides ? { sides: [...scene.sides] } : {}),
+          ...(keep ? { keep: true } : {}),
         };
       // all other sides fade to dark while it plays (and come back after) – the show belongs to it
       const basic = ctx.catalog.get('basic');
       const dark = basic?.scenes.find((x) => x.id === 'solidColor');
-      if (basic && dark)
+      if (basic && dark && !keep)
         for (const s of state.surfaces)
           if (!cmd.surfaceIds.includes(s.id))
             s.insert = {

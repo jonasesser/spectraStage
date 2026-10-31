@@ -316,6 +316,8 @@ export const SurfaceSchema = z.object({
       endAt: z.number(),
       /** The room sides it is made for (the added sides of the room join in there). */
       sides: z.array(z.string().max(20)).max(8).optional(),
+      /** Lies over the running scene (which goes on) instead of replacing it. */
+      keep: z.boolean().optional(),
     })
     .optional(),
 });
@@ -688,6 +690,8 @@ export const CommandSchema = z.discriminatedUnion('t', [
     params: ParamValuesSchema.optional(),
     /** How long it runs (s) – e.g. the length of a video; else the scene's own length. */
     sec: z.number().min(1).max(600).optional(),
+    /** Over the running scene (it goes on) – only for scenes made for it; else the default. */
+    keep: z.boolean().optional(),
   }),
   z.object({
     t: z.literal('surface.setScene'),

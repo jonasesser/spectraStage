@@ -53,6 +53,12 @@ export interface SceneManifest {
    */
   oneShotSec?: number;
   /**
+   * Played in once, it can lie over the running scene (only its figures and effects cover it):
+   * 'keep' = it does so by default, 'hide' = by default the running scene fades away. Without
+   * it, a scene always replaces what runs (e.g. a full-frame video).
+   */
+  overlay?: 'keep' | 'hide';
+  /**
    * The sides a rehearsed show belongs to (e.g. only the main wall; the witch also the right wall
    * and the floor in front). It is played only there – whatever sides are selected – and the
    * other sides keep running their programme.

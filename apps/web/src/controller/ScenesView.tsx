@@ -262,6 +262,8 @@ function InsertPanel({
   const store = useStore();
   const [pick, setPick] = useState<string | null>(null);
   const [params, setParams] = useState<ParamValues>({});
+  // over the running scenery, or the scenery fades away (null = the scene's default)
+  const [keep, setKeep] = useState<boolean | null>(null);
   // uploaded videos (e.g. Kling): each is its own tile, played by the video player scene
   const player = catalog.themes
     .flatMap((t) => t.scenes.map((x) => ({ t, x })))
@@ -331,6 +333,7 @@ function InsertPanel({
               onClick={() => {
                 setPick(pick === x.id ? null : x.id);
                 setParams(sanitizeParams(x.params, lastParams(x.id)));
+                setKeep(null);
               }}
               title={L.text(x.description)}
             >
@@ -408,6 +411,25 @@ function InsertPanel({
               </button>
             </div>
           )}
+          {sc.overlay && !video && (
+            <div className="row" role="group" aria-label={L('Scenery', 'Kulisse')}>
+              {(
+                [
+                  [true, L('Scenery stays (it plays over it)', 'Kulisse bleibt (läuft darüber)')],
+                  [false, L('Fade the scenery out', 'Kulisse ausblenden')],
+                ] as const
+              ).map(([v, label]) => (
+                <button
+                  key={String(v)}
+                  className={`chip${(keep ?? sc.overlay === 'keep') === v ? ' on' : ''}`}
+                  aria-pressed={(keep ?? sc.overlay === 'keep') === v}
+                  onClick={() => setKeep(v)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           {sc.params
             .filter((p) => p.type !== 'video')
             .map((p) => (
@@ -436,6 +458,7 @@ function InsertPanel({
                 sceneId: sc.id,
                 params: video ? { ...params, video: video.id } : params,
                 ...(video ? { sec: Math.min(600, Math.max(1, video.sec + 0.5)) } : {}),
+                ...(sc.overlay && !video ? { keep: keep ?? sc.overlay === 'keep' } : {}),
               })
             }
           >

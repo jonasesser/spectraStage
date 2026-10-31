@@ -112,7 +112,8 @@ function breakoutScene(
 /** A scene played in between by hand, once (50 s): no pause setting. */
 function oneShot(...args: Parameters<typeof breakoutScene>): SceneManifest {
   const sc = breakoutScene(...args);
-  return { ...sc, params: sc.params.filter((p) => p.key !== 'pause'), oneShotSec: 50 };
+  // can break through the running scenery – by default it fades away for them
+  return { ...sc, params: sc.params.filter((p) => p.key !== 'pause'), oneShotSec: 50, overlay: 'hide' };
 }
 
 const EVENT_OPTIONS = [
@@ -380,6 +381,8 @@ const scenes: SceneManifest[] = [
     colors: ['#000000', '#a24cff'],
     oneShotSec: 60,
     sides: ['main', 'right', 'floorFront'],
+    // she conjures on the running scenery (unless chosen otherwise)
+    overlay: 'keep',
     params: [
       {
         key: 'speed',

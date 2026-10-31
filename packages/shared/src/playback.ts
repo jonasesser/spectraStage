@@ -118,12 +118,13 @@ const INSERT_FADE: Transition = { type: 'crossfade', durationMs: 2500 };
 export function activeSceneFor(
   surface: {
     playback: Playback;
-    insert?: { id: string; scene: SceneRef; seed: number; startedAt: number; endAt: number };
+    insert?: { id: string; scene: SceneRef; seed: number; startedAt: number; endAt: number; keep?: boolean };
   },
   playlists: readonly Playlist[],
   now: number,
 ): ActiveScene | null {
-  const ins = surface.insert;
+  // (a scene lying over the running one leaves it alone – see overlaySceneFor)
+  const ins = surface.insert?.keep ? undefined : surface.insert;
   if (ins && now >= ins.startedAt - 50 && now < ins.endAt)
     return {
       scene: ins.scene,
@@ -136,6 +137,24 @@ export function activeSceneFor(
   if (base && ins && now >= ins.endAt && base.startedAt < ins.endAt)
     return { ...base, key: `${base.key}:after:${ins.id}`, startedAt: ins.endAt, transition: INSERT_FADE };
   return base;
+}
+
+/** A scene played in over the running one (that goes on underneath), while it plays. */
+export function overlaySceneFor(
+  surface: {
+    insert?: { id: string; scene: SceneRef; seed: number; startedAt: number; endAt: number; keep?: boolean };
+  },
+  now: number,
+): ActiveScene | null {
+  const ins = surface.insert;
+  if (!ins?.keep || now < ins.startedAt - 50 || now >= ins.endAt) return null;
+  return {
+    scene: ins.scene,
+    key: `o:${ins.id}`,
+    seed: ins.seed,
+    startedAt: ins.startedAt,
+    transition: INSERT_FADE,
+  };
 }
 
 export interface ScheduledEffect {

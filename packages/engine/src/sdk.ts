@@ -41,6 +41,11 @@ export interface SceneContext {
   /** Where this surface sits in the shared stage world (all surfaces). */
   world?: WorldContext;
   /**
+   * Drawn over the running scene (a scene played in that lets it go on): leave the background
+   * transparent – premultiplied alpha – so only the scene's own things cover it.
+   */
+  transparent?: boolean;
+  /**
    * Extra Canvas2D layer drawn on top of the scene (canvas-based scenes) – used by worlds for
    * events that cross surfaces, e.g. a cat jumping out of the house onto the driveway.
    */

@@ -1858,6 +1858,7 @@ function showScene(def: ShowDef): SceneModule {
           uDebrisT: W.debrisT,
           uGlow: W.glow,
           uFade: W.fade,
+          uOverlay: ctx.transparent ? 1 : 0,
           uEyes: 0,
           uBlink: 0,
           uJaw: 0,

@@ -699,9 +699,9 @@ void main(){ vUv = uv; vec4 mvPosition = modelViewMatrix * vec4(position,1.0); g
           lastSeed = seed;
           Vr = variantOf(seed);
         }
-        // background: dark wall
+        // background: dark wall (over a running scene: nothing – only she and her things cover it)
         r.setRenderTarget(target);
-        r.setClearColor(0x000000, 1);
+        r.setClearColor(0x000000, ctx.transparent ? 0 : 1);
         r.clear(true, true, false);
         const fade = ease(a, 0, 1) * (1 - ease(a, WITCH_SHOW - 2.5, WITCH_SHOW - 0.3));
         if (fade <= 0) return;

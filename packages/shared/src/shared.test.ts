@@ -939,3 +939,38 @@ describe('played in once: the other sides go dark', () => {
     expect(s.surfaces.every((x) => !x.insert)).toBe(true);
   });
 });
+
+describe('played in over the running scene', () => {
+  it('lies over it: the running scene goes on, the other sides are not darkened', async () => {
+    const { activeSceneFor, overlaySceneFor } = await import('./playback.ts');
+    const t2: ThemeManifest = {
+      ...theme,
+      scenes: theme.scenes.map((x) => (x.id === 'b' ? { ...x, overlay: 'keep' as const } : x)),
+    };
+    const c = { ...ctx(), catalog: createCatalog([t2]) };
+    let s = createInitialState('s', 'S', 0, 't', 7);
+    s = applyCommand(s, { t: 'surface.create', name: 'W1', kind: 'wall' }, c).state;
+    s = applyCommand(s, { t: 'surface.create', name: 'W2', kind: 'wall' }, c).state;
+    const [w1, w2] = s.surfaces;
+    s = applyCommand(
+      s,
+      { t: 'surface.insert', surfaceIds: [w1!.id], themeId: 't', sceneId: 'b', sec: 20 },
+      c,
+    ).state;
+    const a = s.surfaces.find((x) => x.id === w1!.id)!;
+    expect(a.insert!.keep).toBe(true);
+    expect(s.surfaces.find((x) => x.id === w2!.id)!.insert).toBeUndefined();
+    const now = a.insert!.startedAt + 5000;
+    expect(activeSceneFor(a, s.playlists, now)?.scene.sceneId).not.toBe('b');
+    expect(overlaySceneFor(a, now)?.scene.sceneId).toBe('b');
+    // chosen otherwise: the running scene fades away
+    s = applyCommand(
+      s,
+      { t: 'surface.insert', surfaceIds: [w1!.id], themeId: 't', sceneId: 'b', sec: 20, keep: false },
+      c,
+    ).state;
+    const b2 = s.surfaces.find((x) => x.id === w1!.id)!;
+    expect(b2.insert!.keep).toBeUndefined();
+    expect(activeSceneFor(b2, s.playlists, b2.insert!.startedAt + 5000)?.scene.sceneId).toBe('b');
+  });
+});

@@ -121,6 +121,8 @@ export function completeRoom(surfaces: readonly Surface[]): Surface[] {
   const insertFor = (side: string, i: number): Surface['insert'] => {
     if (!ins) return undefined;
     if (!ins.id.startsWith('dark-') && ins.sides?.includes(side)) return { ...ins, id: `${ins.id}v${i}` };
+    // over the running scene: the other sides simply go on
+    if (ins.keep) return undefined;
     return {
       id: `dark-v${i}-${ins.id}`.slice(0, 40),
       scene: { themeId: 'basic', sceneId: 'solidColor', params: { color: '#000000' } },

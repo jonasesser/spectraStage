@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import {
   activeProfile,
   activeSceneFor,
+  overlaySceneFor,
   ambientActorCues,
   ambientSchedule,
   itemCueSchedule,
@@ -105,13 +106,15 @@ export interface RendererOptions {
  * the surroundings (creatures, floodlights, lit objects) step back for it.
  */
 export function envGain(
-  state: { surfaces: readonly { insert?: { id: string; startedAt: number; endAt: number } }[] },
+  state: {
+    surfaces: readonly { insert?: { id: string; startedAt: number; endAt: number; keep?: boolean } }[];
+  },
   now: number,
 ): number {
   let g = 1;
   for (const s of state.surfaces) {
     const i = s.insert;
-    if (!i || i.id.startsWith('dark-')) continue;
+    if (!i || i.id.startsWith('dark-') || i.keep) continue;
     if (now < i.startedAt || now > i.endAt + 2500) continue;
     const v =
       now < i.endAt ? 1 - Math.min(1, (now - i.startedAt) / 2500) : Math.min(1, (now - i.endAt) / 2500);
@@ -200,6 +203,10 @@ uniform float mixB;     // 0 = only A (current), 1 = only B (previous)
 uniform float fadeBlack; // 1 = fade through black mode
 uniform float hasB;
 uniform float hasOverlay;
+// a scene played in over this one (premultiplied alpha), faded by mixO
+uniform sampler2D texO;
+uniform float hasO;
+uniform float mixO;
 // proportions that ease in from the edge towards the front wall: x = mode (0 none, 1 the edge is
 // vertical / depth runs along x, 2 the edge is horizontal / depth runs along y), y = where the
 // edge is (0 or 1), z = proportion along the depth, w = proportion along the edge
@@ -243,6 +250,10 @@ void main() {
     float inside = smoothstep(uZone.x - e.x, uZone.x + e.x, vUv.x) * smoothstep(uZone.z + e.x, uZone.z - e.x, vUv.x) *
                    smoothstep(uZone.y - e.y, uZone.y + e.y, vUv.y) * smoothstep(uZone.w + e.y, uZone.w - e.y, vUv.y);
     col *= mix(uZoneLevel, 1.0, inside);
+  }
+  if (hasO > 0.5) {
+    vec4 s = texture2D(texO, vUv) * mixO;
+    col = col * (1.0 - s.a) + s.rgb;
   }
   if (hasOverlay > 0.5) {
     vec4 o = texture2D(overlay, vUv);
@@ -415,6 +426,8 @@ interface SceneSlot {
 class SurfaceLayer {
   current: SceneSlot | null = null;
   previous: SceneSlot | null = null;
+  /** A scene played in over the running one. */
+  over: SceneSlot | null = null;
   layerRT: THREE.WebGLRenderTarget;
   overlay: Overlay2D;
   material: THREE.ShaderMaterial;
@@ -437,6 +450,9 @@ class SurfaceLayer {
         fadeBlack: { value: 0 },
         hasB: { value: 0 },
         hasOverlay: { value: 0 },
+        texO: { value: null },
+        hasO: { value: 0 },
+        mixO: { value: 0 },
         uWarp: { value: new THREE.Vector4(0, 0, 1, 1) },
         uZone: { value: new THREE.Vector4(0, 0, 1, 1) },
         uZoneLevel: { value: 1 },
@@ -460,7 +476,7 @@ class SurfaceLayer {
       Math.max(2, Math.round(h * OVERLAY_SCALE)),
     );
     this.material.uniforms.overlay!.value = this.overlay.texture;
-    for (const s of [this.current, this.previous]) {
+    for (const s of [this.current, this.previous, this.over]) {
       if (!s) continue;
       s.rt.setSize(w, h);
       s.inst.resize(w, h, ppm);
@@ -477,6 +493,8 @@ class SurfaceLayer {
   dispose(): void {
     this.disposeSlot(this.current);
     this.disposeSlot(this.previous);
+    this.disposeSlot(this.over);
+    this.over = null;
     this.current = null;
     this.previous = null;
     this.layerRT.dispose();
@@ -1995,6 +2013,47 @@ export class StageRenderer {
           layer.current.paramsJson = pj;
         }
       }
+      // a scene played in over this one (it goes on underneath)
+      const ov = overlaySceneFor(s, now);
+      const ovMod = ov ? this.runtimes.get(ov.scene.themeId)?.scenes[ov.scene.sceneId] : undefined;
+      if (ov && ovMod && (!layer.over || layer.over.key !== ov.key || layer.over.worldKey !== worldKey)) {
+        layer.disposeSlot(layer.over);
+        const wc = worldCtx && {
+          ...worldCtx,
+          seed: hashInts(Math.floor(ov.startedAt / 1000) % 2147483647, 0x3077),
+          ...(events && shifted !== vr ? { events } : {}),
+        };
+        const inst = ovMod.create({
+          world: wc,
+          renderer: r,
+          width: sw,
+          height: sh,
+          ppm: sw / Math.max(1e-3, (self0?.rect.w ?? b.w) * prop.fx) || layer.ppm,
+          seed: ov.seed,
+          params: ov.scene.params,
+          kind: s.kind,
+          quality: this.quality,
+          photos: this.photos,
+          videos: this.videos,
+          transparent: true,
+        });
+        layer.over = {
+          key: ov.key,
+          inst,
+          rt: makeRT(sw, sh),
+          active: ov,
+          paramsJson: JSON.stringify(ov.scene.params),
+          stopAmbient:
+            primary && ovMod.ambientSound && this.opts.sound
+              ? (ovMod.ambientSound(this.opts.sound, ov.seed) ?? null)
+              : null,
+          worldKey,
+        };
+      }
+      if (!ov && layer.over) {
+        layer.disposeSlot(layer.over);
+        layer.over = null;
+      }
     }
 
     const frameFor = (slot: SceneSlot) => ({
@@ -2014,6 +2073,20 @@ export class StageRenderer {
         layer.previous.inst.render(layer.previous.rt, frameFor(layer.previous));
         mixB = 1 - Math.max(0, p);
       }
+    }
+
+    // the scene over it: rendered transparent, faded in and out
+    const ovs = layer.over;
+    let mixO = 0;
+    if (ovs) {
+      const rt = ovs.rt;
+      r.setRenderTarget(rt);
+      r.setClearColor(0x000000, 0);
+      r.clear(true, true, false);
+      ovs.inst.render(rt, frameFor(ovs));
+      const ins = s.insert;
+      const end = ins?.endAt ?? now;
+      mixO = Math.max(0, Math.min(1, (now - ovs.active.startedAt) / 1000, (end - now) / 1000));
     }
 
     // Effects: cues + playlist ambient schedule
@@ -2043,6 +2116,9 @@ export class StageRenderer {
     u.fadeBlack!.value = cur?.active.transition.type === 'fadeBlack' ? 1 : 0;
     u.hasOverlay!.value = hasEffects ? 1 : 0;
     u.overlay!.value = layer.overlay.texture;
+    u.texO!.value = ovs?.rt.texture ?? null;
+    u.hasO!.value = ovs ? 1 : 0;
+    u.mixO!.value = mixO;
     r.setRenderTarget(layer.layerRT);
     if (!cur) {
       r.setClearColor(0x000000, 1);

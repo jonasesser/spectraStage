@@ -424,6 +424,8 @@ uniform vec2 uRes;
 uniform vec3 uRo, uP0, uPU, uPV;
 uniform float uCute, uFloorY;
 uniform float uBulge, uCrack, uHole, uDebrisT, uGlow, uFade, uEyes, uBlink, uJaw;
+// 1: drawn over the running scene – only what breaks (cracks, hole, pieces, dust) covers it
+uniform float uOverlay;
 uniform vec3 uHead; uniform mat3 uHeadM; uniform vec3 uNeck;
 uniform vec3 uBody;
 uniform vec3 uHandL; uniform mat3 uHandLM; uniform float uCurlL; uniform vec3 uElbL;
@@ -925,6 +927,7 @@ void main() {
   vec3 P = uP0 + uPU * vUv.x + uPV * (1.0 - vUv.y);
   vec3 rd = normalize(P - ro);
   vec3 col = vec3(0.0);
+  float A = 1.0; // coverage (over the running scene)
 
   // flat wall far away from everything: no marching needed
   float twall = -ro.z / rd.z;
@@ -936,6 +939,7 @@ void main() {
     // the plain wall stays black (the real wall)
     col = vec3(0.0);
     tHit = twall;
+    A = 0.0;
   } else {
     float t = max(0.0, (ro.z - 1.2) / -rd.z);
     float tEnd = (ro.z + 1.6) / -rd.z;
@@ -965,6 +969,8 @@ void main() {
         alb = mix(alb, vec3(0.42, 0.38, 0.34) * (0.6 + 0.6 * noise3(p * 140.0)), edge);
         alb *= 1.0 - 0.85 * c;
         col = light(p, n, rd, alb, 0.0, 8.0, 0.0, 1.0) * ao;
+        // over the scene: the cracks and the broken edge
+        A = clamp(c * 1.8 + edge, 0.0, 1.0);
         // glowing cracks
         col += uGlowCol * c * uGlow * 0.3 * smoothstep(0.8, 0.0, holeNear(p.xy));
       } else if (mat < 2.5) {
@@ -1050,6 +1056,7 @@ void main() {
           // deeper in the wall: darker
           pc *= mix(1.0, 0.3, smoothstep(0.0, -0.5, Xw.z));
           col = mix(col, pc, c.a * uPhotoA * smoothstep(0.0, 0.25, uv.y));
+          A = max(A, c.a * uPhotoA * smoothstep(0.0, 0.25, uv.y));
         }
       }
     }
@@ -1061,6 +1068,7 @@ void main() {
     float r = far;
     float dust = fbm3(vec3(hw.xy * 3.0 - vec2(0.0, -dt * 0.3), dt * 0.4)) * exp(-r * r * 2.6) * exp(-dt * 1.2) * smoothstep(0.0, 0.25, dt) * 0.7;
     col += (uCute > 0.5 ? vec3(0.5, 0.47, 0.44) : vec3(0.55, 0.48, 0.36)) * dust * (0.12 + 0.3 * uGlow * (uCute > 0.5 ? 0.6 : 1.0));
+    A = max(A, clamp(dust * 1.6, 0.0, 0.85));
   }
   if (uGlow > 0.02) {
     for (int i = 0; i < 18 * uIt; i++) {
@@ -1076,6 +1084,7 @@ void main() {
       float tw = 0.5 + 0.5 * sin(uTime * 9.0 + fi * 3.0);
       col += (uCute > 0.5 ? mix(vec3(0.6, 0.9, 1.0), vec3(1.0, 0.7, 1.0), hash1(fi)) : vec3(0.75, 0.68, 0.5) * 0.6) * k * uGlow * tw *
              smoothstep(life, life * 0.6, age) * 1.5;
+      A = max(A, clamp(k * uGlow * tw * 2.0, 0.0, 1.0));
     }
   }
 
@@ -1083,7 +1092,8 @@ void main() {
   // filmic tone map + gamma
   col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);
   col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
-  gl_FragColor = vec4(col, 1.0);
+  // (over the running scene: premultiplied – what was drawn over black, with its coverage)
+  gl_FragColor = uOverlay > 0.5 ? vec4(col * clamp(A * uFade * 4.0, 0.0, 1.0), clamp(A * uFade, 0.0, 1.0)) : vec4(col, 1.0);
 }
 `;
 
@@ -1272,10 +1282,11 @@ varying vec2 vUv;
 void main() {
   vec4 c = texture2D(map, vUv);
   if (c.a <= 0.001) discard;
-  vec3 col = c.rgb / c.a * uFade;
+  vec3 col = c.rgb / c.a;
   col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);
   col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
-  gl_FragColor = vec4(col, c.a);
+  // fading: less and less of the figure covers what is behind (the wall, or the running scene)
+  gl_FragColor = vec4(col, c.a * uFade);
 }
 `;
 
