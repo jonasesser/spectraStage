@@ -183,6 +183,12 @@ function PendingDevice({
   const [kind, setKind] = useState<'wall' | 'floor' | 'other'>('wall');
   const [surfaceId, setSurfaceId] = useState(uncovered[0]?.id ?? state.surfaces[0]?.id ?? '');
   const [outputId, setOutputId] = useState(planned[0]?.id ?? state.outputs[0]?.id ?? '');
+  const [removeOld, setRemoveOld] = useState(true);
+  // projector PCs that currently drive the chosen output and would be replaced
+  const replaced =
+    mode === 'existingOutput'
+      ? state.devices.filter((d) => d.id !== device.id && d.status === 'approved' && d.outputId === outputId)
+      : [];
   const approve = async () => {
     const ok = await store.send(
       mode === 'existingOutput'
@@ -202,6 +208,7 @@ function PendingDevice({
               },
             },
     );
+    if (ok && removeOld) for (const d of replaced) await store.send({ t: 'device.remove', deviceId: d.id });
     if (ok) setOpen(false);
   };
   return (
@@ -304,6 +311,13 @@ function PendingDevice({
                   </option>
                 ))}
               </select>
+            )}
+            {replaced.length > 0 && (
+              <label className="check">
+                <input type="checkbox" checked={removeOld} onChange={(e) => setRemoveOld(e.target.checked)} />
+                {L('Remove the old projector PC', 'Alten Beamer-PC entfernen')} (
+                {replaced.map((d) => d.name).join(', ')})
+              </label>
             )}
             <button className="btn primary big" onClick={approve}>
               {L('Approve device', 'Gerät freigeben')}

@@ -92,6 +92,11 @@ export default function DisplayApp() {
         slot={slot}
         notice={notice}
         onPaired={() => {
+          // The new request must not connect with the token of a previously active connection
+          // (that one stays in the saved list).
+          storage.remove(KEYS.displayToken(slot));
+          storage.remove(`${KEYS.displayToken(slot)}.id`);
+          storage.remove(KEYS.displaySnapshot(slot));
           markActive(slot);
           setPhase('pending');
         }}
@@ -329,7 +334,10 @@ function Projection({
 
   // Connection
   useEffect(() => {
-    const token = storage.get(KEYS.displayToken(slot)) ?? storage.get(KEYS.displayPending(slot));
+    const token =
+      phase === 'pending'
+        ? (storage.get(KEYS.displayPending(slot)) ?? storage.get(KEYS.displayToken(slot)))
+        : (storage.get(KEYS.displayToken(slot)) ?? storage.get(KEYS.displayPending(slot)));
     if (!token) {
       onReset(null);
       return;
