@@ -3,6 +3,9 @@ import { join, resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
+/** One id per build: in asset-manifest.json and in the bundle (projectors reload on a new one). */
+const BUILD_ID = Date.now().toString(36);
+
 /** Emits asset-manifest.json so the service worker can precache the whole build. */
 function assetManifest(): Plugin {
   return {
@@ -13,7 +16,7 @@ function assetManifest(): Plugin {
       this.emitFile({
         type: 'asset',
         fileName: 'asset-manifest.json',
-        source: JSON.stringify({ version: Date.now().toString(36), files: ['/', ...files] }, null, 1),
+        source: JSON.stringify({ version: BUILD_ID, files: ['/', ...files] }, null, 1),
       });
     },
   };
@@ -44,6 +47,7 @@ function mediapipeWasm(): Plugin {
 
 export default defineConfig({
   plugins: [react(), assetManifest(), mediapipeWasm()],
+  define: { 'import.meta.env.VITE_BUILD_ID': JSON.stringify(BUILD_ID) },
   server: {
     port: 5173,
     proxy: {

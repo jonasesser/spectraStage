@@ -484,6 +484,34 @@ function Projection({
     rendererRef.current?.setConnection(status === 'online');
   }, [status, renderMode]);
 
+  // New version deployed: the projector loads it by itself (nobody has to press F5 at the
+  // projector PC). A projecting tab resumes on reload, so the show only blinks once.
+  useEffect(() => {
+    if (phase !== 'run' || import.meta.env.DEV) return;
+    const mine = String(import.meta.env.VITE_BUILD_ID ?? '');
+    const check = async () => {
+      try {
+        const res = await fetch(`/asset-manifest.json?t=${Date.now()}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const v = String(((await res.json()) as { version?: unknown }).version ?? '');
+        if (!v || !mine || v === mine) return;
+        // once per new version (never a reload loop if a cache still hands out the old files)
+        try {
+          if (sessionStorage.getItem('ss-reloaded-for') === v) return;
+          sessionStorage.setItem('ss-reloaded-for', v);
+        } catch {
+          /* ignore */
+        }
+        location.reload();
+      } catch {
+        /* offline: try again later */
+      }
+    };
+    void check();
+    const t = window.setInterval(() => void check(), 60_000);
+    return () => window.clearInterval(t);
+  }, [phase]);
+
   // Remember the device id across offline reloads.
   useEffect(() => {
     if (!deviceId && state && phase === 'run') {

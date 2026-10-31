@@ -186,23 +186,17 @@ export function PlacePanel({ output, state, L }: { output: Output; state: Sessio
     if (!h || h.face.role !== 'ground') {
       setMsg(
         L(
-          'Put the cross on the floor, right where the middle of the object stands on it (the front edge).',
-          'Das Kreuz auf den Boden setzen – genau wo die Mitte des Gegenstands vorne auf dem Boden steht.',
+          'Put the cross where the object stands – aim it at its lower middle (it has to be on the floor area).',
+          'Das Kreuz dorthin setzen, wo der Gegenstand steht – unten mittig auf ihn zielen (es muss im Bodenbereich liegen).',
         ),
       );
       return;
     }
     setMsg(null);
-    // the cross marks the front foot: the middle lies half a depth further away from the projector
-    const dx = h.P[0] - pose.pos[0];
-    const dz = h.P[2] - pose.pos[2];
-    const d = Math.hypot(dx, dz) || 1;
-    const back = o.size[2] / 2;
-    void store.send({
-      t: 'object.update',
-      id: o.id,
-      patch: { pos: [h.P[0] + (dx / d) * back, 0, h.P[2] + (dz / d) * back] },
-    });
+    // the cross marks where the thing stands (its middle). When the real pumpkin is already there,
+    // the cross is aimed at its lower middle: the light ray behind it reaches the floor about under
+    // its centre – so no extra shift (that used to push the outline behind the cross)
+    void store.send({ t: 'object.update', id: o.id, patch: { pos: [h.P[0], 0, h.P[2]] } });
   };
 
   // ---- masks (this projector)
@@ -323,8 +317,8 @@ export function PlacePanel({ output, state, L }: { output: Output; state: Sessio
             <button className="btn primary small" onClick={placeObject}>
               📍{' '}
               {L(
-                'Place it at the cross (cross on the floor at its front middle)',
-                'Aufs Kreuz setzen (Kreuz vorne mittig, wo er auf dem Boden steht)',
+                'Place it at the cross (cross where it stands, aimed at its lower middle)',
+                'Aufs Kreuz setzen (Kreuz dort, wo er steht – unten mittig anpeilen)',
               )}
             </button>
           )}
