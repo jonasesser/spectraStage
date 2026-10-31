@@ -420,10 +420,13 @@ export function drawObjectOutline(
   pose: Pose,
   o: RoomObject,
   now: number,
+  /** Correction onto the pinned floor (see floorFix). */
+  fix: [number, number, number, number, number, number] | null = null,
 ): void {
   const aspect = w / h;
   const toPx = (P: V3): [number, number] | null => {
-    const q = projectPose(pose, aspect, P);
+    let q = projectPose(pose, aspect, P);
+    if (q && fix) q = [fix[0] * q[0] + fix[1] * q[1] + fix[4], fix[2] * q[0] + fix[3] * q[1] + fix[5]];
     return q ? [((q[0] + 1) / 2) * w, ((1 - q[1]) / 2) * h] : null;
   };
   g.save();

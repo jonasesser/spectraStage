@@ -1355,6 +1355,71 @@ export function pictureToRoom(
   return null;
 }
 
+/**
+ * Things standing on the floor (pumpkins …) are drawn through the projector position, but the
+ * floor itself is pinned onto its measured corners. This affine correction (picture NDC from the
+ * projector position → NDC of the pinned floor), taken around the object's foot, puts the thing
+ * exactly where the floor shows that spot – where the cross was set when placing it.
+ * Returns [a, b, c, d, tx, ty] with x' = a·x + b·y + tx, y' = c·x + d·y + ty; null = no correction.
+ */
+export function floorFix(
+  fold: RoomFold,
+  pose: Pose,
+  aspect: number,
+  anchors: readonly { c: string; u: number; v: number; q?: V3 | undefined }[],
+  walls: readonly RoomWall[],
+  foot: V3,
+): [number, number, number, number, number, number] | null {
+  const q = wallQuads(fold, pose, aspect, anchors, walls).find((x) => x.face.role === 'ground');
+  if (!q) return null;
+  const f = q.face;
+  const r = f.rect;
+  const H = computeHomography(
+    [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ],
+    q.uv.map(([x, y]) => ({ x, y })) as Quad,
+  );
+  if (!H) return null;
+  const l2 = (v: V3) => dot(v, v) || 1;
+  const pinned = (P: V3): [number, number] => {
+    const d = sub(P, f.o);
+    const x = dot(d, f.ax) / l2(f.ax);
+    const y = dot(d, f.ay) / l2(f.ay);
+    const t = applyHomography(H, { x: x / r.w, y: y / r.h });
+    return [t.x * 2 - 1, 1 - t.y * 2];
+  };
+  const step = 0.25;
+  const ax = f.ax.map((v) => v / Math.sqrt(l2(f.ax))) as V3;
+  const ay = f.ay.map((v) => v / Math.sqrt(l2(f.ay))) as V3;
+  const P0: V3 = [foot[0], f.o[1], foot[2]];
+  const pts: V3[] = [P0, add(P0, ax.map((v) => v * step) as V3), add(P0, ay.map((v) => v * step) as V3)];
+  const from = pts.map((P) => projectPose(pose, aspect, P));
+  if (from.some((x) => !x)) return null;
+  const to = pts.map(pinned);
+  // solve the affine map from 3 point pairs
+  const [p0, p1, p2] = from as [number, number][];
+  const [q0, q1, q2] = to as [number, number][];
+  const ux = p1![0] - p0![0];
+  const uy = p1![1] - p0![1];
+  const vx = p2![0] - p0![0];
+  const vy = p2![1] - p0![1];
+  const det = ux * vy - vx * uy;
+  if (Math.abs(det) < 1e-9) return null;
+  const sx = q1![0] - q0![0];
+  const sy = q1![1] - q0![1];
+  const tx2 = q2![0] - q0![0];
+  const ty2 = q2![1] - q0![1];
+  const a = (sx * vy - tx2 * uy) / det;
+  const b = (tx2 * ux - sx * vx) / det;
+  const c = (sy * vy - ty2 * uy) / det;
+  const d = (ty2 * ux - sy * vx) / det;
+  return [a, b, c, d, q0![0] - a * p0![0] - b * p0![1], q0![1] - c * p0![0] - d * p0![1]];
+}
+
 /** The sides the app adds itself (no own surface): rect in the stage and their name. */
 export function virtualSides(fold: RoomFold): { id: string; rect: BBox; wall: RoomWall | null }[] {
   return fold.faces

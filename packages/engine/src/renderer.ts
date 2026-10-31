@@ -32,6 +32,7 @@ import {
   boxFrame,
   faceWall,
   wallQuads,
+  floorFix,
   stageBounds,
   mainAzimuth,
   type RoomFold,
@@ -141,6 +142,24 @@ const VERT = /* glsl */ `
 varying vec2 vUv;
 void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
 `;
+/**
+ * Objects on the floor: after the projector-position projection, an affine correction moves them
+ * onto the pinned floor (see floorFix) – so they stand where the cross was set.
+ */
+function fixVert(src: string): string {
+  const line = 'gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);';
+  if (!src.includes(line)) return src;
+  return (
+    'uniform vec4 uFixA;\nuniform vec2 uFixT;\n' +
+    src.replace(
+      line,
+      'vec4 cp = projectionMatrix * modelViewMatrix * vec4(position, 1.0);\n' +
+        '  vec2 nd = cp.xy / cp.w;\n' +
+        '  nd = vec2(uFixA.x * nd.x + uFixA.y * nd.y, uFixA.z * nd.x + uFixA.w * nd.y) + uFixT;\n' +
+        '  gl_Position = vec4(nd * cp.w, cp.z, cp.w);',
+    )
+  );
+}
 const CLIP_VERT = /* glsl */ `
 varying vec2 vUv;
 void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
@@ -1486,7 +1505,11 @@ export class StageRenderer {
   }
 
   /** Real objects in the room as 3D bodies in the projector view, with their own light. */
-  private syncPoseObjects(objects: readonly RoomObject[], now: number): void {
+  private syncPoseObjects(
+    objects: readonly RoomObject[],
+    now: number,
+    fix: (o: RoomObject) => [number, number, number, number, number, number] | null,
+  ): void {
     const key = JSON.stringify(objects.map((o) => [o.id, o.shape, o.pos, o.size, o.yaw]));
     const t = (now / 1000) % 10000;
     if (key !== this.poseObjectsKey) {
@@ -1510,8 +1533,10 @@ export class StageRenderer {
               uLook: { value: 0 },
               uSeed: { value: (hashString(o.id) % 1000) / 1000 },
               uSize: { value: new THREE.Vector3(o.size[0], o.size[1], o.size[2]) },
+              uFixA: { value: new THREE.Vector4(1, 0, 0, 1) },
+              uFixT: { value: new THREE.Vector2(0, 0) },
             },
-            vertexShader: PUMPKIN_VERT,
+            vertexShader: fixVert(PUMPKIN_VERT),
             fragmentShader: PUMPKIN_FRAG,
             side: THREE.FrontSide,
           });
@@ -1522,8 +1547,14 @@ export class StageRenderer {
               : new THREE.CylinderGeometry(0.5, 0.5, 1, 48).scale(o.size[0], o.size[1], o.size[2]);
           g.translate(0, o.size[1] / 2, 0);
           mat = new THREE.ShaderMaterial({
-            uniforms: { uColor: { value: new THREE.Color() }, uTime: { value: 0 }, uMode: { value: 1 } },
-            vertexShader: VERT,
+            uniforms: {
+              uColor: { value: new THREE.Color() },
+              uTime: { value: 0 },
+              uMode: { value: 1 },
+              uFixA: { value: new THREE.Vector4(1, 0, 0, 1) },
+              uFixT: { value: new THREE.Vector2(0, 0) },
+            },
+            vertexShader: fixVert(VERT),
             fragmentShader: OBJECT_FRAG,
             side: THREE.FrontSide,
           });
@@ -1543,6 +1574,9 @@ export class StageRenderer {
       const u = ((c as THREE.Mesh).material as THREE.ShaderMaterial).uniforms;
       (u.uColor!.value as THREE.Color).set(o.color);
       u.uTime!.value = t;
+      const fx = fix(o) ?? [1, 0, 0, 1, 0, 0];
+      (u.uFixA!.value as THREE.Vector4).set(fx[0], fx[1], fx[2], fx[3]);
+      (u.uFixT!.value as THREE.Vector2).set(fx[4], fx[5]);
       if (o.shape === 'pumpkin') u.uLook!.value = pumpkinLook(o);
       // (pumpkin looks on other things: glow)
       else u.uMode!.value = looks.includes(o.look) ? looks.indexOf(o.look) : 1;
@@ -1689,7 +1723,9 @@ export class StageRenderer {
         this.poseRoom.add(m);
       }
     }
-    this.syncPoseObjects(state.objects ?? [], now);
+    this.syncPoseObjects(state.objects ?? [], now, (o) =>
+      floorFix(fold, pose, ow / oh, profile.anchors ?? [], profile.walls ?? [], o.pos),
+    );
     this.poseMaterial.uniforms.map!.value = this.viewRT.texture;
     this.flatMaterial.uniforms.map!.value = this.viewRT.texture;
     const cam = this.poseCamera;
@@ -1745,7 +1781,16 @@ export class StageRenderer {
           align.mark ?? null,
         );
       else if (markers) drawCornerMarkers(this.viewOverlay.g, ow, oh, this.previewFocus, now);
-      if (editObj) drawObjectOutline(this.viewOverlay.g, ow, oh, pose, editObj, Date.now());
+      if (editObj)
+        drawObjectOutline(
+          this.viewOverlay.g,
+          ow,
+          oh,
+          pose,
+          editObj,
+          Date.now(),
+          floorFix(fold, pose, ow / oh, profile.anchors ?? [], profile.walls ?? [], editObj.pos),
+        );
       this.viewOverlay.upload();
       const prev = r.autoClear;
       r.autoClear = false;
